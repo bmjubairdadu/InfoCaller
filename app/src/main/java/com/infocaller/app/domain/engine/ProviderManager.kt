@@ -9,7 +9,7 @@ class ProviderManager(private val context: Context) {
     private val _providers = MutableStateFlow<List<LookupProvider>>(emptyList())
     val providers = _providers.asStateFlow()
 
-    private val _registryUrl = MutableStateFlow("https://raw.githubusercontent.com/bmjubairdadu/DFG-Controller/main/provider-registry/manifest.json")
+    private val _registryUrl = MutableStateFlow("https://api.infocaller.app/api/v1/providers/manifest")
     val registryUrl = _registryUrl.asStateFlow()
 
     private val _backendUrl = MutableStateFlow("https://api.infocaller.app/v1/")
