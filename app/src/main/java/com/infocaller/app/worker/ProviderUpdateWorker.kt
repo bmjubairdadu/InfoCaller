@@ -19,6 +19,11 @@ class ProviderUpdateWorker(
         
         try {
             val registryUrl = providerManager.registryUrl.value
+            if (registryUrl.isBlank()) {
+                Log.d("ProviderUpdate", "Registry URL not configured, skipping update check.")
+                return@withContext Result.success()
+            }
+            
             Log.d("ProviderUpdate", "Checking for provider updates at $registryUrl")
             
             // Step 1: Fetch Registry from URL

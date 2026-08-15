@@ -1,0 +1,20 @@
+package com.infocaller.app.data.local.dao
+
+import androidx.room.*
+import com.infocaller.app.data.local.entity.ContactEnrichmentEntity
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface EnrichmentDao {
+    @Query("SELECT * FROM contact_enrichment WHERE normalizedPhoneNumber = :number")
+    fun getEnrichment(number: String): Flow<ContactEnrichmentEntity?>
+
+    @Query("SELECT * FROM contact_enrichment WHERE normalizedPhoneNumber = :number")
+    suspend fun getEnrichmentSync(number: String): ContactEnrichmentEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEnrichment(enrichment: ContactEnrichmentEntity)
+
+    @Query("SELECT * FROM contact_enrichment WHERE expiresAt < :currentTime")
+    suspend fun getExpiredEnrichments(currentTime: Long): List<ContactEnrichmentEntity>
+}

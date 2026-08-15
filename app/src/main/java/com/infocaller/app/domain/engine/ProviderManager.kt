@@ -9,10 +9,10 @@ class ProviderManager(private val context: Context) {
     private val _providers = MutableStateFlow<List<LookupProvider>>(emptyList())
     val providers = _providers.asStateFlow()
 
-    private val _registryUrl = MutableStateFlow("https://api.infocaller.app/api/v1/providers/manifest")
+    private val _registryUrl = MutableStateFlow("")
     val registryUrl = _registryUrl.asStateFlow()
 
-    private val _backendUrl = MutableStateFlow("https://api.infocaller.app/v1/")
+    private val _backendUrl = MutableStateFlow("")
     val backendUrl = _backendUrl.asStateFlow()
 
     fun setRegistryUrl(url: String) {

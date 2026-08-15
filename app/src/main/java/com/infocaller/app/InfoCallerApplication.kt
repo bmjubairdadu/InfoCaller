@@ -38,9 +38,10 @@ class InfoCallerApplication : Application() {
         // 1. Initialize Provider Manager
         providerManager = com.infocaller.app.domain.engine.ProviderManager(this)
 
-        // 2. Initialize Retrofit for Backend Relay
+        // 2. Initialize Retrofit for Backend Relay (Development Mode: Configurable)
+        val currentBackendUrl = providerManager.backendUrl.value.ifBlank { "https://localhost/" }
         val retrofit = retrofit2.Retrofit.Builder()
-            .baseUrl("https://api.infocaller.app/") // Base Domain
+            .baseUrl(currentBackendUrl)
             .addConverterFactory(retrofit2.converter.gson.GsonConverterFactory.create())
             .build()
         val backendService = retrofit.create(com.infocaller.app.data.remote.BackendApiService::class.java)
@@ -52,7 +53,8 @@ class InfoCallerApplication : Application() {
         providerManager.registerProvider(com.infocaller.app.data.remote.SocialLookupProviderImpl())
         providerManager.registerProvider(com.infocaller.app.data.remote.GoogleSearchProviderImpl())
         providerManager.registerProvider(com.infocaller.app.data.remote.BusinessProviderImpl())
-        providerManager.registerProvider(com.infocaller.app.data.remote.ApifyLookupProviderImpl(backendService))
+        providerManager.registerProvider(com.infocaller.app.data.remote.TruecallerProviderImpl(this))
+        providerManager.registerProvider(com.infocaller.app.data.remote.ApifyLookupProviderImpl(this, backendService))
 
         // 4. Initialize Lookup Engine
         lookupEngine = com.infocaller.app.domain.engine.PublicLookupEngine(providerManager)
