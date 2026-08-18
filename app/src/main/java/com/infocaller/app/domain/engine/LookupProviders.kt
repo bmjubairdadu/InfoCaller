@@ -12,6 +12,11 @@ interface LookupProvider {
         normalizedPhoneNumber: String,
         context: LookupContext = LookupContext()
     ): PartialResult?
+
+    suspend fun bulkLookup(
+        normalizedPhoneNumbers: List<String>,
+        context: LookupContext = LookupContext()
+    ): Map<String, PartialResult> = emptyMap()
 }
 
 enum class Capability {
@@ -24,7 +29,13 @@ enum class Capability {
     BUSINESS,
     PUBLIC_SEARCH,
     SOCIAL_MATCH,
-    SPAM_CHECK
+    SPAM_CHECK,
+    ALTERNATE_NAME,
+    CITY,
+    COUNTRY,
+    TIMEZONE,
+    EMAIL,
+    PUBLIC_PROFILE
 }
 
 data class LookupContext(
@@ -34,11 +45,14 @@ data class LookupContext(
 
 data class PartialResult(
     val name: String? = null,
+    val alternateName: String? = null,
     val imageUrl: String? = null,
     val about: String? = null,
     val city: String? = null,
     val country: String? = null,
     val region: String? = null,
+    val timezone: String? = null,
+    val email: String? = null,
     val carrier: String? = null,
     val socialProfiles: List<SocialProfile> = emptyList(),
     val spamScore: Int = 0,

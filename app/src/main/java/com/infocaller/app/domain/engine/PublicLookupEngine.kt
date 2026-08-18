@@ -52,4 +52,44 @@ class PublicLookupEngine(
 
         deferredResults.awaitAll().filterNotNull()
     }
+
+    suspend fun performBulkLookup(
+        phoneNumbers: List<String>,
+        requiredCapabilities: Set<Capability> = emptySet()
+    ): Map<String, LookupResult> = coroutineScope {
+        val providers = providerManager.getHealthyProviders().filter { 
+            requiredCapabilities.isEmpty() || it.capabilities.any { cap -> cap in requiredCapabilities }
+        }
+
+        val resultsMap = mutableMapOf<String, MutableList<PartialResult>>()
+        
+        providers.forEach { provider ->
+            try {
+                val start = System.currentTimeMillis()
+                val bulkResults = withTimeoutOrNull(15000) {
+                    provider.bulkLookup(phoneNumbers)
+                }
+                if (bulkResults != null && bulkResults.isNotEmpty()) {
+                    providerManager.reportResult(provider.id, true, (System.currentTimeMillis() - start) / bulkResults.size)
+                    bulkResults.forEach { (number, partial) ->
+                        resultsMap.getOrPut(number) { mutableListOf() }.add(partial)
+                    }
+                } else {
+                    // Fallback to individual lookups if bulk fails or not supported
+                    phoneNumbers.forEach { number ->
+                        val res = provider.lookup(number)
+                        if (res != null) {
+                            resultsMap.getOrPut(number) { mutableListOf() }.add(res)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                providerManager.reportResult(provider.id, false, 15000)
+            }
+        }
+
+        resultsMap.mapValues { (number, partials) ->
+            ConfidenceEngine.merge(number, partials)
+        }
+    }
 }

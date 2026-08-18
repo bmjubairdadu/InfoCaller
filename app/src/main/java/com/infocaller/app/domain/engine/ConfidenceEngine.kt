@@ -43,11 +43,14 @@ object ConfidenceEngine {
         return LookupResult(
             phoneNumber = phoneNumber,
             name = finalName,
+            alternateName = findStrongestField(results) { it.alternateName },
             imageUrl = finalPhoto,
             about = findStrongestField(results) { it.about },
             city = findStrongestField(results) { it.city },
             country = findStrongestField(results) { it.country },
             region = findStrongestField(results) { it.region },
+            timezone = findStrongestField(results) { it.timezone },
+            email = findStrongestField(results) { it.email },
             carrier = findStrongestField(results) { it.carrier },
             isBusiness = results.any { it.isBusiness == true },
             socialProfiles = results.flatMap { it.socialProfiles }

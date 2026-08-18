@@ -53,12 +53,15 @@ class ApifyLookupProviderImpl(
 
                 return@withContext PartialResult(
                     name = data.publicName ?: googleName,
+                    alternateName = data.alternateName,
                     imageUrl = data.profileImageUrl,
                     about = data.about,
                     carrier = data.carrier,
                     country = data.country,
                     region = data.region,
                     city = data.city,
+                    timezone = data.timezone,
+                    email = data.email,
                     isBusiness = data.isBusiness == true,
                     socialProfiles = socialProfiles,
                     confidence = when(data.confidence) {

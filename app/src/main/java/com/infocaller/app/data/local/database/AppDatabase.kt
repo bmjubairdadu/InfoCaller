@@ -23,7 +23,7 @@ import com.infocaller.app.data.local.entity.ContactBackupEntity
         com.infocaller.app.data.local.entity.OperatorLogoEntity::class,
         ContactBackupEntity::class
     ], 
-    version = 12, 
+    version = 13, 
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

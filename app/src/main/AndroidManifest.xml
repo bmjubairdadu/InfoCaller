@@ -46,6 +46,8 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.PHONE_STATE" />
+                <action android:name="com.infocaller.app.ACTION_ANSWER_CALL" />
+                <action android:name="com.infocaller.app.ACTION_DECLINE_CALL" />
             </intent-filter>
         </receiver>
 

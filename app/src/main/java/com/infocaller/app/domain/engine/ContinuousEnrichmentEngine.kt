@@ -94,12 +94,16 @@ class ContinuousEnrichmentEngine(
             val required = mutableSetOf<Capability>()
             if (existing?.publicName == null || isStale) required.add(Capability.PUBLIC_SEARCH)
             if (existing?.profileImageUrl == null || isStale) required.add(Capability.PROFILE_PHOTO)
-            if (existing?.city == null || isStale) required.add(Capability.PHONE_METADATA)
+            if (existing?.city == null || isStale) required.add(Capability.CITY)
+            if (existing?.country == null || isStale) required.add(Capability.COUNTRY)
             if (existing?.carrier == null || isStale) required.add(Capability.CARRIER)
             if (existing?.isBusiness == null || isStale) required.add(Capability.BUSINESS)
             if (existing?.whatsappStatus == null || isStale) required.add(Capability.WHATSAPP)
             if (existing?.telegramStatus == null || isStale) required.add(Capability.TELEGRAM)
             if (existing?.spamStatus == null || isStale) required.add(Capability.SPAM_CHECK)
+            if (existing?.alternateName == null || isStale) required.add(Capability.ALTERNATE_NAME)
+            if (existing?.timezone == null || isStale) required.add(Capability.TIMEZONE)
+            if (existing?.email == null || isStale) required.add(Capability.EMAIL)
 
             if (required.isEmpty()) {
                 queueDao.insertOrUpdate(item.copy(status = QueueStatus.COMPLETED, attemptCount = item.attemptCount + 1))
@@ -174,12 +178,15 @@ class ContinuousEnrichmentEngine(
             normalizedPhoneNumber = number,
             contactId = contactId ?: existing?.contactId,
             publicName = partial.name ?: existing?.publicName,
+            alternateName = partial.alternateName ?: existing?.alternateName,
             profileImageUrl = partial.imageUrl ?: existing?.profileImageUrl,
             about = partial.about ?: existing?.about,
             city = partial.city ?: existing?.city,
             carrier = partial.carrier ?: existing?.carrier,
             country = partial.country ?: existing?.country,
             region = partial.region ?: existing?.region,
+            timezone = partial.timezone ?: existing?.timezone,
+            email = partial.email ?: existing?.email,
             isBusiness = partial.isBusiness ?: existing?.isBusiness,
             whatsappStatus = partial.socialProfiles.find { it.platform == "WhatsApp" }?.status?.name ?: existing?.whatsappStatus,
             telegramStatus = partial.socialProfiles.find { it.platform == "Telegram" }?.status?.name ?: existing?.telegramStatus,
@@ -201,12 +208,15 @@ class ContinuousEnrichmentEngine(
                 normalizedPhoneNumber = result.phoneNumber,
                 contactId = contactId,
                 publicName = result.name,
+                alternateName = result.alternateName,
                 profileImageUrl = result.imageUrl,
                 about = result.about,
                 city = result.city,
                 carrier = result.carrier,
                 country = result.country,
                 region = result.region,
+                timezone = result.timezone,
+                email = result.email,
                 isBusiness = result.isBusiness,
                 whatsappStatus = result.socialProfiles.find { it.platform == "WhatsApp" }?.status?.name,
                 telegramStatus = result.socialProfiles.find { it.platform == "Telegram" }?.status?.name,

@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 object CallManager {
+    const val ACTION_ANSWER_CALL = "com.infocaller.app.ACTION_ANSWER_CALL"
+    const val ACTION_DECLINE_CALL = "com.infocaller.app.ACTION_DECLINE_CALL"
+
     private val _activeCall = MutableStateFlow<Call?>(null)
     val activeCall = _activeCall.asStateFlow()
     
@@ -82,6 +85,14 @@ object CallManager {
     fun playDtmf(digit: Char) {
         _activeCall.value?.playDtmfTone(digit)
         _activeCall.value?.stopDtmfTone()
+    }
+
+    fun answer() {
+        _activeCall.value?.answer(android.telecom.VideoProfile.STATE_AUDIO_ONLY)
+    }
+
+    fun decline() {
+        _activeCall.value?.disconnect()
     }
 
     fun startRecording(activity: Activity, phoneNumber: String): Boolean {

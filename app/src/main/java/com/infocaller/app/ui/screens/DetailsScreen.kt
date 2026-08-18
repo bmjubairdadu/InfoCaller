@@ -179,6 +179,15 @@ fun DetailsScreen(
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 24.dp)
                 )
+
+                if (!enrichment?.alternateName.isNullOrBlank() && enrichment?.alternateName != displayName) {
+                    Text(
+                        text = "aka ${enrichment!!.alternateName}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
                 
                 Text(
                     text = com.infocaller.app.util.PhoneNumberUtils.formatAsYouType(phoneNumber),
@@ -203,10 +212,21 @@ fun DetailsScreen(
                 DetailSection("Public Information") {
                     val location = LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
                     DetailRow(Icons.Default.LocationOn, "Location", location.ifBlank { "Unknown" })
+                    
+                    enrichment?.timezone?.let {
+                        DetailRow(Icons.Default.Schedule, "Timezone", it)
+                    }
+                    
                     DetailRow(Icons.Default.CellTower, "Carrier", enrichment?.carrier ?: caller?.carrier ?: "Unknown")
+                    
                     if (enrichment?.isBusiness == true) {
                         DetailRow(Icons.Default.Business, "Type", "Verified Business")
                     }
+                    
+                    enrichment?.email?.let {
+                        DetailRow(Icons.Default.Email, "Email", it)
+                    }
+
                     DetailRow(Icons.Default.Info, "Source", enrichment?.source ?: "Direct Intelligence")
                     
                     if (enrichment?.lastChecked != null && enrichment?.lastChecked != 0L) {
