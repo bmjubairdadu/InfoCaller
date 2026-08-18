@@ -11,7 +11,7 @@ interface LookupProvider {
     suspend fun lookup(
         normalizedPhoneNumber: String,
         context: LookupContext = LookupContext()
-    ): PartialResult
+    ): PartialResult?
 }
 
 enum class Capability {
@@ -36,12 +36,14 @@ data class PartialResult(
     val name: String? = null,
     val imageUrl: String? = null,
     val about: String? = null,
+    val city: String? = null,
     val country: String? = null,
     val region: String? = null,
     val carrier: String? = null,
     val socialProfiles: List<SocialProfile> = emptyList(),
     val spamScore: Int = 0,
     val spamType: String? = null,
+    val isBusiness: Boolean? = null,
     val confidence: Float = 0f,
     val source: String? = null,
     val durationMs: Long = 0,

@@ -1,223 +1,328 @@
 package com.infocaller.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import com.infocaller.app.domain.model.Caller
+import com.infocaller.app.domain.model.SocialProfile
 import com.infocaller.app.ui.theme.*
 import com.infocaller.app.ui.viewmodel.CallerViewModel
 import com.infocaller.app.ui.viewmodel.SearchUiState
-import com.infocaller.app.util.OSINTManager
+import com.infocaller.app.util.*
+import com.infocaller.app.data.local.entity.ContactEnrichmentEntity
+import com.infocaller.app.data.local.entity.LocalContactEntity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailsScreen(
     viewModel: CallerViewModel,
     onBack: () -> Unit,
+    onMakeCall: (String) -> Unit
 ) {
     val uiState by viewModel.searchResult.collectAsState()
     val blocklist by viewModel.blocklist.collectAsState()
-    val contacts by viewModel.contacts.collectAsState()
-    var isEditing by remember { mutableStateOf(value = false) }
+    val scrollState = rememberScrollState()
+    val context = LocalContext.current
+
+    val caller = (uiState as? SearchUiState.Success)?.caller
+    
+    val phoneNumber = remember(uiState) {
+        when (uiState) {
+            is SearchUiState.Success -> (uiState as SearchUiState.Success).caller.phoneNumber
+            else -> viewModel.dialerInput.value
+        }
+    }
+    
+    val enrichment by viewModel.getEnrichment(phoneNumber).collectAsState(initial = null)
+    val isBlocked = blocklist.contains(phoneNumber)
+    val contactsList by viewModel.contacts.collectAsState()
+    
+    val isContact = contactsList.any { it.phoneNumber == phoneNumber }
+    val contact = contactsList.find { it.phoneNumber == phoneNumber }
 
     Scaffold(
-        containerColor = Background,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Caller Details", color = Color.White) },
+                title = { Text(if (isContact) "Contact Details" else "Caller Identity") },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    if (uiState is SearchUiState.Success) {
-                        val caller = (uiState as SearchUiState.Success).caller
-                        val isBlocked = blocklist.contains(caller.phoneNumber)
-                        
-                        IconButton(onClick = { 
-                            if (isBlocked) viewModel.unblockNumber(caller.phoneNumber)
-                            else viewModel.blockNumber(caller.phoneNumber)
-                        }) {
-                            Icon(
-                                imageVector = if (isBlocked) Icons.Default.Block else Icons.Default.VerifiedUser,
-                                contentDescription = if (isBlocked) "Unblock" else "Block",
-                                tint = if (isBlocked) Error else Success
-                            )
-                        }
-                        
-                        IconButton(onClick = { isEditing = !isEditing }) {
-                            Icon(
-                                imageVector = if (isEditing) Icons.Default.Check else Icons.Default.Edit,
-                                contentDescription = if (isEditing) "Save" else "Edit",
-                                tint = Primary
-                            )
-                        }
+                    IconButton(onClick = { 
+                        if (isBlocked) viewModel.unblockNumber(phoneNumber)
+                        else viewModel.blockNumber(phoneNumber)
+                    }) {
+                        Icon(
+                            imageVector = if (isBlocked) Icons.Default.Block else Icons.Default.VerifiedUser,
+                            contentDescription = null,
+                            tint = if (isBlocked) Error else Success
+                        )
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Button(
+                        onClick = { onMakeCall(phoneNumber) },
+                        modifier = Modifier.weight(1f).height(56.dp),
+                        shape = RoundedCornerShape(28.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                    ) {
+                        Icon(Icons.Default.Call, null, tint = Color.Black)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Call", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                    
+                    OutlinedButton(
+                        onClick = { 
+                            com.infocaller.app.util.PhoneNumberUtils.sendSms(context, phoneNumber)
+                        },
+                        modifier = Modifier.weight(1f).height(56.dp),
+                        shape = RoundedCornerShape(28.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Message, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Message")
+                    }
+                }
+            }
+        }
+    ) { innerPadding ->
+        if (phoneNumber.isBlank() && caller == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Primary)
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .padding(innerPadding)
+                    .fillMaxSize()
+                    .verticalScroll(scrollState),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Profile Header
+                val displayName = contact?.displayName ?: enrichment?.publicName ?: caller?.displayName ?: "Unknown"
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .size(140.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .shadow(12.dp, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val photoUrl = contact?.photoUri ?: enrichment?.profileImageUrl
+                    if (photoUrl != null) {
+                        AsyncImage(
+                            model = photoUrl,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                            error = rememberVectorPainter(Icons.Default.Person),
+                            placeholder = rememberVectorPainter(Icons.Default.Person)
+                        )
+                    } else {
+                        val initials = ContactUtils.getInitials(displayName)
+                        Text(initials, style = MaterialTheme.typography.displayLarge, color = Primary)
+                    }
+                }
 
-                        if (contacts.any { it.phoneNumber == caller.phoneNumber }) {
-                            IconButton(onClick = { 
-                                viewModel.deleteContact(caller.phoneNumber)
-                                onBack()
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Delete Contact",
-                                    tint = Error
-                                )
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                Text(
+                    text = displayName,
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                )
+                
+                Text(
+                    text = com.infocaller.app.util.PhoneNumberUtils.formatAsYouType(phoneNumber),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                if (!enrichment?.about.isNullOrBlank()) {
+                    Text(
+                        text = enrichment!!.about!!,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 16.dp).padding(horizontal = 48.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                // Info Cards
+                DetailSection("Public Information") {
+                    val location = LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
+                    DetailRow(Icons.Default.LocationOn, "Location", location.ifBlank { "Unknown" })
+                    DetailRow(Icons.Default.CellTower, "Carrier", enrichment?.carrier ?: caller?.carrier ?: "Unknown")
+                    if (enrichment?.isBusiness == true) {
+                        DetailRow(Icons.Default.Business, "Type", "Verified Business")
+                    }
+                    DetailRow(Icons.Default.Info, "Source", enrichment?.source ?: "Direct Intelligence")
+                    
+                    if (enrichment?.lastChecked != null && enrichment?.lastChecked != 0L) {
+                        val date = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(enrichment!!.lastChecked))
+                        DetailRow(Icons.Default.Update, "Last Updated", date)
+                    }
+                }
+
+                val socialProfiles = remember(enrichment?.socialProfilesJson) {
+                    SocialUtils.fromJson(enrichment?.socialProfilesJson)
+                }
+                
+                if (socialProfiles.isNotEmpty()) {
+                    DetailSection("Social Presence") {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            socialProfiles.filter { !it.profileUrl.isNullOrBlank() }.forEach { profile ->
+                                SocialRow(profile)
                             }
                         }
                     }
                 }
-            )
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .padding(innerPadding)
-                .padding(24.dp)
-                .fillMaxSize()
-        ) {
-            if (uiState is SearchUiState.Success) {
-                val caller = (uiState as SearchUiState.Success).caller
-                
-                if (isEditing) {
-                    EditCallerForm(caller) { updatedCaller ->
-                        viewModel.updateCallerInfo(updatedCaller)
-                        isEditing = false
+
+                if ((enrichment?.spamScore ?: 0) > 0) {
+                    DetailSection("Reputation") {
+                        val score = enrichment?.spamScore ?: 0
+                        val color = if (score < 30) Success else if (score < 70) Warning else Error
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("Spam Score", style = MaterialTheme.typography.bodyLarge)
+                                Text(enrichment?.spamStatus ?: "Analyzing...", style = MaterialTheme.typography.bodySmall, color = color)
+                            }
+                            Text(
+                                text = "$score%",
+                                style = MaterialTheme.typography.displaySmall,
+                                color = color,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
-                } else {
-                    DisplayCallerDetails(caller)
                 }
-            } else {
-                Text("No data available", color = Color.White)
+
+                Spacer(modifier = Modifier.height(40.dp))
             }
         }
     }
 }
 
 @Composable
-private fun EditCallerForm(caller: Caller, onSave: (Caller) -> Unit) {
-    var name by remember { mutableStateOf(caller.displayName ?: "") }
-    var org by remember { mutableStateOf(caller.organization ?: "") }
-    var country by remember { mutableStateOf(caller.country ?: "") }
-
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = { Text("Name", color = Color.White.copy(alpha = 0.6f)) },
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+fun DetailSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = Primary,
+            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
         )
-        OutlinedTextField(
-            value = org,
-            onValueChange = { org = it },
-            label = { Text("Organization", color = Color.White.copy(alpha = 0.6f)) },
+        Card(
             modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-        )
-        OutlinedTextField(
-            value = country,
-            onValueChange = { country = it },
-            label = { Text("Country", color = Color.White.copy(alpha = 0.6f)) },
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-        )
-        
-        Button(
-            onClick = { onSave(caller.copy(displayName = name, organization = org, country = country)) },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Primary)
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            shape = RoundedCornerShape(24.dp)
         ) {
-            Text("Save Changes", color = Color.White)
+            Column(content = content)
         }
     }
 }
 
 @Composable
-private fun DisplayCallerDetails(caller: Caller) {
-    Text(text = caller.displayName ?: "No Name", style = MaterialTheme.typography.displayMedium, color = Color.White)
-    Text(text = caller.phoneNumber, style = MaterialTheme.typography.titleLarge, color = Primary)
-    
-    Spacer(modifier = Modifier.height(32.dp))
-    
-    Card(
-        modifier = Modifier.fillMaxWidth().glassy(radius = 24.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-    ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            DetailItem(label = "Alias", value = caller.alias ?: "None")
-            DetailItem(label = "Organization", value = caller.organization ?: "None")
-            DetailItem(label = "Country", value = caller.country ?: "Unknown")
-            DetailItem(label = "Carrier", value = caller.carrier ?: "Unknown")
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            Text("Digital Footprint (No-API OSINT)", style = MaterialTheme.typography.titleSmall, color = Primary)
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            val dorks = OSINTManager.generateDorkLinks(caller.phoneNumber)
-            val context = LocalContext.current
-            
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                dorks.forEach { dork ->
-                    AssistChip(
-                        onClick = { OSINTManager.openLink(context, dork.url) },
-                        label = { Text(dork.title) },
-                        colors = AssistChipDefaults.assistChipColors(
-                            labelColor = Color.White.copy(alpha = 0.8f),
-                            containerColor = Color.White.copy(alpha = 0.05f)
-                        ),
-                        border = AssistChipDefaults.assistChipBorder(enabled = true, borderColor = Color.White.copy(alpha = 0.1f))
-                    )
-                }
-            }
-        }
-    }
-    
-    Spacer(modifier = Modifier.height(24.dp))
-    
-    Card(
-        modifier = Modifier.fillMaxWidth().glassy(radius = 24.dp),
-        colors = CardDefaults.cardColors(containerColor = Error.copy(alpha = 0.1f))
-    ) {
-        Column(modifier = Modifier.padding(20.dp).fillMaxWidth()) {
-            Text(text = "Reputation Analysis", style = MaterialTheme.typography.titleMedium, color = Color.White)
-            Spacer(modifier = Modifier.height(12.dp))
-            ReputationRow("Spam Score", "${caller.spamScore}/100", if (caller.spamScore < 30) Success else Error)
-            ReputationRow("Community Reports", caller.reportCount.toString(), Warning)
-            ReputationRow("Overall Status", "${caller.spamStatus}", if (caller.spamStatus.name == "SAFE") Success else Error)
-        }
-    }
-}
-
-@Composable
-fun ReputationRow(label: String, value: String, color: Color) {
+fun DetailRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text = label, color = Color.White.copy(alpha = 0.6f))
-        Text(text = value, color = color, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+        Icon(icon, null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
+        Spacer(modifier = Modifier.width(16.dp))
+        Column {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.bodyLarge)
+        }
     }
 }
 
 @Composable
-fun DetailItem(label: String, value: String) {
-    Row(modifier = Modifier.padding(vertical = 8.dp)) {
-        Text(text = "$label: ", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = Color.White.copy(alpha = 0.5f))
-        Text(text = value, color = Color.White)
+fun SocialRow(profile: SocialProfile) {
+    val context = LocalContext.current
+    val isConfirmed = SocialUtils.isConfirmed(profile)
+    
+    val icon = when (profile.platform.lowercase()) {
+        "whatsapp" -> Icons.AutoMirrored.Filled.Chat
+        "telegram" -> Icons.AutoMirrored.Filled.Send
+        "facebook" -> Icons.Default.Facebook
+        "instagram" -> Icons.Default.CameraAlt
+        else -> Icons.Default.Link
     }
+
+    ListItem(
+        headlineContent = { Text(profile.platform) },
+        supportingContent = { Text(profile.profileUrl ?: "View Profile") },
+        leadingContent = { 
+            Icon(
+                icon, 
+                null, 
+                tint = if (isConfirmed) Success else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp)
+            ) 
+        },
+        trailingContent = {
+            if (isConfirmed) {
+                Icon(Icons.Default.CheckCircle, null, tint = Success, modifier = Modifier.size(20.dp))
+            }
+        },
+        modifier = Modifier.clickable { SocialUtils.openSocialProfile(context, profile) },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+    )
 }

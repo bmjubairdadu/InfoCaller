@@ -9,6 +9,8 @@ data class LocalContactEntity(
     val lookupKey: String,
     val displayName: String,
     val phoneNumber: String,
+    val photoUri: String? = null,
+    val photoThumbnailUri: String? = null,
     val whatsappProfilePic: String? = null,
     val about: String? = null,
     val isBusiness: Boolean = false,

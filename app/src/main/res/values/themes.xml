@@ -1,8 +1,9 @@
 <resources>
     <style name="Theme.InfoCaller" parent="android:Theme.Material.Light.NoActionBar">
-        <!-- Optional: set background to match app background to minimize flash -->
-        <item name="android:windowBackground">#020617</item>
-        <item name="android:statusBarColor">#020617</item>
-        <item name="android:navigationBarColor">#020617</item>
+        <!-- Brand Background (Pure Black for OLED) -->
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:windowNoTitle">true</item>
     </style>
 </resources>

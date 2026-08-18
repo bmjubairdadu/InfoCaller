@@ -6,29 +6,34 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.infocaller.app.permissions.PermissionManager
-import com.infocaller.app.ui.theme.Background
-import com.infocaller.app.ui.theme.Primary
-import com.infocaller.app.ui.theme.Secondary
-import com.infocaller.app.ui.theme.Success
+import com.infocaller.app.ui.theme.*
+import com.infocaller.app.ui.viewmodel.CallerViewModel
+import com.infocaller.app.util.*
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeveloperToolsScreen(
     viewModel: com.infocaller.app.ui.viewmodel.CallerViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateToWhatsAppLookup: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
+    val scope = rememberCoroutineScope()
     
     Scaffold(
         topBar = {
@@ -59,6 +64,138 @@ fun DeveloperToolsScreen(
             InfoSection("App Status") {
                 InfoRow("Default Dialer", PermissionManager.isDefaultDialer(context).toString())
                 InfoRow("Permissions", if (PermissionManager.hasPermissions(context, PermissionManager.CORE_PERMISSIONS)) "Granted" else "Missing")
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                var autoLookup by remember { 
+                    val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                    mutableStateOf(prefs.getBoolean("auto_lookup_enabled", true)) 
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Automatic Caller Lookup", color = Color.White)
+                    Switch(checked = autoLookup, onCheckedChange = { 
+                        autoLookup = it
+                        context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                            .edit().putBoolean("auto_lookup_enabled", it).apply()
+                    })
+                }
+
+                var bgEnrichment by remember { 
+                    val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                    mutableStateOf(prefs.getBoolean("background_enrichment_enabled", true)) 
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Background Enrichment", color = Color.White)
+                    Switch(checked = bgEnrichment, onCheckedChange = { 
+                        bgEnrichment = it
+                        context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                            .edit().putBoolean("background_enrichment_enabled", it).apply()
+                    })
+                }
+            }
+
+            InfoSection("Auth Credentials") {
+                var truecallerToken by remember { 
+                    val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                    mutableStateOf(prefs.getString("truecaller_token", "") ?: "") 
+                }
+                var showToken by remember { mutableStateOf(false) }
+
+                Text("Truecaller Auth Token", style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.6f))
+                OutlinedTextField(
+                    value = truecallerToken,
+                    onValueChange = { 
+                        truecallerToken = it
+                        context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                            .edit().putString("truecaller_token", it).apply()
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showToken = !showToken }) {
+                            Icon(if (showToken) Icons.Default.VisibilityOff else Icons.Default.Visibility, null, tint = Color.White.copy(alpha = 0.4f))
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Primary
+                    ),
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                var devToken by remember { 
+                    val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                    mutableStateOf(prefs.getString("apify_dev_token", "") ?: "") 
+                }
+                var showDevToken by remember { mutableStateOf(false) }
+
+                Text("Dev Apify Token", style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.6f))
+                OutlinedTextField(
+                    value = devToken,
+                    onValueChange = { 
+                        devToken = it
+                        context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                            .edit().putString("apify_dev_token", it).apply()
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    visualTransformation = if (showDevToken) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showDevToken = !showDevToken }) {
+                            Icon(if (showDevToken) Icons.Default.VisibilityOff else Icons.Default.Visibility, null, tint = Color.White.copy(alpha = 0.4f))
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Primary
+                    ),
+                    singleLine = true
+                )
+            }
+
+            InfoSection("Contact Repair") {
+                val recoveryState by viewModel.recoveryState.collectAsState()
+                var showConfirm by remember { mutableStateOf(false) }
+
+                Text(
+                    text = recoveryState ?: "Restore contact names from verified system backups.",
+                    color = Color.White.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Button(
+                    onClick = { showConfirm = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red.copy(alpha = 0.2f), contentColor = Color.Red),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Emergency: Fix Names")
+                }
+
+                if (showConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showConfirm = false },
+                        title = { Text("Are you sure?") },
+                        text = { Text("This will attempt to remove placeholder names and restore them from system metadata. This action is irreversible.") },
+                        confirmButton = {
+                            TextButton(onClick = { 
+                                showConfirm = false
+                                viewModel.runEmergencyCleanup() 
+                            }) {
+                                Text("Proceed", color = Color.Red)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showConfirm = false }) {
+                                Text("Cancel")
+                            }
+                        }
+                    )
+                }
             }
 
             InfoSection("Server Configuration") {
@@ -72,7 +209,7 @@ fun DeveloperToolsScreen(
                 OutlinedTextField(
                     value = newRegistryUrl,
                     onValueChange = { newRegistryUrl = it },
-                    label = { Text("Registry URL", color = Color.White) },
+                    label = { Text("Registry URL", color = Color.White.copy(alpha = 0.6f)) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
                 )
@@ -82,22 +219,24 @@ fun DeveloperToolsScreen(
                 OutlinedTextField(
                     value = newBackendUrl,
                     onValueChange = { newBackendUrl = it },
-                    label = { Text("Backend Base URL", color = Color.White) },
+                    label = { Text("Backend Base URL", color = Color.White.copy(alpha = 0.6f)) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
                 )
 
-                Row(modifier = Modifier.padding(top = 8.dp)) {
+                Row(modifier = Modifier.padding(top = 12.dp)) {
                     Button(
-                        onClick = { app.providerManager.setRegistryUrl(newRegistryUrl) }
+                        onClick = { app.providerManager.setRegistryUrl(newRegistryUrl) },
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Text("Save Registry")
+                        Text("Save Registry", fontSize = 12.sp)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
-                        onClick = { app.providerManager.setBackendUrl(newBackendUrl) }
+                        onClick = { app.providerManager.setBackendUrl(newBackendUrl) },
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Text("Save Backend")
+                        Text("Save Backend", fontSize = 12.sp)
                     }
                 }
 
@@ -109,32 +248,6 @@ fun DeveloperToolsScreen(
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                var devToken by remember { 
-                    val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-                    mutableStateOf(prefs.getString("apify_dev_token", "") ?: "") 
-                }
-
-                OutlinedTextField(
-                    value = devToken,
-                    onValueChange = { 
-                        devToken = it
-                        context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-                            .edit().putString("apify_dev_token", it).apply()
-                    },
-                    label = { Text("Dev Apify Token", color = Color.White) },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-                )
-                
-                Text(
-                    text = "Direct Apify lookup (Local Dev Only)",
-                    color = Color.White.copy(alpha = 0.5f),
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
             }
             
             InfoSection("Diagnostics") {
@@ -142,7 +255,7 @@ fun DeveloperToolsScreen(
                 OutlinedTextField(
                     value = testNumber,
                     onValueChange = { testNumber = it },
-                    label = { Text("Test Number", color = Color.White) },
+                    label = { Text("Test Number", color = Color.White.copy(alpha = 0.6f)) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
                 )
@@ -151,16 +264,29 @@ fun DeveloperToolsScreen(
                 
                 val lookupResult by viewModel.fullLookupResult.collectAsState()
                 
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Button(onClick = { viewModel.performFullLookup(testNumber) }) { Text("RUN FULL TEST") }
+                Button(
+                    onClick = { viewModel.performFullLookup(testNumber) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { 
+                    Text("RUN FULL LOOKUP TEST") 
                 }
                 
                 lookupResult?.let { result ->
                     Spacer(modifier = Modifier.height(16.dp))
                     InfoRow("Name", result.name ?: "N/A")
+                    val location = LocationUtils.formatCallerLocation(result.city, result.region, result.country)
+                    InfoRow("Location", location.ifBlank { "N/A" })
                     InfoRow("Confidence", "${(result.confidence * 100).toInt()}%")
                     InfoRow("Spam Score", result.spamScore.toString())
                     
+                    if (result.socialProfiles.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Social Profiles", style = MaterialTheme.typography.labelMedium, color = Primary)
+                        result.socialProfiles.forEach { profile ->
+                            InfoRow(profile.platform, profile.status.name)
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Provider Performance", style = MaterialTheme.typography.labelMedium, color = Primary)
                     result.performance.forEach { perf ->
@@ -172,6 +298,13 @@ fun DeveloperToolsScreen(
             InfoSection("Provider Manager") {
                 val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
                 val providers by app.providerManager.providers.collectAsState()
+                
+                Button(
+                    onClick = onNavigateToWhatsAppLookup,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                ) {
+                    Text("WhatsApp Profile Lookup")
+                }
                 
                 providers.forEach { provider ->
                     val health = app.providerManager.getHealth(provider.id)

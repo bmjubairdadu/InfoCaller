@@ -10,7 +10,7 @@ class PhoneMetadataProviderImpl(private val context: Context) : PhoneMetadataPro
     override val version: String = "1.0.0"
     override val capabilities: Set<Capability> = setOf(Capability.PHONE_METADATA, Capability.CARRIER)
 
-    override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult {
+    override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? {
         return PartialResult(
             country = "Bangladesh",
             region = PhoneNumberUtils.getLocationInfo(normalizedPhoneNumber),

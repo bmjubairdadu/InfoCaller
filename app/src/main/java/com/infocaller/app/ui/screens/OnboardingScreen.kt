@@ -36,15 +36,15 @@ fun OnboardingScreen(onComplete: () -> Unit) {
         }
     }
 
-    // STAGE 2: Request Essential Core Permissions (Calling, Phone State)
+    // STAGE 2: Request Essential Core Permissions
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         if (results.values.all { it }) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                currentStage = 5
+            currentStage = if (PermissionManager.canDrawOverlays(context)) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 5 else 6
             } else {
-                onComplete()
+                3
             }
         } else {
             val permanentlyDenied = PermissionManager.CORE_PERMISSIONS.any { 
@@ -57,11 +57,25 @@ fun OnboardingScreen(onComplete: () -> Unit) {
         }
     }
 
-    // STAGE 5: Request POST_NOTIFICATIONS (Android 13+) for call alerts
+    // STAGE 3: Handle returning from Overlay Settings
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        if (currentStage == 3 && PermissionManager.canDrawOverlays(context)) {
+            currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 5 else 6
+        }
+    }
+
+    // STAGE 6: Completion
+    LaunchedEffect(currentStage) {
+        if (currentStage == 6) {
+            onComplete()
+        }
+    }
+
+    // STAGE 5: Request POST_NOTIFICATIONS (Android 13+)
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _ ->
-        onComplete()
+        currentStage = 6
     }
 
     Box(
@@ -86,6 +100,9 @@ fun OnboardingScreen(onComplete: () -> Unit) {
             }
             2 -> CorePermissionsRationale(onGrant = {
                 permissionLauncher.launch(PermissionManager.CORE_PERMISSIONS)
+            })
+            3 -> OverlayPermissionRationale(onGrant = {
+                PermissionManager.openOverlaySettings(context)
             })
             5 -> NotificationRationale(onGrant = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -148,6 +165,23 @@ fun NotificationRationale(onGrant: () -> Unit) {
         Spacer(modifier = Modifier.height(32.dp))
         Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) {
             Text("Enable Notifications")
+        }
+    }
+}
+
+@Composable
+fun OverlayPermissionRationale(onGrant: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Display Over Apps", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            "To show caller ID information on top of other apps, we need the 'Display over other apps' permission.",
+            textAlign = TextAlign.Center,
+            color = Color.White.copy(alpha = 0.7f)
+        )
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) {
+            Text("Go to Settings")
         }
     }
 }

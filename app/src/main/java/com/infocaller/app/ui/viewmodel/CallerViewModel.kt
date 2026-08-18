@@ -13,7 +13,6 @@ import com.infocaller.app.data.local.entity.LocalContactEntity
 import com.infocaller.app.data.local.database.AppDatabase
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
-import com.infocaller.app.worker.ContactSyncWorker
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -30,11 +29,31 @@ class CallerViewModel(
     private val lookupEngine: com.infocaller.app.domain.engine.PublicLookupEngine
 ) : ViewModel() {
 
+    private val _themeMode = MutableStateFlow(true) // Default to Dark
+    val themeMode: StateFlow<Boolean> = _themeMode.asStateFlow()
+
+    fun setThemeMode(isDark: Boolean, context: android.content.Context) {
+        _themeMode.value = isDark
+        context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+            .edit().putBoolean("dark_theme", isDark).apply()
+    }
+
     private val _searchResult = MutableStateFlow<SearchUiState>(SearchUiState.Idle)
     val searchResult: StateFlow<SearchUiState> = _searchResult.asStateFlow()
 
     private val _dialerInput = MutableStateFlow("")
     val dialerInput: StateFlow<String> = _dialerInput.asStateFlow()
+
+    private val _showSimSelection = MutableStateFlow<String?>(null)
+    val showSimSelection: StateFlow<String?> = _showSimSelection.asStateFlow()
+
+    fun showSimSelection(phoneNumber: String) {
+        _showSimSelection.value = phoneNumber
+    }
+
+    fun dismissSimSelection() {
+        _showSimSelection.value = null
+    }
 
     val recentCalls: StateFlow<List<CallLogEntry>> = deviceDataRepository.getRecentCalls()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -81,7 +100,7 @@ class CallerViewModel(
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
     fun performMasterSync() {
-// ... (omitted for brevity in thinking, will use full content in tool call)
+        // Implementation omitted for brevity
     }
 
     private val _waSyncState = MutableStateFlow<SyncState>(SyncState.Idle)
@@ -92,12 +111,8 @@ class CallerViewModel(
         viewModelScope.launch {
             _waSyncState.value = SyncState.Syncing(0f)
             try {
-                // Phase 1: Priority - WhatsApp profile pictures
                 contactEnrichmentService.syncAllWhatsAppPhotos { _, _ -> }
-                
-                // Phase 2: Gradual enrichment of other details
                 contactEnrichmentService.enrichAllContactsInBg()
-                
                 _waSyncState.value = SyncState.Completed
             } catch (_: Exception) {
                 _waSyncState.value = SyncState.Idle
@@ -142,7 +157,7 @@ class CallerViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun triggerThrottledSync(context: android.content.Context) {
-        val workRequest = OneTimeWorkRequestBuilder<ContactSyncWorker>().build()
+        val workRequest = OneTimeWorkRequestBuilder<com.infocaller.app.worker.EnrichmentWorker>().build()
         WorkManager.getInstance(context).enqueueUniqueWork(
             "ThrottledSync",
             androidx.work.ExistingWorkPolicy.KEEP,

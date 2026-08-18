@@ -14,6 +14,15 @@ class PublicLookupEngine(
         requiredCapabilities: Set<Capability> = emptySet(),
         onPartialResult: suspend (PartialResult) -> Unit = {}
     ): LookupResult = coroutineScope {
+        val partials = lookupPartials(phoneNumber, requiredCapabilities, onPartialResult)
+        ConfidenceEngine.merge(phoneNumber, partials)
+    }
+
+    suspend fun lookupPartials(
+        phoneNumber: String,
+        requiredCapabilities: Set<Capability> = emptySet(),
+        onPartialResult: suspend (PartialResult) -> Unit = {}
+    ): List<PartialResult> = coroutineScope {
         val providers = providerManager.getHealthyProviders().filter { 
             requiredCapabilities.isEmpty() || it.capabilities.any { cap -> cap in requiredCapabilities }
         }
@@ -22,7 +31,7 @@ class PublicLookupEngine(
             async {
                 try {
                     val start = System.currentTimeMillis()
-                    val res = withTimeoutOrNull(5000) {
+                    val res = withTimeoutOrNull(8000) { // Slightly longer timeout
                         provider.lookup(phoneNumber)
                     }
                     if (res != null) {
@@ -31,26 +40,16 @@ class PublicLookupEngine(
                         onPartialResult(finalRes)
                         finalRes
                     } else {
-                        providerManager.reportResult(provider.id, false, 5000)
+                        providerManager.reportResult(provider.id, false, 8000)
                         null
                     }
                 } catch (e: Exception) {
-                    providerManager.reportResult(provider.id, false, 5000)
+                    providerManager.reportResult(provider.id, false, 8000)
                     null
                 }
             }
         }
 
-        val partialResults = deferredResults.awaitAll().filterNotNull()
-        ConfidenceEngine.merge(phoneNumber, partialResults)
-    }
-
-    suspend fun performBatchLookup(
-        numbers: List<String>,
-        requiredCapabilities: Set<Capability> = emptySet()
-    ): Map<String, LookupResult> = coroutineScope {
-        numbers.associateWith { number ->
-            performLookup(number, requiredCapabilities)
-        }
+        deferredResults.awaitAll().filterNotNull()
     }
 }

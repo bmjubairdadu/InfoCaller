@@ -16,4 +16,9 @@ interface BackendApiService {
         @Body request: PhoneLookupRequest
     ): Response<InfoCallerLookupResponse>
 
+    @POST("api/v1/registry/publish")
+    suspend fun publishToRegistry(
+        @Body record: InfoCallerLookupResponse
+    ): Response<com.google.gson.JsonObject>
+
 }

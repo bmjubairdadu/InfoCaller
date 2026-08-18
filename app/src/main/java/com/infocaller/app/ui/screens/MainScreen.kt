@@ -34,6 +34,10 @@ fun MainScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     
     LaunchedEffect(Unit) {
+        val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
+        val sims = com.infocaller.app.util.SimManager.getSimInfos(context)
+        app.operatorLogoManager.initialize(sims)
+
         val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
         val isFirstSyncDone = prefs.getBoolean("is_first_sync_done", false)
         if (!isFirstSyncDone) {
@@ -55,40 +59,49 @@ fun MainScreen(
 
     Scaffold(
         containerColor = Background,
-        contentWindowInsets = WindowInsets(0, 0, 0, 0), // Full screen content for edge-to-edge bgs
+        contentWindowInsets = WindowInsets(0, 0, 0, 0), // Use 0 to allow full screen behind glassy bars
         bottomBar = {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = navBackStackEntry?.destination?.route
 
             Box(
                 modifier = Modifier
-                    .navigationBarsPadding() // Proper system nav padding
-                    .padding(horizontal = 16.dp)
-                    .padding(bottom = 16.dp)
+                    .navigationBarsPadding() // Ensure bar stays above system nav
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 12.dp)
             ) {
                 NavigationBar(
                     containerColor = Color.Transparent,
-                    modifier = Modifier.glassy(radius = 32.dp, blur = 15.dp),
+                    modifier = Modifier
+                        .height(64.dp)
+                        .glassy(radius = 32.dp, blur = 15.dp),
                     windowInsets = WindowInsets(0, 0, 0, 0)
                 ) {
                     tabs.forEach { item ->
+                        val isSelected = currentRoute == item.route
                         NavigationBarItem(
                             icon = {
                                 Icon(
                                     item.icon,
                                     contentDescription = item.label,
-                                    tint = if (currentRoute == item.route) Color.White else Color.White.copy(alpha = 0.4f)
+                                    modifier = Modifier.size(24.dp),
+                                    tint = if (isSelected) Color.White else Color.White.copy(alpha = 0.4f)
                                 )
                             },
                             label = {
                                 Text(
                                     item.label,
-                                    color = if (currentRoute == item.route) Color.White else Color.White.copy(alpha = 0.4f)
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.4f)
                                 )
                             },
-                            selected = currentRoute == item.route,
+                            selected = isSelected,
                             colors = NavigationBarItemDefaults.colors(
-                                indicatorColor = Color.White.copy(alpha = 0.1f)
+                                indicatorColor = Color.White.copy(alpha = 0.1f),
+                                selectedIconColor = Color.White,
+                                unselectedIconColor = Color.White.copy(alpha = 0.4f),
+                                selectedTextColor = Color.White,
+                                unselectedTextColor = Color.White.copy(alpha = 0.4f)
                             ),
                             onClick = {
                                 if (currentRoute != item.route) {
@@ -126,9 +139,7 @@ fun MainScreen(
         NavHost(
             navController = navController,
             startDestination = "recents",
-            modifier = Modifier
-                .padding(innerPadding)
-                .fillMaxSize(),
+            modifier = Modifier.fillMaxSize(),
             enterTransition = { fadeIn(animationSpec = tween(150)) },
             exitTransition = { fadeOut(animationSpec = tween(150)) }
         ) {
@@ -147,7 +158,8 @@ fun MainScreen(
                     viewModel = viewModel,
                     innerPadding = innerPadding,
                     onNavigateToDetails = { number ->
-                        onMakeCall(number)
+                        viewModel.searchNumber(number)
+                        parentNavController.navigate("details")
                     }
                 )
             }
@@ -161,6 +173,18 @@ fun MainScreen(
                 )
             }
         }
+    }
+
+    val simSelectionPhone by viewModel.showSimSelection.collectAsState()
+    if (simSelectionPhone != null) {
+        com.infocaller.app.ui.dialogs.SimSelectionBottomSheet(
+            phoneNumber = simSelectionPhone!!,
+            onSimSelected = { sim ->
+                com.infocaller.app.util.SimManager.placeCall(context, simSelectionPhone!!, sim.phoneAccountHandle)
+                viewModel.dismissSimSelection()
+            },
+            onDismiss = { viewModel.dismissSimSelection() }
+        )
     }
 }
 

@@ -11,8 +11,7 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.SdCard
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,7 +36,11 @@ fun SaveLocationDialog(
     onAccountSelected: (SaveAccount) -> Unit
 ) {
     val context = LocalContext.current
-    val accounts = remember { getAvailableAccounts(context) }
+    var accounts by remember { mutableStateOf<List<SaveAccount>>(emptyList()) }
+    
+    LaunchedEffect(Unit) {
+        accounts = getAvailableAccounts(context)
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -67,6 +70,11 @@ fun SaveLocationDialog(
                         }
                     }
                 }
+                
+                if (accounts.isEmpty()) {
+                    CircularProgressIndicator(color = Color.White)
+                }
+
                 Spacer(modifier = Modifier.height(16.dp))
                 TextButton(onClick = onDismiss) {
                     Text("Cancel", color = Color.White.copy(alpha = 0.6f))
@@ -100,7 +108,7 @@ private fun AccountItem(account: SaveAccount, onClick: () -> Unit) {
     }
 }
 
-private fun getAvailableAccounts(context: Context): List<SaveAccount> {
+private suspend fun getAvailableAccounts(context: Context): List<SaveAccount> {
     val list = mutableListOf<SaveAccount>()
     
     // Phone storage

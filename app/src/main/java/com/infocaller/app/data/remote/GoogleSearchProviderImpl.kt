@@ -11,7 +11,7 @@ class GoogleSearchProviderImpl : SearchProvider {
     override val version: String = "1.0.0"
     override val capabilities: Set<Capability> = setOf(Capability.PUBLIC_SEARCH)
 
-    override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult {
+    override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? {
         return try {
             val cleanNumber = normalizedPhoneNumber.filter { it.isDigit() }
             val query = URLEncoder.encode("\"$cleanNumber\"", StandardCharsets.UTF_8.toString())

@@ -40,15 +40,9 @@ import com.infocaller.app.data.repository.ContactEnrichmentService
 import com.infocaller.app.domain.model.Caller
 import com.infocaller.app.domain.model.SpamStatus
 import com.infocaller.app.domain.repository.CallerRepository
-import com.infocaller.app.ui.theme.GradientEnd
-import com.infocaller.app.ui.theme.GradientStart
-import com.infocaller.app.ui.theme.glassy
-import com.infocaller.app.util.PhoneNumberUtils
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.infocaller.app.ui.theme.*
+import com.infocaller.app.util.*
+import kotlinx.coroutines.*
 
 class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
 
@@ -162,50 +156,29 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
         val repository = getRepository() 
             ?: error("CallerRepository not initialized. Call CallOverlayService.setRepository() in Application.onCreate()")
         val context = LocalContext.current
+        val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
+        val enrichmentEngine = app.enrichmentEngine
         val enrichmentService = remember { ContactEnrichmentService(context) }
-        var caller by remember { mutableStateOf<Caller?>(null) }
-        var isBlocked by remember { mutableStateOf(value = false) }
         
         val normalizedNumber = remember(phoneNumber) { PhoneNumberUtils.normalize(phoneNumber) }
-        val dynamicPhotoUrl = remember(normalizedNumber) { PhoneNumberUtils.getImageUrl(normalizedNumber) }
+        val enrichment by enrichmentEngine.getEnrichment(normalizedNumber).collectAsState(initial = null)
+        
+        var contactName by remember { mutableStateOf<String?>(null) }
+        var contactPhotoUri by remember { mutableStateOf<String?>(null) }
+        var isBlocked by remember { mutableStateOf(value = false) }
 
         LaunchedEffect(normalizedNumber) {
-            val contactName = com.infocaller.app.util.PhoneNumberUtils.getContactName(context, phoneNumber)
-            val contactPhoto = com.infocaller.app.util.PhoneNumberUtils.getContactPhotoUri(context, phoneNumber)
-            
-            // Full modular lookup
-            val lookupEngine = (context.applicationContext as com.infocaller.app.InfoCallerApplication).lookupEngine
-            val result = lookupEngine.performLookup(normalizedNumber)
-            
-            caller = Caller(
-                phoneNumber = phoneNumber, 
-                displayName = contactName ?: result.name, 
-                alias = result.sources.firstOrNull(),
-                photoUrl = contactPhoto ?: result.imageUrl,
-                organization = result.carrier,
-                country = result.country,
-                region = result.region,
-                carrier = result.carrier,
-                spamScore = result.spamScore,
-                reportCount = 0,
-                isVerified = contactName != null || result.confidence > 0.7f,
-                spamStatus = result.spamStatus,
-                socialMediaLinks = result.socialProfiles.mapNotNull { it.profileUrl }
-            )
-            
+            contactName = PhoneNumberUtils.getContactName(context, phoneNumber)
+            contactPhotoUri = PhoneNumberUtils.getContactPhotoUri(context, phoneNumber)
             isBlocked = repository.isBlocked(normalizedNumber)
-
-            // Auto-enrich contacts
-            if (contactName == null && result.name != null && result.confidence > 0.5f) {
-                val exists = enrichmentService.checkIfContactExists(normalizedNumber)
-                if (!exists) {
-                    enrichmentService.enrichAndSaveContact(
-                        phoneNumber = normalizedNumber,
-                        displayName = result.name
-                    )
-                }
-            }
+            
+            // Trigger enrichment
+            enrichmentEngine.enqueue(normalizedNumber, priority = com.infocaller.app.data.local.entity.QueuePriority.HIGH)
         }
+
+        val displayName = contactName ?: enrichment?.publicName ?: "Unknown Caller"
+        val photoUrl = contactPhotoUri ?: enrichment?.profileImageUrl
+        val location = LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
 
         Card(
             modifier = Modifier
@@ -215,12 +188,13 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
             colors = CardDefaults.cardColors(containerColor = Color.Transparent)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
+                val isSpam = isBlocked || enrichment?.spamStatus == "SPAM" || enrichment?.spamStatus == "SCAM"
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
                             brush = Brush.horizontalGradient(
-                                colors = if (isBlocked || (caller?.spamStatus == SpamStatus.SPAM))
+                                colors = if (isSpam)
                                     listOf(Color(0xFFEF4444), Color(0xFFB91C1C))
                                 else
                                     listOf(GradientStart, GradientEnd)
@@ -229,26 +203,40 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                         .padding(16.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        AsyncImage(
-                            model = caller?.photoUrl ?: dynamicPhotoUrl,
-                            contentDescription = null,
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .border(2.dp, Color.White.copy(alpha = 0.2f), CircleShape),
-                            contentScale = ContentScale.Crop,
-                            placeholder = rememberVectorPainter(Icons.Default.Person),
-                            error = rememberVectorPainter(Icons.Default.Person)
-                        )
+                        if (photoUrl != null) {
+                            AsyncImage(
+                                model = photoUrl,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .border(2.dp, Color.White.copy(alpha = 0.2f), CircleShape),
+                                contentScale = ContentScale.Crop,
+                                placeholder = rememberVectorPainter(Icons.Default.Person),
+                                error = rememberVectorPainter(Icons.Default.Person)
+                            )
+                        } else {
+                            val initials = ContactUtils.getInitials(displayName)
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.1f))
+                                    .border(2.dp, Color.White.copy(alpha = 0.2f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = initials,
+                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = Color.White
+                                )
+                            }
+                        }
 
                         Spacer(modifier = Modifier.width(16.dp))
 
                         Column(modifier = Modifier.weight(1f)) {
-                            val nameText = when {
-                                isBlocked -> "SPAM DETECTED"
-                                caller?.displayName != null -> caller?.displayName!!
-                                else -> "Unknown Caller"
-                            }
+                            val nameText = if (isSpam && contactName == null) "SPAM DETECTED" else displayName
                             
                             Text(
                                 text = nameText,
@@ -257,9 +245,9 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                                 fontWeight = FontWeight.Bold
                             )
                             
-                            if (caller == null && !isBlocked) {
+                            if (enrichment == null && contactName == null && !isBlocked) {
                                 Text(
-                                    text = "No additional information available.",
+                                    text = "Identifying...",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color.White.copy(alpha = 0.6f)
                                 )
@@ -271,8 +259,19 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                                 color = Color.White.copy(alpha = 0.8f)
                             )
 
-                            // STAGE 2: Display Location
-                            val location = listOfNotNull(caller?.region, caller?.country).joinToString(", ")
+                            // Confidence
+                            if (!enrichment?.confidence.isNullOrBlank() && contactName == null) {
+                                val confidence = enrichment?.confidence?.toFloatOrNull() ?: 0f
+                                if (confidence > 0f) {
+                                    Text(
+                                        text = "Confidence: ${(confidence * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White.copy(alpha = 0.9f)
+                                    )
+                                }
+                            }
+
+                            // Location
                             if (location.isNotBlank()) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Default.Place, contentDescription = null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
@@ -285,19 +284,27 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                                 }
                             }
 
-                            // STAGE 3: Social Media Links
-                            if (caller?.socialMediaLinks?.isNotEmpty() == true) {
+                            // Social Media Icons
+                            val socialProfiles = SocialUtils.fromJson(enrichment?.socialProfilesJson)
+                            if (socialProfiles.isNotEmpty()) {
                                 Row(
                                     modifier = Modifier.padding(top = 4.dp),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    caller!!.socialMediaLinks.forEach { link ->
-                                        val icon = when {
-                                            link.contains("wa.me") -> Icons.AutoMirrored.Filled.Chat
-                                            link.contains("t.me") -> Icons.AutoMirrored.Filled.Send
+                                    socialProfiles.forEach { profile ->
+                                        val icon = when (profile.platform.lowercase()) {
+                                            "whatsapp" -> Icons.AutoMirrored.Filled.Chat
+                                            "telegram" -> Icons.AutoMirrored.Filled.Send
+                                            "facebook" -> Icons.Default.Facebook
+                                            "instagram" -> Icons.Default.CameraAlt
                                             else -> Icons.Default.Link
                                         }
-                                        Icon(icon, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
+                                        Icon(
+                                            icon, 
+                                            contentDescription = profile.platform, 
+                                            tint = if (SocialUtils.isConfirmed(profile)) Success else Color.White.copy(alpha = 0.7f), 
+                                            modifier = Modifier.size(16.dp)
+                                        )
                                     }
                                 }
                             }

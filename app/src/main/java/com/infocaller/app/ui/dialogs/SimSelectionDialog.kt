@@ -1,5 +1,6 @@
 package com.infocaller.app.ui.dialogs
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -15,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -27,6 +29,10 @@ import com.infocaller.app.ui.theme.glassy
 import com.infocaller.app.util.SimInfo
 import com.infocaller.app.util.SimManager
 
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+
 @Composable
 fun SimSelectionDialog(
     phoneNumber: String,
@@ -34,7 +40,10 @@ fun SimSelectionDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val simInfos = remember { SimManager.getSimInfos(context) }
+    var simInfos by remember { mutableStateOf<List<SimInfo>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        simInfos = SimManager.getSimInfos(context)
+    }
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -98,12 +107,10 @@ private fun SimRow(
     phoneNumber: String,
     onClick: () -> Unit
 ) {
-    val context = LocalContext.current
-    
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 4.dp, vertical = 6.dp)
             .glassy(radius = 16.dp, blur = 10.dp)
             .clickable { onClick() },
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
@@ -112,26 +119,52 @@ private fun SimRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Operator Logo / Brand Circle
             Box(
-                modifier = Modifier.size(48.dp),
+                modifier = Modifier.size(52.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(Color(sim.brandColor)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = sim.carrierName.firstOrNull()?.uppercase() ?: "?",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
+                // Priority 1: Bundled (Not implemented yet, placeholder for future)
+                // Priority 2: System carrier icon
+                if (sim.iconBitmap != null) {
+                    Image(
+                        bitmap = sim.iconBitmap.asImageBitmap(),
+                        contentDescription = sim.carrierName,
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
                     )
+                } 
+                // Priority 3: Local cached Brandfetch logo
+                else if (sim.localLogoPath != null) {
+                    AsyncImage(
+                        model = sim.localLogoPath,
+                        contentDescription = sim.carrierName,
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape),
+                        contentScale = ContentScale.Crop
+                    )
+                } 
+                // Priority 5: Initials + Brand Color
+                else {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(Color(sim.brandColor)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = sim.carrierName.firstOrNull()?.uppercase() ?: "?",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 22.sp
+                        )
+                    }
                 }
             }
             
@@ -139,30 +172,43 @@ private fun SimRow(
             
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = sim.displayName,
+                    text = sim.carrierName,
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = sim.carrierName,
+                    text = "${sim.displayName} (Slot ${sim.slotIndex + 1})",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.6f)
                 )
             }
             
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .background(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(GradientStart, GradientEnd)
-                        )
-                    )
-                    .clip(CircleShape),
-                contentAlignment = Alignment.Center
+            // CIRCULAR CALL BUTTON (48dp target)
+            Surface(
+                onClick = onClick,
+                modifier = Modifier.size(48.dp),
+                shape = CircleShape,
+                color = Color.Transparent
             ) {
-                Icon(Icons.Default.Call, contentDescription = "Call", tint = Color.White, modifier = Modifier.size(24.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = listOf(GradientStart, GradientEnd)
+                            ),
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Call, 
+                        contentDescription = "Call with ${sim.carrierName}", 
+                        tint = Color.White, 
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
     }
@@ -176,7 +222,10 @@ fun SimSelectionBottomSheet(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val simInfos = remember { SimManager.getSimInfos(context) }
+    var simInfos by remember { mutableStateOf<List<SimInfo>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        simInfos = SimManager.getSimInfos(context)
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
@@ -204,44 +253,31 @@ fun SimSelectionBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 8.dp),
+                .padding(bottom = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Select SIM to call $phoneNumber",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White.copy(alpha = 0.7f))
-                }
-            }
+            Text(
+                text = "Choose SIM for $phoneNumber",
+                style = MaterialTheme.typography.titleLarge,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(vertical = 24.dp)
+            )
 
             HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
 
             if (simInfos.isEmpty()) {
                 Text(
-                    text = "No SIM cards found",
+                    text = "No active SIM cards detected",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp)
-                        .wrapContentSize(Alignment.Center)
+                    modifier = Modifier.padding(32.dp)
                 )
             } else {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 16.dp)
+                        .padding(horizontal = 16.dp)
                 ) {
                     simInfos.forEach { sim ->
                         SimRow(
@@ -249,15 +285,8 @@ fun SimSelectionBottomSheet(
                             phoneNumber = phoneNumber,
                             onClick = {
                                 onSimSelected(sim)
-                                onDismiss()
                             }
                         )
-                        if (sim != simInfos.last()) {
-                            HorizontalDivider(
-                                color = Color.White.copy(alpha = 0.1f),
-                                modifier = Modifier.padding(horizontal = 16.dp)
-                            )
-                        }
                     }
                 }
             }

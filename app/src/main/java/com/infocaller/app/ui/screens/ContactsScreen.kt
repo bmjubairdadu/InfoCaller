@@ -1,6 +1,8 @@
 package com.infocaller.app.ui.screens
 
-import androidx.compose.animation.core.*
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,24 +21,22 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import com.infocaller.app.data.local.entity.LocalContactEntity
-import com.infocaller.app.domain.model.Contact
 import com.infocaller.app.ui.theme.*
 import com.infocaller.app.ui.viewmodel.CallerViewModel
-import com.infocaller.app.ui.dialogs.AddContactDialog
+import com.infocaller.app.ui.dialogs.AddContactBottomSheet
 import com.infocaller.app.permissions.PermissionManager
 import com.infocaller.app.ui.components.PermissionEmptyState
-import android.app.Activity
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.ui.platform.LocalContext
+import com.infocaller.app.util.ContactUtils
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ContactsScreen(
     viewModel: CallerViewModel,
@@ -50,7 +50,6 @@ fun ContactsScreen(
     }
     var showRationale by remember { mutableStateOf(value = false) }
     
-    // STAGE 3: Contextual Contacts Permission (READ/WRITE)
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
@@ -70,22 +69,20 @@ fun ContactsScreen(
     if (showRationale) {
         AlertDialog(
             onDismissRequest = { showRationale = false },
-            title = { Text("Contacts Permission", color = Color.White) },
-            text = { Text("InfoCaller needs access to your contacts to show and manage them.", color = Color.White.copy(alpha = 0.7f)) },
-            containerColor = Surface,
+            title = { Text("Contacts Permission") },
+            text = { Text("InfoCaller needs access to your contacts to show and manage them.") },
+            containerColor = MaterialTheme.colorScheme.surface,
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        showRationale = false
-                        launcher.launch(PermissionManager.CONTACTS_PERMISSIONS)
-                    }
-                ) {
+                TextButton(onClick = { 
+                    showRationale = false
+                    launcher.launch(PermissionManager.CONTACTS_PERMISSIONS) 
+                }) {
                     Text("Grant", color = Primary)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showRationale = false }) {
-                    Text("Cancel", color = Color.White.copy(alpha = 0.5f))
+                    Text("Cancel")
                 }
             }
         )
@@ -106,205 +103,229 @@ fun ContactsScreen(
     val filteredContacts = if (searchQuery.isEmpty()) {
         localContacts
     } else {
-        localContacts.filter { (it.displayName.contains(searchQuery, ignoreCase = true)) || (it.phoneNumber.contains(searchQuery) == true) }
+        localContacts.filter { (it.displayName.contains(searchQuery, ignoreCase = true)) || (it.phoneNumber.contains(searchQuery)) }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Background)
+            .padding(innerPadding)
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        if (!hasPermission) {
-            PermissionEmptyState(
-                title = "Contacts Permission",
-                description = "To show and manage your contacts, InfoCaller needs access to your contacts list."
-            ) {
-                launcher.launch(PermissionManager.CONTACTS_PERMISSIONS)
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    top = 16.dp + innerPadding.calculateTopPadding(),
-                    bottom = 16.dp + innerPadding.calculateBottomPadding() + 80.dp, // Extra for FAB
-                    start = 16.dp,
-                    end = 16.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Contacts",
-                            style = MaterialTheme.typography.displayMedium,
-                            color = Color.White
-                        )
-                        
-                        IconButton(onClick = { viewModel.triggerThrottledSync(context) }) {
-                            Icon(Icons.Default.Sync, contentDescription = "Sync", tint = Primary)
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    if (isSyncing) {
-                        LinearProgressIndicator(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                            color = Primary,
-                            trackColor = Color.White.copy(alpha = 0.1f)
-                        )
-                    }
-
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = { Text("Search contacts...", color = Color.White.copy(alpha = 0.5f)) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 16.dp)
-                            .background(
-                                brush = Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = 0.1f),
-                                        Color.White.copy(alpha = 0.05f)
-                                    )
-                                ),
-                                shape = RoundedCornerShape(16.dp)
-                            )
-                            .padding(16.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.White) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            focusedBorderColor = Color.Transparent,
-                            unfocusedBorderColor = Color.Transparent
-                        )
-                    )
-                }
-                items(filteredContacts) { contact ->
-                    ContactItem(contact, onClick = { onNavigateToDetails(contact.phoneNumber) })
-                }
-            }
-        }
-
-        FloatingActionButton(
-            onClick = { showAddDialog = true },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(bottom = innerPadding.calculateBottomPadding() + 24.dp, end = 24.dp)
-                .size(64.dp)
-                .shadow(12.dp, CircleShape),
+        Scaffold(
             containerColor = Color.Transparent,
-            elevation = FloatingActionButtonDefaults.elevation(0.dp)
-        ) {
+            topBar = {
+                Surface(
+                    color = MaterialTheme.colorScheme.background.copy(alpha = 0.95f),
+                    modifier = Modifier.statusBarsPadding()
+                ) {
+                    Column {
+                        TopAppBar(
+                            title = {
+                                Text(
+                                    "Contacts",
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            },
+                            actions = {
+                                IconButton(
+                                    onClick = { viewModel.triggerThrottledSync(context) },
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    if (isSyncing) {
+                                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Primary, strokeWidth = 2.dp)
+                                    } else {
+                                        Icon(Icons.Default.Sync, contentDescription = "Sync", tint = Primary)
+                                    }
+                                }
+                            },
+                            colors = TopAppBarDefaults.topAppBarColors(
+                                containerColor = Color.Transparent,
+                                scrolledContainerColor = Color.Transparent
+                            )
+                        )
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Search by name or number") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            trailingIcon = if (searchQuery.isNotEmpty()) {
+                                {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Clear")
+                                    }
+                                }
+                            } else null,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Primary
+                            ),
+                            singleLine = true
+                        )
+                    }
+                }
+            },
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = { showAddDialog = true },
+                    modifier = Modifier
+                        .padding(bottom = 16.dp)
+                        .size(56.dp)
+                        .shadow(12.dp, CircleShape),
+                    containerColor = Color.Transparent,
+                    elevation = FloatingActionButtonDefaults.elevation(0.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                brush = Brush.linearGradient(colors = listOf(GradientStart, GradientEnd)),
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add Contact", tint = Color.Black)
+                    }
+                }
+            }
+        ) { screenPadding ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(
-                        brush = Brush.linearGradient(colors = listOf(GradientStart, GradientEnd)),
-                        shape = CircleShape
-                    ),
-                contentAlignment = Alignment.Center
+                    .padding(screenPadding)
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Contact", tint = Color.White)
+                if (!hasPermission) {
+                    PermissionEmptyState(
+                        title = "Contacts Permission",
+                        description = "To show and manage your contacts, InfoCaller needs access to your contacts list."
+                    ) {
+                        launcher.launch(PermissionManager.CONTACTS_PERMISSIONS)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            top = 16.dp,
+                            bottom = 80.dp,
+                            start = 16.dp,
+                            end = 16.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(filteredContacts, key = { it.id }) { contact ->
+                            ContactItem(
+                                contact = contact,
+                                onClick = { onNavigateToDetails(contact.phoneNumber) },
+                                viewModel = viewModel
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 
     if (showAddDialog) {
-        AddContactDialog(
+        AddContactBottomSheet(
+            viewModel = viewModel,
             phoneNumber = "",
             onDismiss = { showAddDialog = false },
             onContactSaved = { 
                 showAddDialog = false
-                // Contacts will auto-refresh via ContentObserver
             }
         )
     }
 }
 
 @Composable
-fun ContactItem(contact: LocalContactEntity, onClick: () -> Unit) {
+fun ContactItem(contact: LocalContactEntity, onClick: () -> Unit, viewModel: CallerViewModel) {
+    val enrichment by viewModel.getEnrichment(contact.phoneNumber).collectAsState(initial = null)
+    
+    val displayName = remember(contact.displayName, enrichment?.publicName) {
+        if (ContactUtils.isPlaceholderName(contact.displayName)) {
+            enrichment?.publicName ?: contact.displayName
+        } else {
+            contact.displayName
+        }
+    }
+    
+    val photoUrl = contact.photoUri ?: enrichment?.profileImageUrl
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
-            .glassy(radius = 16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+            .clickable { onClick() },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        shape = RoundedCornerShape(16.dp)
     ) {
         Row(
             modifier = Modifier
-                .padding(12.dp)
+                .padding(vertical = 10.dp, horizontal = 12.dp)
                 .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(50.dp)
+                    .size(56.dp)
                     .clip(CircleShape)
-                    .background(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(GradientStart.copy(alpha = 0.4f), GradientEnd.copy(alpha = 0.4f))
-                        )
-                    ),
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
-                AsyncImage(
-                    model = contact.whatsappProfilePic ?: com.infocaller.app.util.PhoneNumberUtils.getImageUrl(contact.phoneNumber),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                    placeholder = rememberVectorPainter(Icons.Default.Person),
-                    error = rememberVectorPainter(Icons.Default.Person)
-                )
+                if (photoUrl != null) {
+                    AsyncImage(
+                        model = photoUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                        error = rememberVectorPainter(Icons.Default.Person),
+                        placeholder = rememberVectorPainter(Icons.Default.Person)
+                    )
+                } else {
+                    val initials = ContactUtils.getInitials(displayName)
+                    Text(
+                        text = initials,
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp
+                        ),
+                        color = Primary
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(16.dp))
+            
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = contact.displayName,
-                        style = MaterialTheme.typography.titleLarge,
-                        color = Color.White
-                    )
-                    if (contact.isBusiness) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .background(Primary.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
-                                .padding(horizontal = 4.dp, vertical = 2.dp)
-                        ) {
-                            Text("Business", fontSize = 10.sp, color = Primary, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
+                Text(
+                    text = displayName,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                )
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = contact.phoneNumber,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.6f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (!contact.about.isNullOrBlank()) {
-                    Text(
-                        text = contact.about,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.4f),
-                        maxLines = 1
-                    )
-                }
             }
             
+            if (contact.isBusiness) {
+                Icon(
+                    Icons.Default.Business,
+                    contentDescription = "Business",
+                    tint = Primary.copy(alpha = 0.6f),
+                    modifier = Modifier.size(18.dp).padding(end = 8.dp)
+                )
+            }
+
             if (contact.isSynced) {
                 Icon(
                     Icons.Default.CheckCircle,
                     contentDescription = "Synced",
-                    tint = Success,
+                    tint = Success.copy(alpha = 0.8f),
                     modifier = Modifier.size(16.dp)
                 )
             }

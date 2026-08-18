@@ -20,27 +20,24 @@ fun NavGraph(
     onMakeCall: (String) -> Unit
 ) {
     val context = LocalContext.current
+    
+    val isCoreOk = PermissionManager.isDefaultDialer(context) && 
+                  PermissionManager.hasPermissions(context, PermissionManager.CORE_PERMISSIONS)
+    val isOverlayOk = PermissionManager.canDrawOverlays(context)
+    val isNotificationsOk = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        PermissionManager.hasPermission(context, android.Manifest.permission.POST_NOTIFICATIONS)
+    } else true
+
+    val startDest = if (isCoreOk && isOverlayOk && isNotificationsOk) "main" else "onboarding"
+
     NavHost(
         navController = navController,
-        startDestination = "splash",
+        startDestination = startDest,
         enterTransition = { fadeIn(animationSpec = tween(200)) },
         exitTransition = { fadeOut(animationSpec = tween(200)) },
         popEnterTransition = { fadeIn(animationSpec = tween(200)) },
         popExitTransition = { fadeOut(animationSpec = tween(200)) }
     ) {
-        composable("splash") {
-            SplashScreen(onSplashFinished = {
-                val nextDest = if (PermissionManager.isDefaultDialer(context) && 
-                                 PermissionManager.hasPermissions(context, PermissionManager.CORE_PERMISSIONS)) {
-                    "main"
-                } else {
-                    "onboarding"
-                }
-                navController.navigate(nextDest) {
-                    popUpTo("splash") { inclusive = true }
-                }
-            })
-        }
         composable("onboarding") {
             OnboardingScreen(onComplete = {
                 navController.navigate("main") {
@@ -71,7 +68,8 @@ fun NavGraph(
                 viewModel = viewModel,
                 onBack = {
                     navController.popBackStack()
-                }
+                },
+                onMakeCall = onMakeCall
             )
         }
         composable("login") {
@@ -92,9 +90,11 @@ fun NavGraph(
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 viewModel = viewModel,
-                onNavigateToWhatsAppLookup = { navController.navigate("whatsapp_lookup") },
-                onNavigateToDeveloperTools = { navController.navigate("developer_tools") }
+                onNavigateToPrivacy = { navController.navigate("privacy") }
             )
+        }
+        composable("privacy") {
+            PrivacyPolicyScreen(onBack = { navController.popBackStack() })
         }
         composable("whatsapp_lookup") {
             WhatsAppLookupScreen()
@@ -102,7 +102,8 @@ fun NavGraph(
         composable("developer_tools") {
             DeveloperToolsScreen(
                 viewModel = viewModel,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onNavigateToWhatsAppLookup = { navController.navigate("whatsapp_lookup") }
             )
         }
     }

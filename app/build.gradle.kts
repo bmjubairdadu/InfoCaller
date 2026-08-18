@@ -1,9 +1,18 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
-    // alias(libs.plugins.google.services) // Disabled for APK generation without json
 }
+
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.inputStream().use { localProperties.load(it) }
+}
+val apifyToken = localProperties.getProperty("apify.token") ?: ""
+val brandfetchClientId = localProperties.getProperty("brandfetch.client.id") ?: ""
 
 android {
     namespace = "com.infocaller.app"
@@ -26,7 +35,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "APIFY_TOKEN", "\"$apifyToken\"")
+            buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"$brandfetchClientId\"")
+        }
         release {
+            buildConfigField("String", "APIFY_TOKEN", "\"\"")
+            buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"\"")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -41,6 +56,11 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
@@ -59,10 +79,6 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
-
-    // implementation(platform(libs.firebase.bom))
-    // implementation(libs.firebase.auth.ktx)
-    // implementation(libs.firebase.firestore.ktx)
 
     implementation(libs.coil.compose)
     implementation(libs.retrofit)

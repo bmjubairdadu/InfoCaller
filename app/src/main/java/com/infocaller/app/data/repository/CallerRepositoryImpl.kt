@@ -10,12 +10,13 @@ import com.infocaller.app.domain.model.SpamStatus
 import com.infocaller.app.domain.repository.CallerRepository
 import com.infocaller.app.util.PhoneNumberUtils
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 class CallerRepositoryImpl(
     private val callerDao: CallerDao,
     private val blocklistDao: BlocklistDao,
-    private val callerScraper: com.infocaller.app.data.remote.CallerScraper,
+    private val lookupEngine: com.infocaller.app.domain.engine.PublicLookupEngine,
     private val context: Context
 ) : CallerRepository {
 
@@ -31,19 +32,30 @@ class CallerRepositoryImpl(
         val cached = callerDao.getCallerSync(normalized)
         if (cached != null) {
             val age = System.currentTimeMillis() - cached.lastUpdated
-            
-            // Suggested TTL: 24h for general lookup, but we'll use a safer 7 days for name/metadata
             val isFresh = age < 7 * 24 * 60 * 60 * 1000L
             if (isFresh) return cached.toDomain()
         }
 
-        // 2. Offline-First Scraper (No Paid APIs)
-        val result = callerScraper.fetchCallerInfo(phoneNumber)
-        if (result != null) {
-            saveCaller(result)
-        }
+        // 2. Intelligence Engine Lookup
+        val result = lookupEngine.performLookup(phoneNumber)
         
-        return result ?: cached?.toDomain()
+        val caller = Caller(
+            phoneNumber = result.phoneNumber,
+            displayName = result.name,
+            alias = result.sources.firstOrNull(),
+            photoUrl = result.imageUrl,
+            organization = result.carrier,
+            country = result.country,
+            region = result.region,
+            carrier = result.carrier,
+            spamScore = result.spamScore,
+            spamStatus = result.spamStatus,
+            socialMediaLinks = result.socialProfiles.mapNotNull { it.profileUrl }
+        )
+        
+        saveCaller(caller)
+        
+        return getCaller(phoneNumber).first()
     }
 
     override suspend fun reportSpam(phoneNumber: String, reason: String) {

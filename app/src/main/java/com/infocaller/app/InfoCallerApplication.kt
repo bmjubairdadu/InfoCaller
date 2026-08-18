@@ -2,69 +2,72 @@ package com.infocaller.app
 
 import android.app.Application
 import com.infocaller.app.data.local.database.AppDatabase
-import com.infocaller.app.data.remote.CallerScraper
-import com.infocaller.app.data.repository.AuthRepositoryImpl
-import com.infocaller.app.data.repository.CallerRepositoryImpl
-import com.infocaller.app.data.repository.DeviceDataRepositoryImpl
-import com.infocaller.app.domain.repository.AuthRepository
-import com.infocaller.app.domain.repository.DeviceDataRepository
+import com.infocaller.app.data.repository.*
+import com.infocaller.app.domain.repository.*
+import com.infocaller.app.domain.engine.*
+import com.infocaller.app.data.remote.*
 
 class InfoCallerApplication : Application() {
     lateinit var repository: CallerRepositoryImpl
     lateinit var deviceDataRepository: DeviceDataRepository
     lateinit var authRepository: AuthRepository
     lateinit var database: AppDatabase
-    lateinit var lookupEngine: com.infocaller.app.domain.engine.PublicLookupEngine
-    lateinit var enrichmentEngine: com.infocaller.app.domain.engine.ContinuousEnrichmentEngine
-    lateinit var providerManager: com.infocaller.app.domain.engine.ProviderManager
-    lateinit var registryService: com.infocaller.app.data.remote.RegistryApiService
+    lateinit var lookupEngine: PublicLookupEngine
+    lateinit var enrichmentEngine: ContinuousEnrichmentEngine
+    lateinit var providerManager: ProviderManager
+    lateinit var registryService: RegistryApiService
+    lateinit var operatorLogoManager: com.infocaller.app.util.OperatorLogoManager
 
     override fun onCreate() {
         super.onCreate()
         database = AppDatabase.getDatabase(this)
-        val callerScraper = CallerScraper(this)
-        repository = CallerRepositoryImpl(
-            database.callerDao(),
-            database.blocklistDao(),
-            callerScraper,
-            this
-        )
-        // CRITICAL: Initialize CallOverlayService repository
-        com.infocaller.app.service.CallOverlayService.setRepository(repository)
         
         deviceDataRepository = DeviceDataRepositoryImpl(contentResolver)
         authRepository = AuthRepositoryImpl()
 
-        // 1. Initialize Provider Manager
-        providerManager = com.infocaller.app.domain.engine.ProviderManager(this)
+        providerManager = ProviderManager(this)
+        operatorLogoManager = com.infocaller.app.util.OperatorLogoManager(this, database)
 
-        // 2. Initialize Retrofit for Backend Relay (Development Mode: Configurable)
-        val currentBackendUrl = providerManager.backendUrl.value.ifBlank { "https://localhost/" }
+        val currentBackendUrl = providerManager.backendUrl.value.ifBlank { "http://localhost:3000/" }
         val retrofit = retrofit2.Retrofit.Builder()
             .baseUrl(currentBackendUrl)
             .addConverterFactory(retrofit2.converter.gson.GsonConverterFactory.create())
             .build()
-        val backendService = retrofit.create(com.infocaller.app.data.remote.BackendApiService::class.java)
-        registryService = retrofit.create(com.infocaller.app.data.remote.RegistryApiService::class.java)
+        
+        val backendService = retrofit.create(BackendApiService::class.java)
+        registryService = retrofit.create(RegistryApiService::class.java)
 
         // 3. Register Providers
-        providerManager.registerProvider(com.infocaller.app.data.remote.PhoneMetadataProviderImpl(this))
-        providerManager.registerProvider(com.infocaller.app.data.remote.SpamProviderImpl(database.callerDao()))
-        providerManager.registerProvider(com.infocaller.app.data.remote.SocialLookupProviderImpl())
-        providerManager.registerProvider(com.infocaller.app.data.remote.GoogleSearchProviderImpl())
-        providerManager.registerProvider(com.infocaller.app.data.remote.BusinessProviderImpl())
-        providerManager.registerProvider(com.infocaller.app.data.remote.TruecallerProviderImpl(this))
-        providerManager.registerProvider(com.infocaller.app.data.remote.ApifyLookupProviderImpl(this, backendService))
+        providerManager.registerProvider(RegistryLookupProvider(registryService)) // Shared Registry First
+        providerManager.registerProvider(PhoneMetadataProviderImpl(this))
+        providerManager.registerProvider(SpamProviderImpl(database.callerDao()))
+        providerManager.registerProvider(GoogleSearchProviderImpl())
+        providerManager.registerProvider(BusinessProviderImpl())
+        providerManager.registerProvider(TruecallerProviderImpl(this))
+        providerManager.registerProvider(ApifyLookupProviderImpl(backendService))
 
-        // 4. Initialize Lookup Engine
-        lookupEngine = com.infocaller.app.domain.engine.PublicLookupEngine(providerManager)
+        lookupEngine = PublicLookupEngine(providerManager)
 
-        // 5. Initialize Continuous Enrichment Engine
-        enrichmentEngine = com.infocaller.app.domain.engine.ContinuousEnrichmentEngine(
+        repository = CallerRepositoryImpl(
+            database.callerDao(),
+            database.blocklistDao(),
+            lookupEngine,
+            this
+        )
+        
+        com.infocaller.app.service.CallOverlayService.setRepository(repository)
+
+        val enrichmentService = ContactEnrichmentService(this, lookupEngine, repository, database)
+        
+        enrichmentEngine = ContinuousEnrichmentEngine(
             this,
             database.queueDao(),
             database.enrichmentDao(),
-            lookupEngine
+            lookupEngine,
+            enrichmentService,
+            backendService
         )
+        
+        enrichmentEngine.startProcessing()
     }
 }

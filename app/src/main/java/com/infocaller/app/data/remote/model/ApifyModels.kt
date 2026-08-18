@@ -60,6 +60,7 @@ data class InfoCallerLookupResponse(
     val about: String? = null,
     val carrier: String? = null,
     val country: String? = null,
+    val city: String? = null,
     val region: String? = null,
     val whatsappStatus: String? = null,
     val telegramStatus: String? = null,

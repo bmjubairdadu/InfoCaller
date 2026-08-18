@@ -19,7 +19,8 @@ object PermissionManager {
         Manifest.permission.CALL_PHONE,
         Manifest.permission.READ_PHONE_STATE,
         Manifest.permission.READ_PHONE_NUMBERS,
-        Manifest.permission.ANSWER_PHONE_CALLS
+        Manifest.permission.ANSWER_PHONE_CALLS,
+        Manifest.permission.MANAGE_OWN_CALLS
     )
 
     val CONTACTS_PERMISSIONS = arrayOf(

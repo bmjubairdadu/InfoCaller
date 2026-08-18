@@ -10,7 +10,7 @@ class SocialLookupProviderImpl : SocialProvider {
     override val version: String = "1.0.0"
     override val capabilities: Set<Capability> = setOf(Capability.SOCIAL_MATCH)
 
-    override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult {
+    override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? {
         val cleanNumber = normalizedPhoneNumber.filter { it.isDigit() }
         val profiles = listOf(
             SocialProfile("WhatsApp", normalizedPhoneNumber, "https://wa.me/$cleanNumber", SocialLookupStatus.PUBLIC_MATCH),

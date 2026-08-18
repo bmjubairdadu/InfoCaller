@@ -8,7 +8,7 @@ class BusinessProviderImpl : BusinessProvider {
     override val version: String = "1.0.0"
     override val capabilities: Set<Capability> = setOf(Capability.BUSINESS)
 
-    override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult {
+    override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? {
         if (normalizedPhoneNumber.endsWith("000")) {
             return PartialResult(
                 name = "InfoCaller Business Support",
