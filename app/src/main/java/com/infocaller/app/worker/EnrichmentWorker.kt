@@ -53,6 +53,7 @@ class EnrichmentWorker(
 
     private fun importSystemContacts(dao: com.infocaller.app.data.local.dao.LocalContactDao) {
         val resolver = applicationContext.contentResolver
+        val currentTime = System.currentTimeMillis()
         val cursor = resolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(
@@ -79,13 +80,17 @@ class EnrichmentWorker(
 
             while (it.moveToNext()) {
                 val name = it.getString(nameIdx) ?: "Unknown"
+                val rawNumber = it.getString(numIdx) ?: ""
+                val normalized = com.infocaller.app.util.PhoneNumberUtils.normalize(rawNumber)
+                
                 contacts.add(LocalContactEntity(
                     id = it.getLong(idIdx),
                     lookupKey = it.getString(keyIdx),
                     displayName = name,
-                    phoneNumber = it.getString(numIdx),
+                    phoneNumber = normalized,
                     photoUri = it.getString(photoIdx),
-                    photoThumbnailUri = it.getString(thumbIdx)
+                    photoThumbnailUri = it.getString(thumbIdx),
+                    lastSynced = currentTime
                 ))
             }
             

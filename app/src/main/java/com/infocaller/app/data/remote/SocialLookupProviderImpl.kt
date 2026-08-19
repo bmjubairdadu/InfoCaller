@@ -9,9 +9,13 @@ class SocialLookupProviderImpl : SocialProvider {
     override val name: String = "Social Presence"
     override val version: String = "1.0.0"
     override val capabilities: Set<Capability> = setOf(Capability.SOCIAL_MATCH)
+    override val priority: Int = 30
+    override val costClass: CostClass = CostClass.FREE
 
     override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? {
         val cleanNumber = normalizedPhoneNumber.filter { it.isDigit() }
+        // For simplicity, always return these as public matches for now
+        // A real implementation might check API presence
         val profiles = listOf(
             SocialProfile("WhatsApp", normalizedPhoneNumber, "https://wa.me/$cleanNumber", SocialLookupStatus.PUBLIC_MATCH),
             SocialProfile("Telegram", normalizedPhoneNumber, "https://t.me/$cleanNumber", SocialLookupStatus.POSSIBLE_MATCH)

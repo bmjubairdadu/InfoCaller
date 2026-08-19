@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.infocaller.app.data.repository.ContactEnrichmentService
+import com.infocaller.app.ui.components.InfoCallerLoading
 import com.infocaller.app.ui.theme.*
 import com.infocaller.app.ui.viewmodel.CallerViewModel
 import com.infocaller.app.util.ContactUtils
@@ -239,7 +240,7 @@ fun AddContactBottomSheet(
                 enabled = !isSaving
             ) {
                 if (isSaving) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
+                    InfoCallerLoading(size = 24.dp)
                 } else {
                     Text(if (existingContact != null) "UPDATE CONTACT" else "SAVE CONTACT", fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 }

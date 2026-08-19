@@ -32,8 +32,12 @@ class ProviderUpdateWorker(
                 val manifest = response.body()
                 Log.d("ProviderUpdate", "Successfully fetched manifest: $manifest")
                 
-                // Step 2: Validate Manifest & Signature (Logic exists in ProviderManager conceptually)
-                // Step 3: "Install" Update
+                // Step 2: Update Backend URL if specified in manifest
+                manifest?.get("backend_url")?.asString?.let { url ->
+                    if (url.isNotBlank()) {
+                        providerManager.setBackendUrl(url)
+                    }
+                }
             } else {
                 Log.e("ProviderUpdate", "Failed to fetch manifest: ${response.code()}")
             }

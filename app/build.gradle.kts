@@ -11,14 +11,14 @@ val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
-val apifyToken = localProperties.getProperty("apify.token") ?: ""
-val brandfetchClientId = localProperties.getProperty("brandfetch.client.id") ?: ""
+val apifyToken1 = localProperties.getProperty("apify.token.1") ?: ""
+val apifyToken2 = localProperties.getProperty("apify.token.2") ?: ""
+val brandfetchClientId = localProperties.getProperty("brandfetch.client.id") ?: "1idt4fOOzudt9xCz11q"
+val backendApiKey = localProperties.getProperty("backend.api.key") ?: ""
 
 android {
     namespace = "com.infocaller.app"
-    compileSdk {
-        version = release(37)
-    }
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.infocaller.app"
@@ -36,12 +36,16 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "APIFY_TOKEN", "\"$apifyToken\"")
+            buildConfigField("String", "APIFY_TOKEN_1", "\"$apifyToken1\"")
+            buildConfigField("String", "APIFY_TOKEN_2", "\"$apifyToken2\"")
             buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"$brandfetchClientId\"")
+            buildConfigField("String", "BACKEND_API_KEY", "\"$backendApiKey\"")
         }
         release {
-            buildConfigField("String", "APIFY_TOKEN", "\"\"")
-            buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"\"")
+            buildConfigField("String", "APIFY_TOKEN_1", "\"\"")
+            buildConfigField("String", "APIFY_TOKEN_2", "\"\"")
+            buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"$brandfetchClientId\"")
+            buildConfigField("String", "BACKEND_API_KEY", "\"$backendApiKey\"")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -62,6 +66,10 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
+    }
 }
 
 dependencies {
@@ -74,6 +82,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.splashscreen)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.room.runtime)

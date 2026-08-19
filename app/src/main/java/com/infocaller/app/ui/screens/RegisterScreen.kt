@@ -9,6 +9,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.infocaller.app.ui.viewmodel.AuthUiState
 import com.infocaller.app.ui.viewmodel.AuthViewModel
+import com.infocaller.app.ui.components.InfoCallerLoading
 
 @Composable
 fun RegisterScreen(
@@ -52,7 +53,7 @@ fun RegisterScreen(
             Spacer(modifier = Modifier.height(16.dp))
             
             if (uiState is AuthUiState.Loading) {
-                CircularProgressIndicator()
+                InfoCallerLoading(size = 48.dp)
             } else {
                 Button(
                     onClick = { viewModel.register(email, password) },

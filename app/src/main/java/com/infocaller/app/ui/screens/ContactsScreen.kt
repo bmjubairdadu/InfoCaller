@@ -3,8 +3,9 @@ package com.infocaller.app.ui.screens
 import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -12,6 +13,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
@@ -30,13 +32,15 @@ import coil.compose.AsyncImage
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import com.infocaller.app.data.local.entity.LocalContactEntity
 import com.infocaller.app.ui.theme.*
+import com.infocaller.app.ui.components.InfoCallerLoading
 import com.infocaller.app.ui.viewmodel.CallerViewModel
 import com.infocaller.app.ui.dialogs.AddContactBottomSheet
 import com.infocaller.app.permissions.PermissionManager
 import com.infocaller.app.ui.components.PermissionEmptyState
 import com.infocaller.app.util.ContactUtils
+import com.infocaller.app.util.PhoneNumberUtils
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ContactsScreen(
     viewModel: CallerViewModel,
@@ -106,122 +110,144 @@ fun ContactsScreen(
         localContacts.filter { (it.displayName.contains(searchQuery, ignoreCase = true)) || (it.phoneNumber.contains(searchQuery)) }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(innerPadding)
-            .background(MaterialTheme.colorScheme.background)
-    ) {
-        Scaffold(
-            containerColor = Color.Transparent,
-            topBar = {
-                Surface(
-                    color = MaterialTheme.colorScheme.background.copy(alpha = 0.95f),
-                    modifier = Modifier.statusBarsPadding()
-                ) {
-                    Column {
-                        TopAppBar(
-                            title = {
-                                Text(
-                                    "Contacts",
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            },
-                            actions = {
-                                IconButton(
-                                    onClick = { viewModel.triggerThrottledSync(context) },
-                                    modifier = Modifier.size(48.dp)
-                                ) {
-                                    if (isSyncing) {
-                                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Primary, strokeWidth = 2.dp)
-                                    } else {
-                                        Icon(Icons.Default.Sync, contentDescription = "Sync", tint = Primary)
-                                    }
-                                }
-                            },
-                            colors = TopAppBarDefaults.topAppBarColors(
-                                containerColor = Color.Transparent,
-                                scrolledContainerColor = Color.Transparent
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            Surface(
+                color = MaterialTheme.colorScheme.background.copy(alpha = 0.95f),
+                shadowElevation = 4.dp
+            ) {
+                Column(modifier = Modifier.statusBarsPadding()) {
+                    TopAppBar(
+                        title = {
+                            Text(
+                                "Contacts",
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold
                             )
-                        )
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            placeholder = { Text("Search by name or number") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                            trailingIcon = if (searchQuery.isNotEmpty()) {
-                                {
-                                    IconButton(onClick = { searchQuery = "" }) {
-                                        Icon(Icons.Default.Close, contentDescription = "Clear")
-                                    }
+                        },
+                        actions = {
+                            IconButton(
+                                onClick = { viewModel.triggerThrottledSync(context) },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                if (isSyncing) {
+                                    InfoCallerLoading(size = 24.dp)
+                                } else {
+                                    Icon(Icons.Default.Sync, contentDescription = "Sync", tint = Primary)
                                 }
-                            } else null,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Primary
-                            ),
-                            singleLine = true
+                            }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = Color.Transparent,
+                            scrolledContainerColor = Color.Transparent
                         )
-                    }
-                }
-            },
-            floatingActionButton = {
-                FloatingActionButton(
-                    onClick = { showAddDialog = true },
-                    modifier = Modifier
-                        .padding(bottom = 16.dp)
-                        .size(56.dp)
-                        .shadow(12.dp, CircleShape),
-                    containerColor = Color.Transparent,
-                    elevation = FloatingActionButtonDefaults.elevation(0.dp)
-                ) {
-                    Box(
+                    )
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Search by name or number") },
                         modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                brush = Brush.linearGradient(colors = listOf(GradientStart, GradientEnd)),
-                                shape = CircleShape
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Add Contact", tint = Color.Black)
-                    }
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        trailingIcon = if (searchQuery.isNotEmpty()) {
+                            {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear")
+                                }
+                            }
+                        } else null,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Primary
+                        ),
+                        singleLine = true
+                    )
                 }
             }
-        ) { screenPadding ->
-            Box(
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showAddDialog = true },
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(screenPadding)
+                    .padding(bottom = innerPadding.calculateBottomPadding() + 16.dp)
+                    .size(56.dp)
+                    .shadow(12.dp, CircleShape),
+                containerColor = Color.Transparent,
+                elevation = FloatingActionButtonDefaults.elevation(0.dp)
             ) {
-                if (!hasPermission) {
-                    PermissionEmptyState(
-                        title = "Contacts Permission",
-                        description = "To show and manage your contacts, InfoCaller needs access to your contacts list."
-                    ) {
-                        launcher.launch(PermissionManager.CONTACTS_PERMISSIONS)
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            top = 16.dp,
-                            bottom = 80.dp,
-                            start = 16.dp,
-                            end = 16.dp
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            brush = Brush.linearGradient(colors = listOf(GradientStart, GradientEnd)),
+                            shape = CircleShape
                         ),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(filteredContacts, key = { it.id }) { contact ->
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Contact", tint = Color.Black)
+                }
+            }
+        }
+    ) { screenPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = screenPadding.calculateTopPadding())
+                .padding(bottom = innerPadding.calculateBottomPadding())
+        ) {
+            if (!hasPermission) {
+                PermissionEmptyState(
+                    title = "Contacts Permission",
+                    description = "To show and manage your contacts, InfoCaller needs access to your contacts list."
+                ) {
+                    launcher.launch(PermissionManager.CONTACTS_PERMISSIONS)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        top = 16.dp,
+                        bottom = 100.dp, 
+                        start = 16.dp,
+                        end = 16.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(filteredContacts, key = { it.id }) { contact ->
+                        var showMenu by remember { mutableStateOf(false) }
+                        Box {
                             ContactItem(
                                 contact = contact,
-                                onClick = { onNavigateToDetails(contact.phoneNumber) },
-                                viewModel = viewModel
+                                viewModel = viewModel,
+                                modifier = Modifier.combinedClickable(
+                                    onClick = { onNavigateToDetails(contact.phoneNumber) },
+                                    onLongClick = { showMenu = true }
+                                )
                             )
+                            
+                            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Call") },
+                                    onClick = { viewModel.searchNumber(contact.phoneNumber); onNavigateToDetails(contact.phoneNumber); showMenu = false },
+                                    leadingIcon = { Icon(Icons.Default.Call, null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Message") },
+                                    onClick = { PhoneNumberUtils.sendSms(context, contact.phoneNumber); showMenu = false },
+                                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.Message, null) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Copy Number") },
+                                    onClick = { 
+                                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Phone Number", contact.phoneNumber))
+                                        showMenu = false 
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.ContentCopy, null) }
+                                )
+                            }
                         }
                     }
                 }
@@ -242,7 +268,7 @@ fun ContactsScreen(
 }
 
 @Composable
-fun ContactItem(contact: LocalContactEntity, onClick: () -> Unit, viewModel: CallerViewModel) {
+fun ContactItem(contact: LocalContactEntity, viewModel: CallerViewModel, modifier: Modifier = Modifier) {
     val enrichment by viewModel.getEnrichment(contact.phoneNumber).collectAsState(initial = null)
     
     val displayName = remember(contact.displayName, enrichment?.publicName) {
@@ -256,9 +282,7 @@ fun ContactItem(contact: LocalContactEntity, onClick: () -> Unit, viewModel: Cal
     val photoUrl = contact.photoUri ?: enrichment?.profileImageUrl
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
+        modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
         shape = RoundedCornerShape(16.dp)
     ) {

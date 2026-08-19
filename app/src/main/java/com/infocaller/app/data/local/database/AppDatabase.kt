@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.infocaller.app.data.local.dao.CallerDao
 import com.infocaller.app.data.local.dao.BlocklistDao
 import com.infocaller.app.data.local.dao.LocalContactDao
@@ -39,6 +41,14 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE contact_enrichment ADD COLUMN alternateName TEXT")
+                database.execSQL("ALTER TABLE contact_enrichment ADD COLUMN timezone TEXT")
+                database.execSQL("ALTER TABLE contact_enrichment ADD COLUMN email TEXT")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -46,6 +56,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "infocaller_database"
                 )
+                .addMigrations(MIGRATION_12_13)
                 .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance

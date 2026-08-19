@@ -7,6 +7,8 @@ class BusinessProviderImpl : BusinessProvider {
     override val name: String = "Public Business Index"
     override val version: String = "1.0.0"
     override val capabilities: Set<Capability> = setOf(Capability.BUSINESS)
+    override val priority: Int = 20
+    override val costClass: CostClass = CostClass.FREE
 
     override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? {
         if (normalizedPhoneNumber.endsWith("000")) {
@@ -18,6 +20,6 @@ class BusinessProviderImpl : BusinessProvider {
                 providerVersion = version
             )
         }
-        return PartialResult()
+        return null
     }
 }

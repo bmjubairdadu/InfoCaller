@@ -6,4 +6,10 @@
         <item name="android:navigationBarColor">#000000</item>
         <item name="android:windowNoTitle">true</item>
     </style>
+
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#000000</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/app_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.InfoCaller</item>
+    </style>
 </resources>

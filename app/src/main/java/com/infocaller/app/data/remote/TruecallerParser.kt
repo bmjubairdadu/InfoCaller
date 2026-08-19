@@ -44,6 +44,8 @@ object TruecallerParser {
         val spam = data.get("spamInfo")?.asJsonObject
         val score = spam?.get("spamScore")?.asInt ?: 0
         val type = spam?.get("spamType")?.asString
+        
+        val carrier = data.get("carrier")?.asString
 
         return PartialResult(
             name = name,
@@ -54,11 +56,12 @@ object TruecallerParser {
             country = country,
             timezone = timezone,
             email = email,
+            carrier = carrier,
             socialProfiles = socialProfiles,
             spamScore = score,
             spamType = type,
             confidence = 0.95f,
-            source = "Truecaller Official",
+            source = "Truecaller Intelligence",
             providerId = providerId,
             providerVersion = providerVersion
         )

@@ -110,7 +110,7 @@ object OperatorBrandResolver {
         return OperatorBrand(
             operatorName = carrierName ?: displayName ?: "Unknown",
             normalizedName = "unknown",
-            brandColor = 0xFF607D8B.toInt() // Generic Blue Grey
+            brandColor = 0xFFFBBF24.toInt() // Amber (InfoCaller Brand)
         )
     }
 

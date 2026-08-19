@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class TruecallerProviderImpl(private val context: Context) : LookupProvider {
     override val id: String = "truecaller_v2"
@@ -29,12 +31,70 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
         Capability.EMAIL,
         Capability.PUBLIC_PROFILE
     )
+    override val priority: Int = 80
+    override val costClass: CostClass = CostClass.LOW
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 
     private val gson = Gson()
+
+    suspend fun startAuth(phoneNumber: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val cleanNumber = phoneNumber.filter { it.isDigit() }
+            val url = "https://account-asia-south1.truecaller.com/v1/sendOtp"
+            val requestBody = JsonObject().apply {
+                addProperty("phoneNumber", cleanNumber)
+                addProperty("countryCode", PhoneNumberUtils.getCountryCode(phoneNumber) ?: "BD")
+                addProperty("installationId", java.util.UUID.randomUUID().toString())
+            }.toString().toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (response.isSuccessful) {
+                val body = response.body?.string()
+                return@withContext gson.fromJson(body, JsonObject::class.java).get("requestId")?.asString
+            }
+        } catch (e: Exception) {
+            Log.e("TruecallerAuth", "OTP send failed", e)
+        }
+        null
+    }
+
+    suspend fun completeAuth(phoneNumber: String, requestId: String, otp: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val url = "https://account-asia-south1.truecaller.com/v1/verifyOtp"
+            val requestBody = JsonObject().apply {
+                addProperty("phoneNumber", phoneNumber.filter { it.isDigit() })
+                addProperty("requestId", requestId)
+                addProperty("otp", otp)
+            }.toString().toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url(url)
+                .post(requestBody)
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (response.isSuccessful) {
+                val body = response.body?.string()
+                val token = gson.fromJson(body, JsonObject::class.java).get("accessToken")?.asString
+                if (token != null) {
+                    context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+                        .edit().putString("truecaller_token", token).apply()
+                    return@withContext true
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("TruecallerAuth", "OTP verify failed", e)
+        }
+        false
+    }
 
     override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         val token = getAuthToken() ?: return@withContext null

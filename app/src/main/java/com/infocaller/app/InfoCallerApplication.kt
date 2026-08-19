@@ -34,8 +34,14 @@ class InfoCallerApplication : Application() {
             .addConverterFactory(retrofit2.converter.gson.GsonConverterFactory.create())
             .build()
         
+        val apifyRetrofit = retrofit2.Retrofit.Builder()
+            .baseUrl("https://api.apify.com/v2/")
+            .addConverterFactory(retrofit2.converter.gson.GsonConverterFactory.create())
+            .build()
+        
         val backendService = retrofit.create(BackendApiService::class.java)
         registryService = retrofit.create(RegistryApiService::class.java)
+        val apifyService = apifyRetrofit.create(ApifyApiService::class.java)
 
         // 3. Register Providers
         providerManager.registerProvider(RegistryLookupProvider(registryService)) // Shared Registry First
@@ -44,7 +50,7 @@ class InfoCallerApplication : Application() {
         providerManager.registerProvider(GoogleSearchProviderImpl())
         providerManager.registerProvider(BusinessProviderImpl())
         providerManager.registerProvider(TruecallerProviderImpl(this))
-        providerManager.registerProvider(ApifyLookupProviderImpl(backendService))
+        providerManager.registerProvider(ApifyLookupProviderImpl(apifyService))
 
         lookupEngine = PublicLookupEngine(providerManager)
 

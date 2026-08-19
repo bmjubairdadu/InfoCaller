@@ -95,6 +95,63 @@ fun DeveloperToolsScreen(
             }
 
             InfoSection("Auth Credentials") {
+                val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
+                val truecallerProvider = app.providerManager.getHealthyProviders().find { it.id == "truecaller_v2" } as? com.infocaller.app.data.remote.TruecallerProviderImpl
+                
+                var phoneForAuth by remember { mutableStateOf("") }
+                var requestId by remember { mutableStateOf<String?>(null) }
+                var otpInput by remember { mutableStateOf("") }
+                
+                if (requestId == null) {
+                    Text("Truecaller Authentication", style = MaterialTheme.typography.labelMedium, color = Primary)
+                    OutlinedTextField(
+                        value = phoneForAuth,
+                        onValueChange = { phoneForAuth = it },
+                        label = { Text("Phone Number") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                requestId = truecallerProvider?.startAuth(phoneForAuth)
+                            }
+                        },
+                        modifier = Modifier.padding(top = 8.dp).fillMaxWidth()
+                    ) {
+                        Text("Send OTP")
+                    }
+                } else {
+                    Text("Enter OTP for $phoneForAuth", style = MaterialTheme.typography.labelMedium, color = Primary)
+                    OutlinedTextField(
+                        value = otpInput,
+                        onValueChange = { otpInput = it },
+                        label = { Text("OTP") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                val success = truecallerProvider?.completeAuth(phoneForAuth, requestId!!, otpInput) == true
+                                if (success) {
+                                    requestId = null
+                                    phoneForAuth = ""
+                                    otpInput = ""
+                                }
+                            }
+                        },
+                        modifier = Modifier.padding(top = 8.dp).fillMaxWidth()
+                    ) {
+                        Text("Verify OTP")
+                    }
+                    TextButton(onClick = { requestId = null }) {
+                        Text("Cancel", color = Color.White.copy(alpha = 0.6f))
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+                Spacer(modifier = Modifier.height(16.dp))
+
                 var truecallerToken by remember { 
                     val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
                     mutableStateOf(prefs.getString("truecaller_token", "") ?: "") 
@@ -344,10 +401,16 @@ fun DeveloperToolsScreen(
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
-                    onClick = { /* TODO: Trigger Update Check */ },
+                    onClick = { 
+                        scope.launch {
+                            androidx.work.WorkManager.getInstance(context).enqueue(
+                                androidx.work.OneTimeWorkRequestBuilder<com.infocaller.app.worker.ProviderUpdateWorker>().build()
+                            )
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("Check for Provider Updates")
+                    Text("Force Provider Update Sync")
                 }
             }
         }

@@ -28,7 +28,7 @@ fun NavGraph(
         PermissionManager.hasPermission(context, android.Manifest.permission.POST_NOTIFICATIONS)
     } else true
 
-    val startDest = if (isCoreOk && isOverlayOk && isNotificationsOk) "main" else "onboarding"
+    val startDest = "launcher"
 
     NavHost(
         navController = navController,
@@ -38,6 +38,14 @@ fun NavGraph(
         popEnterTransition = { fadeIn(animationSpec = tween(200)) },
         popExitTransition = { fadeOut(animationSpec = tween(200)) }
     ) {
+        composable("launcher") {
+            InfoCallerLauncherScreen(onLauncherComplete = {
+                val nextDest = if (isCoreOk && isOverlayOk && isNotificationsOk) "main" else "onboarding"
+                navController.navigate(nextDest) {
+                    popUpTo("launcher") { inclusive = true }
+                }
+            })
+        }
         composable("onboarding") {
             OnboardingScreen(onComplete = {
                 navController.navigate("main") {
@@ -90,8 +98,12 @@ fun NavGraph(
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 viewModel = viewModel,
-                onNavigateToPrivacy = { navController.navigate("privacy") }
+                onNavigateToPrivacy = { navController.navigate("privacy") },
+                onNavigateToProviderAuth = { navController.navigate("provider_auth") }
             )
+        }
+        composable("provider_auth") {
+            ProviderAuthScreen(onBack = { navController.popBackStack() })
         }
         composable("privacy") {
             PrivacyPolicyScreen(onBack = { navController.popBackStack() })

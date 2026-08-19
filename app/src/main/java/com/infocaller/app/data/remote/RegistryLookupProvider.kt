@@ -16,6 +16,8 @@ class RegistryLookupProvider(
         Capability.PUBLIC_SEARCH, Capability.PROFILE_PHOTO, Capability.PHONE_METADATA,
         Capability.CARRIER, Capability.WHATSAPP, Capability.TELEGRAM, Capability.SPAM_CHECK
     )
+    override val priority: Int = 95
+    override val costClass: CostClass = CostClass.LOW
 
     override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         try {

@@ -29,13 +29,17 @@ class CallerViewModel(
     private val lookupEngine: com.infocaller.app.domain.engine.PublicLookupEngine
 ) : ViewModel() {
 
-    private val _themeMode = MutableStateFlow(true) // Default to Dark
-    val themeMode: StateFlow<Boolean> = _themeMode.asStateFlow()
+    private val _themeMode = MutableStateFlow<Boolean?>(true) // Default to Dark, null means System
+    val themeMode: StateFlow<Boolean?> = _themeMode.asStateFlow()
 
-    fun setThemeMode(isDark: Boolean, context: android.content.Context) {
+    fun setThemeMode(isDark: Boolean?, context: android.content.Context) {
         _themeMode.value = isDark
-        context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-            .edit().putBoolean("dark_theme", isDark).apply()
+        val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+        if (isDark == null) {
+            prefs.edit().remove("dark_theme").apply()
+        } else {
+            prefs.edit().putBoolean("dark_theme", isDark).apply()
+        }
     }
 
     private val _searchResult = MutableStateFlow<SearchUiState>(SearchUiState.Idle)
@@ -100,7 +104,15 @@ class CallerViewModel(
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
     fun performMasterSync() {
-        // Implementation omitted for brevity
+        viewModelScope.launch {
+            _syncState.value = SyncState.Syncing(0f)
+            try {
+                contactEnrichmentService.enrichAllContactsInBg()
+                _syncState.value = SyncState.Completed
+            } catch (_: Exception) {
+                _syncState.value = SyncState.Idle
+            }
+        }
     }
 
     private val _waSyncState = MutableStateFlow<SyncState>(SyncState.Idle)

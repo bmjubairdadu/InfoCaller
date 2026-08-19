@@ -31,10 +31,9 @@ object PhoneNumberUtils {
         }
     }
 
-    fun getImageUrl(phoneNumber: String): String {
-        val normalized = normalize(phoneNumber)
-        val cleanNumber = normalized.removePrefix("+")
-        return "https://whatsapp-db.checkleaked.com/$cleanNumber.jpg"
+    fun getImageUrl(@Suppress("UNUSED_PARAMETER") phoneNumber: String): String? {
+        // Removed unsafe checkleaked.com source as per instruction 33
+        return null
     }
 
     fun getCarrierInfo(phoneNumber: String, context: Context? = null): String? {

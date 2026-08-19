@@ -14,16 +14,25 @@ app.use(express.json());
 // CONFIGURATION
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_REPO = process.env.GITHUB_REPO || 'bmjubairdadu/InfoCaller-Provider-Registry';
+const API_KEY = process.env.INFOCALLER_API_KEY; // Secured endpoint
 const APIFY_TOKEN = process.env.APIFY_TOKEN;
+
+// Auth Middleware
+const authenticate = (req, res, next) => {
+    const authHeader = req.headers['x-api-key'];
+    if (!API_KEY || authHeader === API_KEY) {
+        next();
+    } else {
+        res.status(401).json({ error: 'Unauthorized' });
+    }
+};
 
 // 1. PROVIDER REGISTRY RELAY
 app.get('/api/v1/providers/manifest', async (req, res) => {
     const cacheKey = 'provider_manifest';
     const cachedData = cache.get(cacheKey);
 
-    if (cachedData) {
-        return res.json(cachedData);
-    }
+    if (cachedData) return res.json(cachedData);
 
     try {
         const response = await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/manifest.json`, {
@@ -35,17 +44,10 @@ app.get('/api/v1/providers/manifest', async (req, res) => {
 
         const content = Buffer.from(response.data.content, 'base64').toString('utf8');
         const manifest = JSON.parse(content);
-
-        // VALIDATION
-        if (!manifest.schemaVersion || !Array.isArray(manifest.providers)) {
-            throw new Error('Invalid manifest structure');
-        }
-
         cache.set(cacheKey, manifest);
         res.json(manifest);
     } catch (error) {
         console.error('Registry Error:', error.message);
-        if (cachedData) return res.json(cachedData);
         res.status(502).json({ error: 'Failed to fetch provider manifest' });
     }
 });
@@ -75,12 +77,13 @@ app.get('/api/v1/registry/lookup/:number', async (req, res) => {
     }
 });
 
-// 3. SHARED REGISTRY PUBLISH
-app.post('/api/v1/registry/publish', async (req, res) => {
+// 3. SHARED REGISTRY PUBLISH (Secured)
+app.post('/api/v1/registry/publish', authenticate, async (req, res) => {
     const record = req.body;
-    if (!record.number) return res.status(400).json({ error: 'number is required' });
+    const number = record.number || record.phoneNumber;
+    if (!number) return res.status(400).json({ error: 'number is required' });
 
-    const cleanNumber = record.number.replace(/\+/g, '');
+    const cleanNumber = number.replace(/\+/g, '');
     const path = `registry/numbers/${cleanNumber}.json`;
 
     try {
@@ -98,7 +101,7 @@ app.post('/api/v1/registry/publish', async (req, res) => {
         const mergedRecord = mergeRecords(existingContent, record);
 
         await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
-            message: `Update registry for ${record.number}`,
+            message: `Update registry for ${number}`,
             content: Buffer.from(JSON.stringify(mergedRecord, null, 2)).toString('base64'),
             sha: existingSha
         }, {
@@ -115,14 +118,17 @@ app.post('/api/v1/registry/publish', async (req, res) => {
 function mergeRecords(existing, incoming) {
     if (!existing) return { ...incoming, updatedAt: Date.now() };
 
-    // Privacy: Ensure no local names leak (though publisher should handle it, we double check here)
-    const result = { ...existing, ...incoming };
+    // Privacy Safe Merge: Skip sensitive fields
+    const blacklist = ['localName', 'contactId', 'privateNote'];
+    const result = { ...existing };
 
-    // Logic: Prefer higher confidence or newer timestamp for specific fields if we had that metadata
-    // For now, simple merge of non-null fields
     for (const key in incoming) {
+        if (blacklist.includes(key)) continue;
         if (incoming[key] !== null && incoming[key] !== undefined) {
-            result[key] = incoming[key];
+            // Priority Logic: Prefer "HIGH" confidence over "MEDIUM"
+            if (incoming.confidence === 'HIGH' || !existing[key]) {
+                result[key] = incoming[key];
+            }
         }
     }
 
@@ -130,10 +136,9 @@ function mergeRecords(existing, incoming) {
     return result;
 }
 
-// 4. PHONE LOOKUP RELAY (APIFY/WHATSAPP)
-app.post('/api/v1/lookup/phone', async (req, res) => {
+// 4. PHONE LOOKUP RELAY
+app.post('/api/v1/lookup/phone', authenticate, async (req, res) => {
     const { phoneNumber } = req.body;
-
     if (!phoneNumber) return res.status(400).json({ error: 'phoneNumber is required' });
 
     try {
@@ -161,7 +166,7 @@ app.post('/api/v1/lookup/phone', async (req, res) => {
             phoneNumber: item.number,
             publicName: item.lookup?.name || item.lookup?.displayName || null,
             profileImageUrl: item.urlImage || item.lookup?.profilePicture || null,
-            about: item.about || item.lookup?.about || null,
+            about: item.about || item.lookup?.about || item.description || null,
             carrier: item.carrier || item.lookup?.carrier || null,
             country: item.country || 'Bangladesh',
             region: item.region || null,
@@ -171,7 +176,7 @@ app.post('/api/v1/lookup/phone', async (req, res) => {
             isBusiness: item.isBusiness || false,
             source: 'whatsapp_intel',
             confidence: item.exists ? 'HIGH' : 'MEDIUM',
-            lastChecked: new Date().toISOString()
+            lastChecked: Date.now()
         };
 
         res.json(normalizedResponse);

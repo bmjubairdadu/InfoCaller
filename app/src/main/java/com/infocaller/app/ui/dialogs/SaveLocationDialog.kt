@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.infocaller.app.ui.theme.glassy
 import com.infocaller.app.util.SimManager
+import com.infocaller.app.ui.components.InfoCallerLoading
 
 data class SaveAccount(
     val name: String,
@@ -72,7 +73,7 @@ fun SaveLocationDialog(
                 }
                 
                 if (accounts.isEmpty()) {
-                    CircularProgressIndicator(color = Color.White)
+                    InfoCallerLoading(size = 48.dp, text = "Loading Accounts...")
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))

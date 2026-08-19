@@ -92,18 +92,21 @@ class ContinuousEnrichmentEngine(
             val isStale = existing == null || existing.expiresAt < System.currentTimeMillis()
             
             val required = mutableSetOf<Capability>()
-            if (existing?.publicName == null || isStale) required.add(Capability.PUBLIC_SEARCH)
-            if (existing?.profileImageUrl == null || isStale) required.add(Capability.PROFILE_PHOTO)
-            if (existing?.city == null || isStale) required.add(Capability.CITY)
-            if (existing?.country == null || isStale) required.add(Capability.COUNTRY)
-            if (existing?.carrier == null || isStale) required.add(Capability.CARRIER)
-            if (existing?.isBusiness == null || isStale) required.add(Capability.BUSINESS)
-            if (existing?.whatsappStatus == null || isStale) required.add(Capability.WHATSAPP)
-            if (existing?.telegramStatus == null || isStale) required.add(Capability.TELEGRAM)
-            if (existing?.spamStatus == null || isStale) required.add(Capability.SPAM_CHECK)
-            if (existing?.alternateName == null || isStale) required.add(Capability.ALTERNATE_NAME)
-            if (existing?.timezone == null || isStale) required.add(Capability.TIMEZONE)
-            if (existing?.email == null || isStale) required.add(Capability.EMAIL)
+            if (existing?.publicName == null) required.add(Capability.PUBLIC_SEARCH)
+            if (existing?.profileImageUrl == null) required.add(Capability.PROFILE_PHOTO)
+            if (existing?.city == null) required.add(Capability.CITY)
+            if (existing?.country == null) required.add(Capability.COUNTRY)
+            if (existing?.carrier == null) required.add(Capability.CARRIER)
+            if (existing?.isBusiness == null) required.add(Capability.BUSINESS)
+            if (existing?.whatsappStatus == null) required.add(Capability.WHATSAPP)
+            if (existing?.telegramStatus == null) required.add(Capability.TELEGRAM)
+            if (existing?.spamStatus == null) required.add(Capability.SPAM_CHECK)
+            
+            // If globally stale, refresh critical identifying fields regardless
+            if (isStale) {
+                required.add(Capability.PUBLIC_SEARCH)
+                required.add(Capability.SPAM_CHECK)
+            }
 
             if (required.isEmpty()) {
                 queueDao.insertOrUpdate(item.copy(status = QueueStatus.COMPLETED, attemptCount = item.attemptCount + 1))
@@ -164,7 +167,8 @@ class ContinuousEnrichmentEngine(
                 telegramStatus = result.socialProfiles.find { it.platform == "Telegram" }?.status?.name,
                 isBusiness = result.isBusiness,
                 source = "user_contributed",
-                confidence = if (result.confidence > 0.8f) "HIGH" else "MEDIUM"
+                confidence = if (result.confidence > 0.8f) "HIGH" else "MEDIUM",
+                lastChecked = System.currentTimeMillis()
             )
             backendService.publishToRegistry(record)
         } catch (e: Exception) {

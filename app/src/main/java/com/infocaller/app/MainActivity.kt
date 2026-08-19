@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.rememberNavController
@@ -21,6 +22,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         
         // Schedule periodic enrichment sync
@@ -78,12 +80,18 @@ class MainActivity : ComponentActivity() {
             // Initialize theme from prefs once
             LaunchedEffect(Unit) {
                 val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-                viewModel.setThemeMode(prefs.getBoolean("dark_theme", true), context)
+                val stored = if (prefs.contains("dark_theme")) prefs.getBoolean("dark_theme", true) else null
+                viewModel.setThemeMode(stored, context)
             }
 
-            val isDarkTheme by viewModel.themeMode.collectAsState()
+            val themeMode by viewModel.themeMode.collectAsState()
+            val darkTheme = when (themeMode) {
+                true -> true
+                false -> false
+                null -> androidx.compose.foundation.isSystemInDarkTheme()
+            }
 
-            InfoCallerTheme(darkTheme = isDarkTheme) {
+            InfoCallerTheme(darkTheme = darkTheme) {
                 val navController = rememberNavController()
 
                 NavGraph(

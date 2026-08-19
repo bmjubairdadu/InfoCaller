@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -27,12 +28,11 @@ import coil.compose.AsyncImage
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import com.infocaller.app.domain.model.Caller
 import com.infocaller.app.domain.model.SocialProfile
+import com.infocaller.app.ui.components.InfoCallerLoading
 import com.infocaller.app.ui.theme.*
 import com.infocaller.app.ui.viewmodel.CallerViewModel
 import com.infocaller.app.ui.viewmodel.SearchUiState
 import com.infocaller.app.util.*
-import com.infocaller.app.data.local.entity.ContactEnrichmentEntity
-import com.infocaller.app.data.local.entity.LocalContactEntity
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -102,38 +102,46 @@ fun DetailsScreen(
                     modifier = Modifier
                         .padding(16.dp)
                         .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(
+                    // Circular Call Button
+                    Surface(
                         onClick = { onMakeCall(phoneNumber) },
-                        modifier = Modifier.weight(1f).height(56.dp),
-                        shape = RoundedCornerShape(28.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                        modifier = Modifier
+                            .size(64.dp)
+                            .shadow(12.dp, CircleShape),
+                        shape = CircleShape,
+                        color = Color.Transparent
                     ) {
-                        Icon(Icons.Default.Call, null, tint = Color.Black)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Call", color = Color.Black, fontWeight = FontWeight.Bold)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Brush.linearGradient(colors = listOf(GradientStart, GradientEnd))),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Call, "Call", tint = Color.Black, modifier = Modifier.size(32.dp))
+                        }
                     }
                     
                     OutlinedButton(
                         onClick = { 
                             com.infocaller.app.util.PhoneNumberUtils.sendSms(context, phoneNumber)
                         },
-                        modifier = Modifier.weight(1f).height(56.dp),
-                        shape = RoundedCornerShape(28.dp)
+                        modifier = Modifier.height(56.dp).weight(1f).padding(start = 32.dp),
+                        shape = RoundedCornerShape(28.dp),
+                        border = androidx.compose.foundation.BorderStroke(2.dp, Primary.copy(alpha = 0.5f))
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.Message, null)
+                        Icon(Icons.AutoMirrored.Filled.Message, null, tint = Primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("Message")
+                        Text("Message", color = Primary, fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
     ) { innerPadding ->
         if (phoneNumber.isBlank() && caller == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Primary)
-            }
+            InfoCallerLoading(text = "Identifying...")
         } else {
             Column(
                 modifier = Modifier

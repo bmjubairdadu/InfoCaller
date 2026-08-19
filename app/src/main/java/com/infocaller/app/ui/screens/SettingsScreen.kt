@@ -1,6 +1,7 @@
 package com.infocaller.app.ui.screens
 
 import android.content.Context
+import androidx.core.content.edit
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -29,7 +30,8 @@ import com.infocaller.app.ui.theme.Primary
 fun SettingsScreen(
     onBack: () -> Unit,
     viewModel: com.infocaller.app.ui.viewmodel.CallerViewModel,
-    onNavigateToPrivacy: () -> Unit = {}
+    onNavigateToPrivacy: () -> Unit = {},
+    onNavigateToProviderAuth: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
@@ -84,26 +86,48 @@ fun SettingsScreen(
                     checked = spamProtection,
                     onCheckedChange = { 
                         spamProtection = it
-                        prefs.edit().putBoolean("spam_protection_enabled", it).apply()
+                        context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).edit {
+                            putBoolean("spam_protection_enabled", it)
+                        }
                     }
                 )
             }
 
             SettingsSection("Appearance") {
                 val darkTheme by viewModel.themeMode.collectAsState()
-                SettingsToggleRow(
-                    title = "Dark Theme",
-                    subtitle = "Toggle OLED friendly mode",
-                    icon = Icons.Default.Palette,
-                    checked = darkTheme,
-                    onCheckedChange = { 
-                        viewModel.setThemeMode(it, context)
-                    }
+                
+                ListItem(
+                    headlineContent = { Text("Theme") },
+                    supportingContent = { Text("Select your preferred visual style") },
+                    leadingContent = { Icon(Icons.Default.Palette, null, tint = Primary) },
+                    trailingContent = {
+                        var expanded by remember { mutableStateOf(false) }
+                        Box {
+                            TextButton(onClick = { expanded = true }) {
+                                Text(if (darkTheme == null) "System" else if (darkTheme == true) "Dark" else "Light", color = Primary)
+                            }
+                            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                DropdownMenuItem(text = { Text("Light") }, onClick = { viewModel.setThemeMode(false, context); expanded = false })
+                                DropdownMenuItem(text = { Text("Dark") }, onClick = { viewModel.setThemeMode(true, context); expanded = false })
+                                DropdownMenuItem(text = { Text("System Default") }, onClick = { viewModel.setThemeMode(null, context); expanded = false })
+                            }
+                        }
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+            }
+
+            SettingsSection("Intelligence") {
+                SettingsClickRow(
+                    title = "Provider Authorization",
+                    subtitle = "Truecaller, WhatsApp, etc.",
+                    icon = Icons.Default.CloudSync,
+                    onClick = onNavigateToProviderAuth
                 )
             }
 
             SettingsSection("About") {
-                SettingsInfoRow("Version", "1.7.0 (Final Release)", Icons.Default.Info)
+                SettingsInfoRow("Version", "1.7.5 (Gold)", Icons.Default.Info)
                 SettingsClickRow(
                     title = "Privacy Policy",
                     subtitle = "Read our data policy",

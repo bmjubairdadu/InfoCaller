@@ -18,6 +18,12 @@ interface LocalContactDao {
     @Update
     suspend fun updateContact(contact: LocalContactEntity)
 
+    @Query("SELECT * FROM local_contacts ORDER BY displayName ASC")
+    suspend fun getAllContactsSync(): List<LocalContactEntity>
+
+    @Query("DELETE FROM local_contacts WHERE phoneNumber = :number")
+    suspend fun deleteByNumber(number: String)
+
     @Query("DELETE FROM local_contacts")
     suspend fun deleteAll()
 }

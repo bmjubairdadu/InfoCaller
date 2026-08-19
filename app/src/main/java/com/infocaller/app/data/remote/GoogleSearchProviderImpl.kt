@@ -10,6 +10,8 @@ class GoogleSearchProviderImpl : SearchProvider {
     override val name: String = "Google OSINT"
     override val version: String = "1.0.0"
     override val capabilities: Set<Capability> = setOf(Capability.PUBLIC_SEARCH)
+    override val priority: Int = 40
+    override val costClass: CostClass = CostClass.FREE
 
     override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? {
         return try {
@@ -45,9 +47,9 @@ class GoogleSearchProviderImpl : SearchProvider {
                     }
                 }
             }
-            PartialResult()
+            null
         } catch (e: Exception) {
-            PartialResult()
+            null
         }
     }
 }

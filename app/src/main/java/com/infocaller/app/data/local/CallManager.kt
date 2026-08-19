@@ -17,6 +17,9 @@ object CallManager {
     private val _activeCall = MutableStateFlow<Call?>(null)
     val activeCall = _activeCall.asStateFlow()
     
+    private val _callState = MutableStateFlow(Call.STATE_DISCONNECTED)
+    val callState = _callState.asStateFlow()
+    
     private val _isMuted = MutableStateFlow(value = false)
     val isMuted = _activeCall.asStateFlow().let { _isMuted.asStateFlow() } // Dummy use of _activeCall to satisfy analyzer if needed, but better just fix it
     
@@ -45,9 +48,19 @@ object CallManager {
 
     fun updateCall(call: Call?) {
         _activeCall.value = call
+        _callState.value = call?.state ?: Call.STATE_DISCONNECTED
         if (call == null) {
             _isHolding.value = false
             stopRecording()
+        } else {
+            call.registerCallback(object : Call.Callback() {
+                override fun onStateChanged(call: Call, state: Int) {
+                    _callState.value = state
+                    if (state == Call.STATE_DISCONNECTED) {
+                        updateCall(null)
+                    }
+                }
+            })
         }
     }
     
@@ -88,11 +101,19 @@ object CallManager {
     }
 
     fun answer() {
-        _activeCall.value?.answer(android.telecom.VideoProfile.STATE_AUDIO_ONLY)
+        val call = _activeCall.value ?: return
+        if (call.state == Call.STATE_RINGING) {
+            call.answer(android.telecom.VideoProfile.STATE_AUDIO_ONLY)
+        }
     }
 
     fun decline() {
-        _activeCall.value?.disconnect()
+        val call = _activeCall.value ?: return
+        if (call.state == Call.STATE_RINGING) {
+            call.reject(false, null)
+        } else {
+            call.disconnect()
+        }
     }
 
     fun startRecording(activity: Activity, phoneNumber: String): Boolean {

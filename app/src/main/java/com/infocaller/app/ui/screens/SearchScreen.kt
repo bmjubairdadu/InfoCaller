@@ -12,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.infocaller.app.ui.components.InfoCallerLoading
 import com.infocaller.app.ui.theme.*
 import com.infocaller.app.ui.viewmodel.CallerViewModel
 import com.infocaller.app.ui.viewmodel.SearchUiState
@@ -47,7 +48,7 @@ fun SearchScreen(
         ) {
             when (uiState) {
                 is SearchUiState.Idle -> Text("Type a number to begin...", color = Color.White.copy(alpha = 0.5f))
-                is SearchUiState.Loading -> CircularProgressIndicator(color = Primary)
+                is SearchUiState.Loading -> InfoCallerLoading(text = "Searching...")
                 is SearchUiState.Success -> {
                     val caller = (uiState as SearchUiState.Success).caller
                     Card(

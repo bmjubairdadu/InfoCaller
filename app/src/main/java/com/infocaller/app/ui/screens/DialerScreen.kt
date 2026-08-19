@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
@@ -25,6 +26,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -51,6 +54,7 @@ fun DialerScreen(
 ) {
     val dialerInputRaw by viewModel.dialerInput.collectAsState()
     var textFieldValue by remember { mutableStateOf(TextFieldValue(dialerInputRaw)) }
+    val focusRequester = remember { FocusRequester() }
     
     // Sync external changes (e.g. paste chip) to textFieldValue
     LaunchedEffect(dialerInputRaw) {
@@ -218,37 +222,42 @@ fun DialerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(100.dp),
+                    .height(100.dp)
+                    .clickable { focusRequester.requestFocus() },
                 contentAlignment = Alignment.Center
             ) {
-                BasicTextField(
-                    value = textFieldValue,
-                    onValueChange = { 
-                        textFieldValue = it
-                        viewModel.updateDialerInput(it.text)
-                    },
-                    textStyle = TextStyle(
-                        fontSize = if (textFieldValue.text.length > 12) 32.sp else 44.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                    cursorBrush = SolidColor(Primary),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                    singleLine = true,
-                    decorationBox = { innerTextField ->
-                        if (textFieldValue.text.isEmpty()) {
-                            Text(
-                                " ",
-                                style = MaterialTheme.typography.displayLarge,
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                            )
+                SelectionContainer {
+                    BasicTextField(
+                        value = textFieldValue,
+                        onValueChange = { 
+                            textFieldValue = it
+                            viewModel.updateDialerInput(it.text)
+                        },
+                        textStyle = TextStyle(
+                            fontSize = if (textFieldValue.text.length > 12) 32.sp else 44.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester),
+                        cursorBrush = SolidColor(Primary),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        singleLine = true,
+                        decorationBox = { innerTextField ->
+                            if (textFieldValue.text.isEmpty()) {
+                                Text(
+                                    " ",
+                                    style = MaterialTheme.typography.displayLarge,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                            innerTextField()
                         }
-                        innerTextField()
-                    }
-                )
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))

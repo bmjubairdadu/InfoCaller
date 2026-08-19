@@ -25,12 +25,17 @@ data class ApifyLookupItem(
     val exists: Boolean? = null,
     val isBusiness: Boolean? = null,
     val urlImage: String? = null,
+    val profilePicture: String? = null,
     val about: String? = null,
     val source: String? = null,
     val fetchedAt: String? = null,
     val carrier: String? = null,
     val country: String? = null,
     val region: String? = null,
+    val category: String? = null,
+    val description: String? = null,
+    val website: String? = null,
+    val location: String? = null,
     val telegram: TelegramResult? = null,
     val google: GoogleResult? = null,
     val lookup: Map<String, Any>? = null
@@ -41,16 +46,26 @@ data class TelegramResult(
     val error: String? = null,
     val phone: String? = null,
     val username: String? = null,
-    val name: String? = null
+    val name: String? = null,
+    val bio: String? = null,
+    val photo: String? = null
 )
 
 @Keep
 data class GoogleResult(
     val error: String? = null,
-    val success: Any? = null
+    val success: Any? = null,
+    val results: List<GoogleSearchItem>? = null
 )
 
-// InfoCaller Normalized Format for Backend (as per instruction 20)
+@Keep
+data class GoogleSearchItem(
+    val title: String? = null,
+    val link: String? = null,
+    val snippet: String? = null
+)
+
+// InfoCaller Normalized Format for Backend
 @Keep
 data class InfoCallerLookupResponse(
     val phoneNumber: String,
@@ -71,5 +86,5 @@ data class InfoCallerLookupResponse(
     val isBusiness: Boolean? = null,
     val source: String? = null,
     val confidence: String? = null,
-    val lastChecked: String? = null
+    val lastChecked: Long? = null
 )

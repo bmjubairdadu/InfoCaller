@@ -7,6 +7,8 @@ interface LookupProvider {
     val name: String
     val version: String
     val capabilities: Set<Capability>
+    val priority: Int // Higher means more preferred
+    val costClass: CostClass
     
     suspend fun lookup(
         normalizedPhoneNumber: String,
@@ -79,4 +81,11 @@ enum class ProviderStatus {
     OFFLINE,
     BROKEN,
     DISABLED
+}
+
+enum class CostClass {
+    FREE, // Local or built-in
+    LOW,  // Authorized free API
+    MEDIUM, // Paid or limited API
+    HIGH   // Very expensive API
 }
