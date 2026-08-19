@@ -3,6 +3,7 @@ package com.infocaller.app.util
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import com.google.i18n.phonenumbers.PhoneNumberUtil
 import com.google.i18n.phonenumbers.Phonenumber.PhoneNumber
 import java.util.Locale
@@ -10,21 +11,40 @@ import java.util.Locale
 object PhoneNumberUtils {
     private val phoneUtil = PhoneNumberUtil.getInstance()
 
+    /**
+     * Standardizes phone numbers to E.164 format.
+     * This is the single source of truth for normalization across InfoCaller.
+     */
     fun normalize(phoneNumber: String, defaultRegion: String = "BD"): String {
         val trimmed = phoneNumber.trim()
         if (trimmed.isEmpty()) return ""
+        
+        // Remove all non-essential formatting characters
+        val digitsOnly = trimmed.filter { it.isDigit() || it == '+' }
+        
         try {
-            val parsed: PhoneNumber = phoneUtil.parse(trimmed, defaultRegion)
+            val parsed: PhoneNumber = phoneUtil.parse(digitsOnly, defaultRegion)
             if (phoneUtil.isValidNumber(parsed) || phoneUtil.isPossibleNumber(parsed)) {
                 return phoneUtil.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
             }
-        } catch (_: Exception) {}
-        return trimmed.filter { it.isDigit() || it == '+' }
+        } catch (e: Exception) {
+            Log.w("PhoneNumberUtils", "Normalization failed for $trimmed: ${e.message}")
+        }
+        
+        // Final fallback: Ensure it starts with + if it looks like an international number
+        return if (digitsOnly.startsWith("880") && digitsOnly.length == 13) {
+            "+$digitsOnly"
+        } else if (digitsOnly.startsWith("0") && digitsOnly.length == 11 && defaultRegion == "BD") {
+            "+88$digitsOnly"
+        } else {
+            digitsOnly
+        }
     }
 
     fun getCountryCode(phoneNumber: String): String? {
         return try {
-            val parsed = phoneUtil.parse(phoneNumber, "")
+            val normalized = normalize(phoneNumber)
+            val parsed = phoneUtil.parse(normalized, "")
             phoneUtil.getRegionCodeForNumber(parsed)
         } catch (e: Exception) {
             null
@@ -38,7 +58,8 @@ object PhoneNumberUtils {
 
     fun getCarrierInfo(phoneNumber: String, context: Context? = null): String? {
         return try {
-            val parsed = phoneUtil.parse(phoneNumber, "")
+            val normalized = normalize(phoneNumber)
+            val parsed = phoneUtil.parse(normalized, "")
             val carrierMapper = com.google.i18n.phonenumbers.PhoneNumberToCarrierMapper.getInstance()
             carrierMapper.getNameForNumber(parsed, Locale.getDefault())
         } catch (e: Exception) {
@@ -48,7 +69,8 @@ object PhoneNumberUtils {
 
     fun getLocationInfo(phoneNumber: String): String? {
         return try {
-            val parsed = phoneUtil.parse(phoneNumber, "")
+            val normalized = normalize(phoneNumber)
+            val parsed = phoneUtil.parse(normalized, "")
             val geocoder = com.google.i18n.phonenumbers.geocoding.PhoneNumberOfflineGeocoder.getInstance()
             geocoder.getDescriptionForNumber(parsed, Locale.getDefault())
         } catch (e: Exception) {
@@ -66,8 +88,9 @@ object PhoneNumberUtils {
     }
 
     fun sendSms(context: Context, phoneNumber: String) {
+        val normalized = normalize(phoneNumber)
         val intent = Intent(Intent.ACTION_SENDTO).apply {
-            data = Uri.parse("smsto:$phoneNumber")
+            data = Uri.parse("smsto:$normalized")
         }
         try {
             context.startActivity(intent)
@@ -77,7 +100,8 @@ object PhoneNumberUtils {
     }
 
     fun getContactName(context: Context, phoneNumber: String): String? {
-        val uri = Uri.withAppendedPath(android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(phoneNumber))
+        val normalized = normalize(phoneNumber)
+        val uri = Uri.withAppendedPath(android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(normalized))
         val projection = arrayOf(android.provider.ContactsContract.PhoneLookup.DISPLAY_NAME)
         return try {
             context.contentResolver.query(uri, projection, null, null, null)?.use {
@@ -87,7 +111,8 @@ object PhoneNumberUtils {
     }
 
     fun getContactPhotoUri(context: Context, phoneNumber: String): String? {
-        val uri = Uri.withAppendedPath(android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(phoneNumber))
+        val normalized = normalize(phoneNumber)
+        val uri = Uri.withAppendedPath(android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(normalized))
         val projection = arrayOf(android.provider.ContactsContract.PhoneLookup.PHOTO_URI)
         return try {
             context.contentResolver.query(uri, projection, null, null, null)?.use {

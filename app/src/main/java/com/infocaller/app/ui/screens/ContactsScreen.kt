@@ -39,6 +39,7 @@ import com.infocaller.app.permissions.PermissionManager
 import com.infocaller.app.ui.components.PermissionEmptyState
 import com.infocaller.app.util.ContactUtils
 import com.infocaller.app.util.PhoneNumberUtils
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -49,6 +50,8 @@ fun ContactsScreen(
 ) {
     val context = LocalContext.current
     val activity = context as Activity
+    val scope = rememberCoroutineScope()
+    
     var hasPermission by remember { 
         mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.CONTACTS_PERMISSIONS)) 
     }
@@ -95,6 +98,7 @@ fun ContactsScreen(
     val localContacts by viewModel.localContacts.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
     var showAddDialog by remember { mutableStateOf(false) }
+    var contactToDelete by remember { mutableStateOf<LocalContactEntity?>(null) }
 
     val syncWorkInfo by androidx.work.WorkManager.getInstance(context)
         .getWorkInfosForUniqueWorkLiveData("ThrottledSync")
@@ -229,8 +233,13 @@ fun ContactsScreen(
                             
                             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                                 DropdownMenuItem(
+                                    text = { Text("View Details") },
+                                    onClick = { onNavigateToDetails(contact.phoneNumber); showMenu = false },
+                                    leadingIcon = { Icon(Icons.Default.Info, null) }
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Call") },
-                                    onClick = { viewModel.searchNumber(contact.phoneNumber); onNavigateToDetails(contact.phoneNumber); showMenu = false },
+                                    onClick = { viewModel.showSimSelection(contact.phoneNumber); showMenu = false },
                                     leadingIcon = { Icon(Icons.Default.Call, null) }
                                 )
                                 DropdownMenuItem(
@@ -247,12 +256,58 @@ fun ContactsScreen(
                                     },
                                     leadingIcon = { Icon(Icons.Default.ContentCopy, null) }
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("Share") },
+                                    onClick = { 
+                                        val sendIntent: android.content.Intent = android.content.Intent().apply {
+                                            action = android.content.Intent.ACTION_SEND
+                                            putExtra(android.content.Intent.EXTRA_TEXT, "Contact: ${contact.displayName}\nPhone: ${contact.phoneNumber}")
+                                            type = "text/plain"
+                                        }
+                                        context.startActivity(android.content.Intent.createChooser(sendIntent, null))
+                                        showMenu = false 
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Share, null) }
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("Delete Contact", color = Error) },
+                                    onClick = { 
+                                        contactToDelete = contact
+                                        showMenu = false 
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Delete, null, tint = Error) }
+                                )
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    if (contactToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { contactToDelete = null },
+            title = { Text("Delete Contact") },
+            text = { Text("Are you sure you want to delete ${contactToDelete!!.displayName}?") },
+            confirmButton = {
+                TextButton(onClick = { 
+                    val number = contactToDelete!!.phoneNumber
+                    scope.launch {
+                        viewModel.deleteContact(number)
+                    }
+                    contactToDelete = null
+                }) {
+                    Text("Delete", color = Error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { contactToDelete = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     if (showAddDialog) {

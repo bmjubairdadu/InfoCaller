@@ -331,26 +331,29 @@ fun SocialRow(profile: SocialProfile) {
         "telegram" -> Icons.AutoMirrored.Filled.Send
         "facebook" -> Icons.Default.Facebook
         "instagram" -> Icons.Default.CameraAlt
+        "linkedin" -> Icons.Default.Link
         else -> Icons.Default.Link
     }
 
-    ListItem(
-        headlineContent = { Text(profile.platform) },
-        supportingContent = { Text(profile.profileUrl ?: "View Profile") },
-        leadingContent = { 
-            Icon(
-                icon, 
-                null, 
-                tint = if (isConfirmed) Success else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp)
-            ) 
-        },
-        trailingContent = {
-            if (isConfirmed) {
-                Icon(Icons.Default.CheckCircle, null, tint = Success, modifier = Modifier.size(20.dp))
-            }
-        },
-        modifier = Modifier.clickable { SocialUtils.openSocialProfile(context, profile) },
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-    )
+    if (!profile.profileUrl.isNullOrBlank()) {
+        ListItem(
+            headlineContent = { Text(profile.platform) },
+            supportingContent = { Text(profile.profileUrl, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+            leadingContent = { 
+                Icon(
+                    icon, 
+                    null, 
+                    tint = if (isConfirmed) Success else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
+                ) 
+            },
+            trailingContent = {
+                if (isConfirmed) {
+                    Icon(Icons.Default.CheckCircle, null, tint = Success, modifier = Modifier.size(20.dp))
+                }
+            },
+            modifier = Modifier.clickable { SocialUtils.openSocialProfile(context, profile) },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+        )
+    }
 }

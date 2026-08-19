@@ -96,6 +96,11 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
         false
     }
 
+    fun getStatus(): String {
+        val token = getAuthToken()
+        return if (token.isNullOrBlank()) "NOT_CONFIGURED" else "AUTHORIZED"
+    }
+
     override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         val token = getAuthToken() ?: return@withContext null
 

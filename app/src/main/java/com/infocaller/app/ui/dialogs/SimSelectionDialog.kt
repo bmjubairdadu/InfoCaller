@@ -127,19 +127,8 @@ private fun SimRow(
                 modifier = Modifier.size(52.dp),
                 contentAlignment = Alignment.Center
             ) {
-                // Priority 1: Bundled (Not implemented yet, placeholder for future)
-                // Priority 2: System carrier icon
-                if (sim.iconBitmap != null) {
-                    Image(
-                        bitmap = sim.iconBitmap.asImageBitmap(),
-                        contentDescription = sim.carrierName,
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(CircleShape)
-                    )
-                } 
-                // Priority 3: Local cached Brandfetch logo
-                else if (sim.localLogoPath != null) {
+                // Priority 1: Local cached Brandfetch logo (MOST PREFERRED)
+                if (sim.localLogoPath != null) {
                     AsyncImage(
                         model = sim.localLogoPath,
                         contentDescription = sim.carrierName,
@@ -149,7 +138,17 @@ private fun SimRow(
                         contentScale = ContentScale.Crop
                     )
                 } 
-                // Priority 5: Initials + Brand Color
+                // Priority 2: System carrier icon (FALLBACK)
+                else if (sim.iconBitmap != null) {
+                    Image(
+                        bitmap = sim.iconBitmap.asImageBitmap(),
+                        contentDescription = sim.carrierName,
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                    )
+                } 
+                // Priority 3: Initials + Brand Color
                 else {
                     Box(
                         modifier = Modifier

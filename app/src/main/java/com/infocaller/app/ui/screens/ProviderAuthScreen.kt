@@ -1,16 +1,21 @@
 package com.infocaller.app.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.infocaller.app.ui.theme.*
 import com.infocaller.app.ui.components.InfoCallerLoading
 import kotlinx.coroutines.launch
@@ -24,6 +29,9 @@ fun ProviderAuthScreen(onBack: () -> Unit) {
     
     val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
     val truecallerProvider = app.providerManager.getHealthyProviders().find { it.id == "truecaller_v2" } as? com.infocaller.app.data.remote.TruecallerProviderImpl
+
+    val prefs = remember { context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE) }
+    var isTruecallerAuthorized by remember { mutableStateOf(!prefs.getString("truecaller_token", "").isNullOrBlank()) }
 
     Scaffold(
         topBar = {
@@ -42,6 +50,7 @@ fun ProviderAuthScreen(onBack: () -> Unit) {
         Column(
             modifier = Modifier
                 .padding(padding)
+                .fillMaxSize()
                 .padding(16.dp)
                 .verticalScroll(scrollState)
         ) {
@@ -50,17 +59,30 @@ fun ProviderAuthScreen(onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(24.dp))
             
             // Truecaller Section
-            AuthSection("Truecaller") {
+            AuthSection("Truecaller", isAuthorized = isTruecallerAuthorized) {
                 var phone by remember { mutableStateOf("") }
                 var requestId by remember { mutableStateOf<String?>(null) }
                 var otp by remember { mutableStateOf("") }
                 var isLoading by remember { mutableStateOf(false) }
 
-                if (requestId == null) {
+                if (isTruecallerAuthorized) {
+                    Text("Connection Active", color = Success, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { 
+                            prefs.edit().remove("truecaller_token").apply()
+                            isTruecallerAuthorized = false
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Disconnect Account", color = Error)
+                    }
+                } else if (requestId == null) {
                     OutlinedTextField(
                         value = phone,
                         onValueChange = { phone = it },
                         label = { Text("Your Phone Number") },
+                        placeholder = { Text("+8801...") },
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
                     )
@@ -95,7 +117,7 @@ fun ProviderAuthScreen(onBack: () -> Unit) {
                                     requestId = null
                                     phone = ""
                                     otp = ""
-                                    // Show success
+                                    isTruecallerAuthorized = true
                                 }
                                 isLoading = false
                             }
@@ -115,13 +137,18 @@ fun ProviderAuthScreen(onBack: () -> Unit) {
 }
 
 @Composable
-fun AuthSection(title: String, content: @Composable () -> Unit) {
+fun AuthSection(title: String, isAuthorized: Boolean, content: @Composable () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
         colors = CardDefaults.cardColors(containerColor = Surface)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = Primary)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.titleMedium, color = if (isAuthorized) Success else Primary)
+                if (isAuthorized) {
+                    Icon(Icons.Default.CheckCircle, null, tint = Success, modifier = Modifier.size(20.dp))
+                }
+            }
             HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color.White.copy(alpha = 0.1f))
             content()
         }

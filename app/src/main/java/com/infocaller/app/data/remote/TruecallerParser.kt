@@ -5,6 +5,10 @@ import com.infocaller.app.domain.engine.PartialResult
 import com.infocaller.app.domain.model.SocialLookupStatus
 import com.infocaller.app.domain.model.SocialProfile
 
+/**
+ * Robust parser for Truecaller V2 search responses.
+ * Reimplemented from reference study.
+ */
 object TruecallerParser {
 
     fun mapResult(data: JsonObject, providerId: String, providerVersion: String): PartialResult {
@@ -27,6 +31,7 @@ object TruecallerParser {
             val addr = it.asJsonObject
             val service = addr.get("service")?.asString?.lowercase()
             val id = addr.get("id")?.asString
+            val caption = addr.get("caption")?.asString
             
             if (service == "email") {
                 email = id
@@ -35,7 +40,7 @@ object TruecallerParser {
                 socialProfiles.add(SocialProfile(
                     platform = platform,
                     username = id,
-                    profileUrl = addr.get("caption")?.asString,
+                    profileUrl = caption ?: id,
                     status = SocialLookupStatus.PUBLIC_MATCH
                 ))
             }
@@ -45,7 +50,8 @@ object TruecallerParser {
         val score = spam?.get("spamScore")?.asInt ?: 0
         val type = spam?.get("spamType")?.asString
         
-        val carrier = data.get("carrier")?.asString
+        // Also check phones for carrier
+        val carrier = data.getAsJsonArray("phones")?.firstOrNull()?.asJsonObject?.get("carrier")?.asString
 
         return PartialResult(
             name = name,

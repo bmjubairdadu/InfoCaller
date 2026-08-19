@@ -20,6 +20,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.infocaller.app.R
 
+/**
+ * Centered branded loading animation for InfoCaller.
+ */
 @Composable
 fun InfoCallerLoading(
     modifier: Modifier = Modifier,
@@ -53,11 +56,11 @@ fun InfoCallerLoading(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.5f))
+                .background(Color.Black.copy(alpha = 0.6f))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = {} // Block interaction
+                    onClick = {} 
                 ),
             contentAlignment = Alignment.Center
         ) {
@@ -74,7 +77,7 @@ fun InfoCallerLoading(
                     Text(
                         text = text,
                         style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     )
@@ -82,20 +85,21 @@ fun InfoCallerLoading(
             }
         }
     } else {
-        Column(
-            modifier = modifier,
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+        Box(
+            modifier = modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
         ) {
-            LoadingAnimation(size, scale, alpha)
-            if (text != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                LoadingAnimation(size, scale, alpha)
+                if (text != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     )
-                )
+                }
             }
         }
     }
