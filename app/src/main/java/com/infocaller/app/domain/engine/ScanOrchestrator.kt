@@ -107,12 +107,21 @@ class ScanOrchestrator(
                         completedProviders.add(id)
                     }
 
-                    // Analyze photo candidates (Face detection)
+                    // Analyze and keep ONLY clearly visible face photos
                     val analyzedPartials = if (partial.photoCandidates.isNotEmpty()) {
-                        val analyzedCandidates = partial.photoCandidates.map { 
-                            imageAnalysisService.analyze(it)
+                        val analyzed = partial.photoCandidates.map { imageAnalysisService.analyze(it) }
+                        // Face-only filter: face detected, confidence & coverage thresholds, min quality
+                        val faceClear = analyzed.filter { c ->
+                            c.faceCount > 0 && c.faceConfidence >= 0.7f && c.faceCoverage >= 0.02f && c.imageQuality >= 0.01f && c.width >= 80 && c.height >= 80
                         }
-                        partial.copy(photoCandidates = analyzedCandidates)
+                        if (faceClear.isEmpty()) {
+                            // No clear face - drop all candidates, keep PartialResult but with empty photos (will not be saved/shown)
+                            partial.copy(photoCandidates = emptyList(), imageUrl = null)
+                        } else {
+                            // Keep only best clear-face, sorted by faceCoverage*quality
+                            val bestFirst = faceClear.sortedByDescending { it.faceCoverage * (0.5f + it.imageQuality) }
+                            partial.copy(photoCandidates = bestFirst, imageUrl = bestFirst.first().url)
+                        }
                     } else {
                         partial
                     }
