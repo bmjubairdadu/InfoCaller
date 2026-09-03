@@ -7,7 +7,6 @@
 - **Caller ID on incoming call** — Full-screen incoming call screen with name, photo, location and block option.
 - **Smart Dialer** — T9 search and dialpad.
 - **Contacts & Recents** — Unified list with brand SIM logos (Brandfetch).
-- **NID lookup** — Search by NID / DOB where supported by local dataset.
 - **Privacy first** — Local Room database caching, no contact upload.
 
 ## Build
