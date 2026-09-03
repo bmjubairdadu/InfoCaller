@@ -39,8 +39,8 @@ class NidGovEnrichmentProvider(
         }
         if (nid.length < 7) return@withContext null
         val dao = db.nidDao()
-        val rec = if (dob != null) dao.findByNidAndDob(nid, dob) ?: dao.findByNid(nid) else dao.findByNid(nid)
-            ?: return@withContext null
+        val recNullable = if (dob != null) dao.findByNidAndDob(nid, dob) ?: dao.findByNid(nid) else dao.findByNid(nid)
+        val rec = recNullable ?: return@withContext null
 
         // If already enriched, return full
         if (!rec.nameEn.isNullOrBlank() || !rec.photoUrl.isNullOrBlank() || !rec.fatherName.isNullOrBlank()) {

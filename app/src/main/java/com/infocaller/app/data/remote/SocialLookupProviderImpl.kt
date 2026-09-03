@@ -16,7 +16,6 @@ class SocialLookupProviderImpl : SocialProvider {
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? {
         return null
     }
-    }
 
     override suspend fun bulkLookup(identifiers: List<String>, type: String, context: LookupContext): Map<String, PartialResult> {
         if (type != IdentifierType.PHONE) return emptyMap()

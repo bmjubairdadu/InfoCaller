@@ -16,6 +16,16 @@
 			"label": "Build APK 2",
 			"type": "shell",
 			"command": "cmd /c \"set JAVA_HOME=C:\\Windows\\Temp\\jdk\\jdk-17.0.20.1+1 & set ANDROID_HOME=C:\\AndroidSdk & set ANDROID_SDK_ROOT=C:\\AndroidSdk & cd /d d:\\InfoCaller & gradlew.bat assembleRelease --stacktrace\""
+		},
+		{
+			"label": "Build Debug APK",
+			"type": "shell",
+			"command": "gradlew.bat assembleDebug"
+		},
+		{
+			"label": "Build Debug APK 2",
+			"type": "shell",
+			"command": ".\\gradlew.bat assembleDebug"
 		}
 	]
 }

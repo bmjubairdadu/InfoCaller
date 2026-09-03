@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
  * Direct third-party secrets and rotation logic removed.
  */
 class ApifyLookupProviderImpl(
-    private val backendApiService: BackendApiService
+    private val backendApiService: BackendApiService?
 ) : LookupProvider {
     override val id: String = "authorized_backend_relay"
     override val name: String = "InfoCaller Intelligence"
@@ -28,7 +28,7 @@ class ApifyLookupProviderImpl(
     override val costClass: CostClass = CostClass.HIGH
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
-        if (type != IdentifierType.PHONE) return@withContext null
+        if (type != IdentifierType.PHONE || backendApiService == null) return@withContext null
         
         try {
             val response = backendApiService.lookupPhone(PhoneLookupRequest(identifier))

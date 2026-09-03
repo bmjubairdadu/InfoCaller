@@ -15,10 +15,13 @@ val apifyToken1 = localProperties.getProperty("apify.token.1") ?: ""
 val apifyToken2 = localProperties.getProperty("apify.token.2") ?: ""
 val tcClientSecret = localProperties.getProperty("truecaller.client.secret") ?: ""
 val brandfetchClientId = localProperties.getProperty("brandfetch.client.id") ?: ""
+val backendApiKey = localProperties.getProperty("backend.api.key") ?: ""
+val coreclawApiKey = localProperties.getProperty("coreclaw.api.key") ?: ""
+val numlookupApiKey = localProperties.getProperty("numlookup.api.key") ?: ""
 
 android {
     namespace = "com.infocaller.app"
-    compileSdk = 34
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.infocaller.app"
@@ -40,12 +43,18 @@ android {
             buildConfigField("String", "APIFY_TOKEN_2", "\"$apifyToken2\"")
             buildConfigField("String", "TRUECALLER_CLIENT_SECRET", "\"$tcClientSecret\"")
             buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"$brandfetchClientId\"")
+            buildConfigField("String", "BACKEND_API_KEY", "\"$backendApiKey\"")
+            buildConfigField("String", "CORECLAW_API_KEY", "\"$coreclawApiKey\"")
+            buildConfigField("String", "NUMLOOKUP_API_KEY", "\"$numlookupApiKey\"")
         }
         release {
             buildConfigField("String", "APIFY_TOKEN_1", "\"\"")
             buildConfigField("String", "APIFY_TOKEN_2", "\"\"")
             buildConfigField("String", "TRUECALLER_CLIENT_SECRET", "\"$tcClientSecret\"")
             buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"$brandfetchClientId\"")
+            buildConfigField("String", "BACKEND_API_KEY", "\"$backendApiKey\"")
+            buildConfigField("String", "CORECLAW_API_KEY", "\"$coreclawApiKey\"")
+            buildConfigField("String", "NUMLOOKUP_API_KEY", "\"$numlookupApiKey\"")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

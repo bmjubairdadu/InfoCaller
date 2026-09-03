@@ -144,7 +144,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 1001 && grantResults.all { it == android.content.pm.PackageManager.PERMISSION_GRANTED }) {
             val pending = getSharedPreferences("pending_call", MODE_PRIVATE).getString("number", null)

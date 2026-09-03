@@ -11,9 +11,8 @@ class ProviderKeyManager(private val context: Context) {
     private val providerKeys = mutableMapOf<String, String>()
 
     init {
-        // Pulled from BuildConfig (injected via local.properties placeholders)
-        // Production keys should be moved to backend relay.
-        providerKeys["backend"] = com.infocaller.app.BuildConfig.BACKEND_API_KEY
+        // Defensive: backend key removed - BuildConfig field no longer exists (optional key pruned). Keep no-op.
+        try { providerKeys["backend"] = com.infocaller.app.BuildConfig.BACKEND_API_KEY } catch (_: Exception) {}
     }
 
     /**

@@ -225,10 +225,6 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
         return null
     }
 
-    override suspend fun bulkLookup(identifiers: List<String>, type: String, context: LookupContext): Map<String, PartialResult> = withContext(Dispatchers.IO) {
-        emptyMap()
-    }
-
     private fun getAuthToken(): String? {
         val token = TruecallerCloudStore.getInstallationId(context)
         if (token == null) Log.w("Truecaller", "No installationId - OTP verify required to auto-create cloud secret (truecaller_token)")
