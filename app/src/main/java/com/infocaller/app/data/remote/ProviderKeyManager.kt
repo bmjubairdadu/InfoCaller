@@ -11,8 +11,8 @@ class ProviderKeyManager(private val context: Context) {
     private val providerKeys = mutableMapOf<String, String>()
 
     init {
-        // Defensive: backend key removed - BuildConfig field no longer exists (optional key pruned). Keep no-op.
-        try { providerKeys["backend"] = com.infocaller.app.BuildConfig.BACKEND_API_KEY } catch (_: Exception) {}
+        // Backend keys removed in professional slim build - free providers handle all lookups.
+        // No stored keys needed.
     }
 
     /**

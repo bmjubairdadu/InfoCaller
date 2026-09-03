@@ -77,6 +77,5 @@ class NumlookupApiProviderImpl(private val context: Context) : LookupProvider {
     private fun getApiKey(): String? {
         val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
         return prefs.getString("numlookup_api_key", "")?.takeIf { it.isNotBlank() }
-            ?: com.infocaller.app.BuildConfig.NUMLOOKUP_API_KEY.takeIf { it.isNotBlank() }
     }
 }

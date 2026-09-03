@@ -89,6 +89,5 @@ class CoreClawProviderImpl(private val context: Context) : LookupProvider {
     private fun getApiKey(): String? {
         val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
         return prefs.getString("coreclaw_api_key", "")?.takeIf { it.isNotBlank() }
-            ?: com.infocaller.app.BuildConfig.CORECLAW_API_KEY.takeIf { it.isNotBlank() }
     }
 }

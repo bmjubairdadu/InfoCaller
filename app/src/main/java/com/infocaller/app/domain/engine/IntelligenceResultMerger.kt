@@ -93,40 +93,36 @@ object IntelligenceResultMerger {
 
     private fun mergePhotos(current: LookupResult, next: PartialResult): Triple<String?, String?, List<PhotoCandidate>> {
         val newCandidates = (current.photoCandidates + next.photoCandidates).distinctBy { it.url }
-        
-        if (newCandidates.isEmpty()) {
-            return Triple(current.imageUrl, current.imageSource, emptyList())
-        }
-
-        // PHOTO SELECTION: Score and select best
-        val bestCandidate = newCandidates.maxByOrNull { calculatePhotoScore(it) }
-        
+        if (newCandidates.isEmpty()) return Triple(current.imageUrl, current.imageSource, emptyList())
+        // Filter to face-clear only if any face candidate exists; otherwise allow non-face as fallback but de-prioritized
+        val hasFaceCandidate = newCandidates.any { it.faceCount > 0 && it.faceConfidence >= 0.5f }
+        val pool = if (hasFaceCandidate) newCandidates.filter { it.faceCount > 0 && it.faceConfidence >= 0.5f } else newCandidates
+        val bestCandidate = pool.maxByOrNull { calculatePhotoScore(it) } ?: newCandidates.maxByOrNull { calculatePhotoScore(it) }
+        // If best has no face and we had to fallback, mark low confidence for details screen to know
         return Triple(bestCandidate?.url, bestCandidate?.provider, newCandidates)
     }
 
     /**
-     * Photo Scoring Algorithm (Revised with Real Metrics):
-     * 1. Face present (+500)
-     * 2. Face coverage (0-100)
-     * 3. Image resolution (0-100)
-     * 4. Sharpness/Laplacian Variance (0-100)
-     * 5. Trusted Provider Bonus (+50)
+     * Face-clear photo scoring: only faces with confidence + coverage pass.
+     * - faceCount==0 -> -1000 (hidden, never picked)
+     * - faceConfidence <0.5 -> -500
+     * - faceCoverage <0.02 or >0.6 -> penalized (tiny or full-frame artifact)
+     * - sharpness <0.15 -> penalized (blurry)
      */
     private fun calculatePhotoScore(c: PhotoCandidate): Float {
         var score = 0f
-        
-        if (c.faceCount > 0) score += 500f
-        score += c.faceCoverage * 100f
-        score += c.imageQuality * 100f // Quality is sharpness
-        
+        // Must have face - otherwise last chance via sharpness only if no face candidate exists
+        if (c.faceCount <= 0) return -1000f + c.imageQuality * 10f
+        if (c.faceConfidence < 0.5f) return -500f + c.faceConfidence * 50f
+        // Coverage penalty: too small or too huge is not portrait
+        if (c.faceCoverage < 0.02f || c.faceCoverage > 0.6f) score -= 50f else score += c.faceCoverage * 100f
+        if (c.imageQuality < 0.15f) score -= 30f else score += c.imageQuality * 100f
+        score += 500f // face present bonus
         val resolution = c.width * c.height
         val resolutionScore = if (resolution > 250000) 100f else (resolution / 2500f)
         score += minOf(100f, resolutionScore)
-        
-        if (c.provider.lowercase().contains("truecaller") || c.provider.lowercase().contains("eyecon")) {
-            score += 50f
-        }
-        
+        if (c.provider.lowercase().contains("truecaller") || c.provider.lowercase().contains("eyecon") || c.provider.lowercase().contains("whatsapp")) score += 50f
+        score += c.faceConfidence * 50f
         return score
     }
 

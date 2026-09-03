@@ -34,40 +34,22 @@ class ImageAnalysisService(private val context: Context) : IImageAnalysisService
 
     override suspend fun analyze(candidate: PhotoCandidate): PhotoCandidate = withContext(Dispatchers.IO) {
         try {
-            val bitmap = downloadBitmap(candidate.url) ?: return@withContext candidate
-            
+            val bitmap = downloadBitmap(candidate.url) ?: return@withContext candidate.copy(faceCount = 0, faceConfidence = 0f)
             val image = InputImage.fromBitmap(bitmap, 0)
             val faces = detector.process(image).await()
-            
             val sharpness = computeLaplacianVariance(bitmap)
-            
-            if (faces.isEmpty()) {
-                return@withContext candidate.copy(
-                    faceCount = 0,
-                    imageQuality = sharpness,
-                    width = bitmap.width,
-                    height = bitmap.height,
-                    faceConfidence = 0f,
-                    faceCoverage = 0f
-                )
-            }
-
+            if (faces.isEmpty()) return@withContext candidate.copy(faceCount = 0, imageQuality = sharpness, width = bitmap.width, height = bitmap.height, faceConfidence = 0f, faceCoverage = 0f)
             val mainFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
             val faceArea = mainFace.boundingBox.width() * mainFace.boundingBox.height()
             val imageArea = bitmap.width * bitmap.height
-            
             val coverage = faceArea.toFloat() / imageArea
-            val detectionConfidence = 1.0f 
-
-            return@withContext candidate.copy(
-                width = bitmap.width,
-                height = bitmap.height,
-                faceCount = faces.size,
-                faceConfidence = detectionConfidence,
-                faceCoverage = coverage,
-                imageQuality = sharpness,
-                timestamp = System.currentTimeMillis()
-            )
+            // Clear face requires coverage 2%-60% and sharpness 0.15+ ; otherwise low confidence
+            val detectionConfidence = when {
+                coverage < 0.02f || coverage > 0.6f -> 0.4f
+                sharpness < 0.15f -> 0.45f
+                else -> 0.95f
+            }
+            return@withContext candidate.copy(width = bitmap.width, height = bitmap.height, faceCount = faces.size, faceConfidence = detectionConfidence, faceCoverage = coverage, imageQuality = sharpness, timestamp = System.currentTimeMillis())
         } catch (e: Exception) {
             Log.e("ImageAnalysis", "Analysis failed for ${candidate.url}: ${e.message}")
             candidate
