@@ -1,16 +1,39 @@
 # ProGuard rules for InfoCaller
 
-# Aggressive Obfuscation
+# Aggressive Obfuscation & Hardening
 -allowaccessmodification
--repackageclasses ''
+-repackageclasses 'com.infocaller.app.internal'
 -overloadaggressively
+-optimizationpasses 5
 
-# Android and Kotlin
--keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod
+# Remove Debug Logging in Release
+-assumenosideeffects class android.util.Log {
+    public static *** d(...);
+    public static *** v(...);
+    public static *** i(...);
+    public static *** w(...);
+}
+
+# Preserve necessary attributes
+-keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod, SourceFile, LineNumberTable
+
+# Kotlin Coroutines
+-keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
+-keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
+-keepclassmembernames class kotlinx.coroutines.android.HandlerContext {
+    public <fields>;
+}
+
+# Room & Models
+-keep @androidx.annotation.Keep class * { *; }
 -keepclassmembers class * {
     @androidx.annotation.Keep <fields>;
     @androidx.annotation.Keep <methods>;
 }
+
+# Prevent reflection on internal classes
+-keepnames class com.infocaller.app.domain.model.**
+-keepnames class com.infocaller.app.data.local.entity.**
 
 # Room
 -keep class * extends androidx.room.RoomDatabase

@@ -35,6 +35,8 @@ fun MainScreen(
     
     LaunchedEffect(Unit) {
         val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
+        viewModel.loadSimInfos(context)
+        
         val sims = com.infocaller.app.util.SimManager.getSimInfos(context)
         app.operatorLogoManager.initialize(sims)
 
@@ -48,11 +50,24 @@ fun MainScreen(
         }
     }
 
+    // Continuous Monitoring of Recent Calls
+    val recentCalls by viewModel.recentCalls.collectAsState()
+    LaunchedEffect(recentCalls) {
+        if (recentCalls.isNotEmpty()) {
+            val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
+            recentCalls.take(10).forEach { entry ->
+                // Check if already enriched in background
+                app.enrichmentEngine.enqueue(entry.number, priority = com.infocaller.app.data.local.entity.QueuePriority.MEDIUM)
+            }
+        }
+    }
+
     val tabs = remember {
         listOf(
             BottomNavItem("recents", "Recents", Icons.Default.History),
             BottomNavItem("contacts", "Contacts", Icons.Default.ContactPhone),
             BottomNavItem("dialer", "Dialer", Icons.Default.Call),
+            BottomNavItem("nid", "NID", Icons.Default.Fingerprint),
             BottomNavItem("settings", "Settings", Icons.Default.Settings)
         )
     }
@@ -73,8 +88,8 @@ fun MainScreen(
                 NavigationBar(
                     containerColor = Color.Transparent,
                     modifier = Modifier
-                        .height(64.dp)
-                        .glassy(radius = 32.dp, blur = 15.dp),
+                        .height(80.dp)
+                        .glassy(radius = 40.dp, blur = 20.dp),
                     windowInsets = WindowInsets(0, 0, 0, 0)
                 ) {
                     tabs.forEach { item ->
@@ -172,19 +187,10 @@ fun MainScreen(
                     innerPadding = innerPadding
                 )
             }
+            composable("nid") {
+                NidLookupScreen(viewModel = viewModel)
+            }
         }
-    }
-
-    val simSelectionPhone by viewModel.showSimSelection.collectAsState()
-    if (simSelectionPhone != null) {
-        com.infocaller.app.ui.dialogs.SimSelectionBottomSheet(
-            phoneNumber = simSelectionPhone!!,
-            onSimSelected = { sim ->
-                com.infocaller.app.util.SimManager.placeCall(context, simSelectionPhone!!, sim.phoneAccountHandle)
-                viewModel.dismissSimSelection()
-            },
-            onDismiss = { viewModel.dismissSimSelection() }
-        )
     }
 }
 

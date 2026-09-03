@@ -11,11 +11,49 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class AuthViewModel(
-    private val repository: AuthRepository
+    private val repository: AuthRepository,
+    private val context: android.content.Context
 ) : ViewModel() {
 
     private val _authState = MutableStateFlow<AuthUiState>(AuthUiState.Idle)
     val authState: StateFlow<AuthUiState> = _authState.asStateFlow()
+
+    private val _tcAuthResult = MutableStateFlow<com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult?>(null)
+    val tcAuthResult = _tcAuthResult.asStateFlow()
+
+    private val _tcPhone = MutableStateFlow("")
+    val tcPhone = _tcPhone.asStateFlow()
+
+    fun setTcAuthResult(result: com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult?) {
+        _tcAuthResult.value = result
+    }
+
+    fun setTcPhone(phone: String) {
+        _tcPhone.value = phone
+    }
+
+    fun refreshTcSession(context: android.content.Context) {
+        val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+        prefs.edit()
+            .remove("tc_device_id")
+            .remove("truecaller_token")
+            .apply()
+    }
+
+    init {
+        checkInitialAuthState()
+    }
+
+    fun checkInitialAuthState() {
+        val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+        val token = prefs.getString("truecaller_token", "")
+        
+        if (!token.isNullOrBlank()) {
+            _authState.value = AuthUiState.Authenticated(User("tc-saved", null, "Verified User", null))
+        } else {
+            _authState.value = AuthUiState.Idle
+        }
+    }
 
     val currentUser = repository.currentUser
 
@@ -27,6 +65,20 @@ class AuthViewModel(
             }.onFailure {
                 _authState.value = AuthUiState.Error(it.message ?: "Login failed")
             }
+        }
+    }
+
+    fun loginWithTruecaller(displayName: String?) {
+        viewModelScope.launch {
+            _authState.value = AuthUiState.Loading
+            // Simulate successful authentication via Truecaller
+            val user = User(
+                id = "tc-${System.currentTimeMillis()}",
+                email = null,
+                displayName = displayName ?: "Truecaller User",
+                photoUrl = null
+            )
+            _authState.value = AuthUiState.Authenticated(user)
         }
     }
 
@@ -48,11 +100,14 @@ class AuthViewModel(
         }
     }
 
-    class Factory(private val repository: AuthRepository) : ViewModelProvider.Factory {
+    class Factory(
+        private val repository: AuthRepository,
+        private val context: android.content.Context
+    ) : ViewModelProvider.Factory {
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             if (modelClass.isAssignableFrom(AuthViewModel::class.java)) {
                 @Suppress("UNCHECKED_CAST")
-                return AuthViewModel(repository) as T
+                return AuthViewModel(repository, context.applicationContext) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class")
         }

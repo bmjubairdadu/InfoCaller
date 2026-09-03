@@ -10,16 +10,15 @@ class BusinessProviderImpl : BusinessProvider {
     override val priority: Int = 20
     override val costClass: CostClass = CostClass.FREE
 
-    override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? {
-        if (normalizedPhoneNumber.endsWith("000")) {
-            return PartialResult(
-                name = "InfoCaller Business Support",
-                confidence = 0.9f,
-                source = name,
-                providerId = id,
-                providerVersion = version
-            )
-        }
+    override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? {
+        // Business lookup requires real business registry API (e.g., Google Places / OpenCorporates).
+        // Stub removed - previously returned fake "InfoCaller Business Support" for numbers ending 000.
+        // Keep provider as no-op until real business API wired; prevents false caller ID.
         return null
+    }
+
+    override suspend fun bulkLookup(identifiers: List<String>, type: String, context: LookupContext): Map<String, PartialResult> {
+        if (type != IdentifierType.PHONE) return emptyMap()
+        return emptyMap()
     }
 }

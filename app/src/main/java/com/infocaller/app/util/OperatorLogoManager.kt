@@ -59,66 +59,67 @@ class OperatorLogoManager(private val context: Context, private val database: Ap
 
     private suspend fun downloadLogo(sim: SimInfo, key: String, domain: String) {
         val dao = database.operatorLogoDao()
-        val url = SimManager.buildBrandfetchLogoUrl(domain)
+        
+        val sources = listOf("brandfetch" to SimManager.buildBrandfetchLogoUrl(domain))
 
-        try {
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("Accept", "image/png,image/jpeg,image/*")
-                .build()
-            
-            val response = httpClient.newCall(request).execute()
-            
-            if (response.isSuccessful) {
-                val contentType = response.header("Content-Type")
-                if (contentType?.startsWith("text/html") == true) {
-                    throw Exception("Received HTML instead of image")
-                }
-
-                val bytes = response.body?.bytes() ?: throw Exception("Empty response body")
+        for ((sourceName, url) in sources) {
+            try {
+                Log.d("OperatorLogoManager", "Attempting download from $sourceName: $url")
+                val request = Request.Builder()
+                    .url(url)
+                    .addHeader("Accept", "image/png,image/jpeg,image/*")
+                    .build()
                 
-                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                val response = httpClient.newCall(request).execute()
                 
-                if (options.outWidth > 0 && options.outHeight > 0) {
-                    val file = saveLogoLocally(key, bytes)
-                    if (file != null) {
-                        dao.insertLogo(OperatorLogoEntity(
-                            operatorKey = key,
-                            operatorName = sim.carrierName,
-                            country = sim.countryIso,
-                            mcc = sim.mcc,
-                            mnc = sim.mnc,
-                            officialDomain = domain,
-                            localFilePath = file.absolutePath,
-                            source = "brandfetch",
-                            verified = true,
-                            updatedAt = System.currentTimeMillis()
-                        ))
-                        Log.d("OperatorLogoManager", "Successfully saved Brandfetch logo for $key ($domain)")
+                if (response.isSuccessful) {
+                    val contentType = response.header("Content-Type")
+                    if (contentType?.startsWith("image/") == true) {
+                        val bytes = response.body?.bytes() ?: throw Exception("Empty body")
+                        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                        
+                        if (options.outWidth > 0 && options.outHeight > 0) {
+                            val file = saveLogoLocally(key, bytes)
+                            if (file != null) {
+                                dao.insertLogo(OperatorLogoEntity(
+                                    operatorKey = key,
+                                    operatorName = sim.carrierName,
+                                    country = sim.countryIso,
+                                    mcc = sim.mcc,
+                                    mnc = sim.mnc,
+                                    officialDomain = domain,
+                                    localFilePath = file.absolutePath,
+                                    source = sourceName,
+                                    verified = true,
+                                    updatedAt = System.currentTimeMillis()
+                                ))
+                                Log.i("OperatorLogoManager", "Success: Saved $sourceName logo for $key ($domain)")
+                                return 
+                            }
+                        }
                     }
-                } else {
-                    throw Exception("Invalid image data decoded")
                 }
-            } else {
-                throw Exception("HTTP Error: ${response.code}")
+                Log.w("OperatorLogoManager", "Source $sourceName failed for $key")
+            } catch (e: Exception) {
+                Log.w("OperatorLogoManager", "Error with source $sourceName for $key: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.e("OperatorLogoManager", "Brandfetch failure for $key: ${e.message}")
-            if (dao.getLogo(key) == null) {
-                dao.insertLogo(OperatorLogoEntity(
-                    operatorKey = key,
-                    operatorName = sim.carrierName,
-                    country = sim.countryIso,
-                    mcc = sim.mcc,
-                    mnc = sim.mnc,
-                    officialDomain = domain,
-                    localFilePath = null,
-                    source = "failed",
-                    verified = false,
-                    updatedAt = System.currentTimeMillis()
-                ))
-            }
+        }
+
+        // If all failed, mark as failed in DB to avoid constant retries in this session
+        if (dao.getLogo(key) == null) {
+            dao.insertLogo(OperatorLogoEntity(
+                operatorKey = key,
+                operatorName = sim.carrierName,
+                country = sim.countryIso,
+                mcc = sim.mcc,
+                mnc = sim.mnc,
+                officialDomain = domain,
+                localFilePath = null,
+                source = "all_failed",
+                verified = false,
+                updatedAt = System.currentTimeMillis()
+            ))
         }
     }
 

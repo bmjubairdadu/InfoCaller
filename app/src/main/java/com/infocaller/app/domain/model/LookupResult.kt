@@ -6,23 +6,50 @@ import androidx.annotation.Keep
 data class LookupResult(
     val phoneNumber: String,
     val name: String? = null,
+    val nameSource: String? = null,
     val alternateName: String? = null,
+    val alternateNames: Map<String, List<String>> = emptyMap(), // name -> list of providers
     val imageUrl: String? = null,
+    val imageSource: String? = null,
+    val photoCandidates: List<PhotoCandidate> = emptyList(),
     val about: String? = null,
     val city: String? = null,
     val country: String? = null,
     val region: String? = null,
     val timezone: String? = null,
     val email: String? = null,
+    val emailSource: String? = null,
     val carrier: String? = null,
+    val lineType: String? = null,
+    
+    // Forensic Identifiers
+    val plateNumber: String? = null,
+    val iban: String? = null,
+    val vatId: String? = null,
+    val macAddress: String? = null,
+    val nid: String? = null,
+    val dob: String? = null,
+
     val socialProfiles: List<SocialProfile> = emptyList(),
-    val spamScore: Int = 0,
-    val spamType: String? = null,
     val isBusiness: Boolean? = null,
-    val spamStatus: SpamStatus = SpamStatus.UNKNOWN,
     val sources: List<String> = emptyList(),
     val confidence: Float = 0f,
     val performance: List<ProviderPerformance> = emptyList(),
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+@Keep
+data class PhotoCandidate(
+    val provider: String,
+    val url: String,
+    val width: Int = 0,
+    val height: Int = 0,
+    val fileSize: Long = 0,
+    val faceCount: Int = -1, // -1 means not analyzed
+    val faceConfidence: Float = 0f,
+    val faceCoverage: Float = 0f,
+    val imageQuality: Float = 0f,
+    val sourcePriority: Int = 0,
     val timestamp: Long = System.currentTimeMillis()
 )
 
@@ -37,7 +64,12 @@ data class SocialProfile(
     val platform: String,
     val username: String? = null,
     val profileUrl: String? = null,
-    val status: SocialLookupStatus = SocialLookupStatus.UNKNOWN
+    val status: SocialLookupStatus = SocialLookupStatus.UNKNOWN,
+    val displayName: String? = null,
+    val avatarUrl: String? = null,
+    val source: String? = null,
+    val confidence: Float = 0f,
+    val foundAt: Long = System.currentTimeMillis()
 )
 
 enum class SocialLookupStatus {
@@ -47,13 +79,4 @@ enum class SocialLookupStatus {
     NOT_FOUND,
     UNKNOWN,
     UNSUPPORTED
-}
-
-enum class SpamLevel {
-    SAFE,
-    LOW,
-    MEDIUM,
-    HIGH,
-    SEVERE,
-    UNKNOWN
 }

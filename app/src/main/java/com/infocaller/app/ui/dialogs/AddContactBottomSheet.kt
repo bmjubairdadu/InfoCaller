@@ -13,6 +13,8 @@ import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,6 +32,9 @@ import com.infocaller.app.ui.theme.*
 import com.infocaller.app.ui.viewmodel.CallerViewModel
 import com.infocaller.app.util.ContactUtils
 import com.infocaller.app.util.LocationUtils
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -52,6 +57,16 @@ fun AddContactBottomSheet(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     
     var isNameManuallyEdited by remember { mutableStateOf(false) }
+    var userSelectedPhotoUri by remember { mutableStateOf<android.net.Uri?>(null) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            userSelectedPhotoUri = uri
+            suggestedPhotoUrl = uri.toString()
+        }
+    }
     
     val enrichmentService = remember { 
         ContactEnrichmentService(context, database = (context.applicationContext as com.infocaller.app.InfoCallerApplication).database) 
@@ -87,8 +102,18 @@ fun AddContactBottomSheet(
             }
         }
         
-        if (suggestedPhotoUrl == null) {
-            suggestedPhotoUrl = existingContact?.photoUri ?: enrichment?.profileImageUrl ?: lookupResult?.imageUrl
+        if (suggestedPhotoUrl == null || suggestedPhotoUrl!!.startsWith("http")) {
+            val contactPhoto = existingContact?.photoUri
+            val enrichedPhoto = enrichment?.profileImageUrl
+            val providerPhoto = lookupResult?.imageUrl
+            
+            if (contactPhoto != null) {
+                suggestedPhotoUrl = contactPhoto
+            } else if (enrichedPhoto != null) {
+                suggestedPhotoUrl = enrichedPhoto
+            } else if (providerPhoto != null) {
+                suggestedPhotoUrl = providerPhoto
+            }
         }
     }
 
@@ -124,7 +149,10 @@ fun AddContactBottomSheet(
                 modifier = Modifier
                     .size(100.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { 
+                        photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 if (suggestedPhotoUrl != null) {

@@ -6,6 +6,7 @@ import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
+import android.util.Log
 import androidx.core.net.toUri
 
 data class SimInfo(
@@ -24,13 +25,9 @@ data class SimInfo(
 
 object SimManager {
 
-    /**
-     * Build Brandfetch CDN URL format:
-     * https://cdn.brandfetch.io/domain/<OFFICIAL_DOMAIN>?c=<CLIENT_ID>
-     */
     fun buildBrandfetchLogoUrl(officialDomain: String): String {
-        val clientId = com.infocaller.app.BuildConfig.BRANDFETCH_CLIENT_ID
-        return "https://cdn.brandfetch.io/domain/$officialDomain?c=$clientId"
+        val id = try { com.infocaller.app.BuildConfig.BRANDFETCH_CLIENT_ID } catch(_:Exception) { "1idt4fOOzudt9xCz11q" }
+        return "https://cdn.brandfetch.io/domain/$officialDomain?c=$id"
     }
 
     suspend fun getSimInfos(context: Context): List<SimInfo> {
@@ -95,8 +92,16 @@ object SimManager {
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
         val action = if (hasPermission) android.content.Intent.ACTION_CALL else android.content.Intent.ACTION_DIAL
+        
+        // For USSD codes, the '#' character must be encoded as '%23' to be parsed correctly in the URI
+        val encodedNumber = if (phoneNumber.contains("#")) {
+            phoneNumber.replace("#", android.net.Uri.encode("#"))
+        } else {
+            phoneNumber
+        }
+
         val intent = android.content.Intent(action).apply {
-            data = "tel:$phoneNumber".toUri()
+            data = "tel:$encodedNumber".toUri()
             if (phoneAccountHandle != null) {
                 putExtra(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, phoneAccountHandle)
             }

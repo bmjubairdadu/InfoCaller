@@ -3,6 +3,7 @@ package com.infocaller.app.worker
 import android.content.Context
 import android.provider.ContactsContract
 import android.util.Log
+import androidx.core.content.edit
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.infocaller.app.InfoCallerApplication
@@ -23,25 +24,54 @@ class EnrichmentWorker(
         val localContactDao = app.database.localContactDao()
         val deviceRepo = app.deviceDataRepository
         
+        if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(applicationContext, com.infocaller.app.permissions.PermissionManager.CONTACTS_PERMISSIONS)) {
+            Log.w("EnrichmentWorker", "Missing contacts permissions, skipping sync.")
+            return@withContext Result.failure()
+        }
+        
         try {
+            val prefs = applicationContext.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+            val lastFullScan = prefs.getLong("last_full_contact_scan", 0L)
+            val isFullScanNeeded = System.currentTimeMillis() - lastFullScan > 12 * 3600000 // Every 12 hours
+
             // 1. Refresh local contacts from system (Import)
             importSystemContacts(localContactDao)
 
-            // 2. Get all contacts for enrichment
-            val contacts = (deviceRepo as com.infocaller.app.data.repository.DeviceDataRepositoryImpl).fetchContactsSync()
+            // 2. Scan Recent Calls for intelligence gathering
+            val recentNumbers = deviceRepo.fetchRecentCallsSync().map { it.number }
             
-            // 3. Extract and Normalize numbers
-            val numbersToProcess = contacts.mapNotNull { it.phoneNumber }
+            // 3. Get all contacts for enrichment
+            val contactNumbers = if (isFullScanNeeded) {
+                deviceRepo.fetchContactsSync().mapNotNull { it.phoneNumber }
+            } else emptyList()
+            
+            // 4. Combine, Normalize and Enqueue
+            val numbersToProcess: List<String> = (recentNumbers + contactNumbers)
                 .map { com.infocaller.app.util.PhoneNumberUtils.normalize(it) }
+                .filter { it.isNotBlank() }
                 .distinct()
             
-            // 4. Filter and Enqueue
             val currentTime = System.currentTimeMillis()
-            numbersToProcess.forEach { number ->
+            for (number in numbersToProcess) {
                 val cached = enrichmentDao.getEnrichmentSync(number)
-                if (cached == null || cached.expiresAt < currentTime) {
-                    app.enrichmentEngine.enqueue(number, priority = QueuePriority.LOW)
+                val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(cached)
+                // Native gap-aware: skip complete (name+photo), else re-enqueue if expired or has gaps
+                val shouldEnqueue = when {
+                    cached == null -> true
+                    gaps.isComplete && cached.expiresAt > currentTime -> false // skip - already complete & fresh
+                    gaps.isComplete -> false // complete, even if slightly stale - don't churn
+                    cached.expiresAt < currentTime -> true // expired with gaps -> refresh
+                    else -> gaps.hasAnyGap // missing critical gap
                 }
+                if (shouldEnqueue) app.enrichmentEngine.enqueue(number, priority = QueuePriority.LOW)
+            }
+
+            // 5. Process a single item immediately while we are running (Main work is done by ScanningService)
+            // Professional: only one dequeue per Work run; ScanningService continues one-by-one with throttle
+            app.enrichmentEngine.processNextOneByOne()
+
+            if (isFullScanNeeded) {
+                prefs.edit { putLong("last_full_contact_scan", System.currentTimeMillis()) }
             }
             
             Result.success()

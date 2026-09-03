@@ -12,7 +12,6 @@ import android.net.Uri
 import android.provider.ContactsContract
 import android.util.Log
 import com.infocaller.app.domain.model.Caller
-import com.infocaller.app.domain.model.SpamStatus
 import com.infocaller.app.domain.model.LookupResult
 import com.infocaller.app.domain.repository.CallerRepository
 import com.infocaller.app.domain.engine.PublicLookupEngine
@@ -23,13 +22,14 @@ import com.infocaller.app.data.local.entity.ContactEnrichmentEntity
 import com.infocaller.app.util.ContactUtils
 import com.infocaller.app.util.SocialUtils
 import com.infocaller.app.util.PhoneNumberUtils
+import androidx.core.net.toUri
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
 import java.net.URL
 
 class ContactEnrichmentService(
     private val context: Context,
-    private val lookupEngine: PublicLookupEngine? = null,
+    private val lookupEngine: com.infocaller.app.domain.engine.IPublicLookupEngine? = null,
     private val repository: CallerRepository? = null,
     private val database: AppDatabase? = null
 ) {
@@ -53,8 +53,8 @@ class ContactEnrichmentService(
                 country = lookupResult?.country,
                 region = lookupResult?.region,
                 carrier = lookupResult?.carrier,
-                spamScore = lookupResult?.spamScore ?: 0,
-                spamStatus = lookupResult?.spamStatus ?: SpamStatus.UNKNOWN,
+                reportCount = 0,
+                isVerified = false,
                 socialMediaLinks = lookupResult?.socialProfiles?.mapNotNull { it.profileUrl } ?: emptyList()
             )
             
@@ -92,9 +92,6 @@ class ContactEnrichmentService(
                 whatsappStatus = result.socialProfiles.find { it.platform == "WhatsApp" }?.status?.name,
                 telegramStatus = result.socialProfiles.find { it.platform == "Telegram" }?.status?.name,
                 socialProfilesJson = SocialUtils.toJson(result.socialProfiles),
-                spamScore = result.spamScore,
-                spamType = result.spamType,
-                spamStatus = result.spamStatus.name,
                 source = result.sources.joinToString(","),
                 confidence = result.confidence.toString(),
                 lastChecked = System.currentTimeMillis(),
@@ -132,46 +129,65 @@ class ContactEnrichmentService(
         try {
             val normalized = PhoneNumberUtils.normalize(phoneNumber)
             val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(normalized))
-            val projection = arrayOf(ContactsContract.PhoneLookup._ID, ContactsContract.PhoneLookup.DISPLAY_NAME)
-            
+            val projection = arrayOf(
+                ContactsContract.PhoneLookup._ID,
+                ContactsContract.PhoneLookup.DISPLAY_NAME,
+                ContactsContract.PhoneLookup.PHOTO_ID
+            )
+
             var contactId: Long = -1
             var existingName: String? = null
-            
+            var photoId: Long = -1
+
             context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     contactId = cursor.getLong(0)
                     existingName = cursor.getString(1)
+                    photoId = if (cursor.isNull(2)) -1 else cursor.getLong(2)
                 }
             }
-            
+
             if (contactId == -1L) return@withContext false
 
+            // POLICY: The name you saved manually is NEVER overwritten. Only enrich if placeholder AND gap.
+            // "Everything else will change but name never change" - exactly as requested.
+            val isSavedRealName = !ContactUtils.isPlaceholderName(existingName) && existingName != normalized && existingName?.filter { it.isDigit() } != normalized.filter { it.isDigit() }
+            // If real saved name exists, we NEVER touch DISPLAY_NAME regardless of gaps
+            val shouldUpdateName = !isSavedRealName && com.infocaller.app.util.EnrichmentGapChecker.check(database?.enrichmentDao()?.getEnrichmentSync(normalized)).missingName && !ContactUtils.isPlaceholderName(caller.displayName) && caller.displayName != null
+
+            // For already-saved real names, we still update photo/other fields but skip NAME op entirely
+            // Log skip for diagnostics
+            if (isSavedRealName && caller.displayName != null) {
+                android.util.Log.d("ContactEnrich","Name locked for $normalized ('$existingName') - skipping enrichment rename")
+            }
+
+            val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(database?.enrichmentDao()?.getEnrichmentSync(normalized))
+            if (gaps.isComplete && caller.displayName == null && caller.photoUrl == null) return@withContext false
+
             val ops = mutableListOf<ContentProviderOperation>()
-            
-            // Only update name if it's a placeholder
-            if (ContactUtils.isPlaceholderName(existingName) && !ContactUtils.isPlaceholderName(caller.displayName)) {
+
+            if (shouldUpdateName) {
                 ops.add(ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
-                    .withSelection("${ContactsContract.Data.CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ?", 
+                    .withSelection("${ContactsContract.Data.RAW_CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ?",
                         arrayOf(contactId.toString(), ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE))
                     .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, caller.displayName)
                     .build())
             }
-            
-            // Update photo if provider has a better one and user hasn't set one
-            caller.photoUrl?.let { url ->
-                if (!hasUserSetPhoto(contactId)) {
-                    val bitmap = downloadBitmap(url)
-                    if (bitmap != null) {
-                        val stream = ByteArrayOutputStream()
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
-                        val photoBytes = stream.toByteArray()
-                        
-                        ops.add(ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
-                            .withSelection("${ContactsContract.Data.CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ?", 
-                                arrayOf(contactId.toString(), ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE))
-                            .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, photoBytes)
-                            .build())
-                    }
+
+            // Update photo ONLY if both system and enrichment lack photo (gap-aware)
+            val shouldUpdatePhoto = photoId == -1L && gaps.missingPhoto && caller.photoUrl != null
+            if (shouldUpdatePhoto) {
+                val bitmap = downloadBitmap(caller.photoUrl)
+                if (bitmap != null) {
+                    val stream = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                    val photoBytes = stream.toByteArray()
+
+                    ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                        .withValue(ContactsContract.Data.RAW_CONTACT_ID, contactId)
+                        .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                        .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, photoBytes)
+                        .build())
                 }
             }
 
@@ -180,30 +196,23 @@ class ContactEnrichmentService(
             }
             true
         } catch (e: Exception) {
-            Log.e("EnrichmentService", "Update contact failed", e)
-            false
-        }
-    }
-
-    private fun hasUserSetPhoto(contactId: Long): Boolean {
-        val uri = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contactId)
-        val projection = arrayOf(ContactsContract.Contacts.PHOTO_ID)
-        return try {
-            context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-                cursor.moveToFirst() && !cursor.isNull(0)
-            } ?: false
-        } catch (e: Exception) {
+            Log.e("EnrichmentService", "Update contact failed for $phoneNumber", e)
             false
         }
     }
 
     private fun downloadBitmap(url: String): Bitmap? {
         return try {
-            val connection = URL(url).openConnection()
-            connection.doInput = true
-            connection.connect()
-            val input = connection.getInputStream()
-            BitmapFactory.decodeStream(input)
+            if (url.startsWith("content://") || url.startsWith("file://")) {
+                val inputStream = context.contentResolver.openInputStream(url.toUri())
+                BitmapFactory.decodeStream(inputStream)
+            } else {
+                val connection = URL(url).openConnection()
+                connection.doInput = true
+                connection.connect()
+                val input = connection.getInputStream()
+                BitmapFactory.decodeStream(input)
+            }
         } catch (e: Exception) {
             null
         }
@@ -239,7 +248,7 @@ class ContactEnrichmentService(
         val contacts = database?.localContactDao()?.getAllContactsSync() ?: return@withContext 0
         var count = 0
         contacts.forEachIndexed { index, contact ->
-            val res = lookupEngine?.performLookup(contact.phoneNumber, setOf(Capability.WHATSAPP, Capability.PROFILE_PHOTO))
+            val res = lookupEngine?.performLookup(contact.phoneNumber, com.infocaller.app.domain.engine.IdentifierType.PHONE, setOf(Capability.WHATSAPP, Capability.PROFILE_PHOTO))
             if (res?.imageUrl != null) {
                 updateExistingContact(contact.phoneNumber, Caller(
                     phoneNumber = contact.phoneNumber, 

@@ -48,7 +48,7 @@ fun SearchScreen(
         ) {
             when (uiState) {
                 is SearchUiState.Idle -> Text("Type a number to begin...", color = Color.White.copy(alpha = 0.5f))
-                is SearchUiState.Loading -> InfoCallerLoading(text = "Searching...")
+                is SearchUiState.Loading -> InfoCallerLoading(isFullScreen = true, text = "Searching...")
                 is SearchUiState.Success -> {
                     val caller = (uiState as SearchUiState.Success).caller
                     Card(
@@ -65,8 +65,8 @@ fun SearchScreen(
                             Text(text = caller.phoneNumber, style = MaterialTheme.typography.bodyMedium, color = Primary)
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = caller.spamStatus.name,
-                                color = if (caller.spamStatus.name == "SAFE") Success else Error,
+                                text = "Verified Result",
+                                color = Success,
                                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                             )
                         }

@@ -13,7 +13,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -22,6 +21,7 @@ import com.infocaller.app.R
 
 /**
  * Centered branded loading animation for InfoCaller.
+ * Uses the official logo and ensures it's always in the middle of the provided area.
  */
 @Composable
 fun InfoCallerLoading(
@@ -30,23 +30,23 @@ fun InfoCallerLoading(
     text: String? = null,
     isFullScreen: Boolean = false
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "Loading")
+    val infiniteTransition = rememberInfiniteTransition(label = "BrandedLoading")
     
     val scale by infiniteTransition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.05f,
+        initialValue = 0.85f,
+        targetValue = 1.15f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
+            animation = tween(1200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "PulseScale"
     )
     
     val alpha by infiniteTransition.animateFloat(
-        initialValue = 0.65f,
+        initialValue = 0.5f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
+            animation = tween(1200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "PulseAlpha"
@@ -56,7 +56,7 @@ fun InfoCallerLoading(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f))
+                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.9f))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -64,55 +64,42 @@ fun InfoCallerLoading(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-                modifier = Modifier
-                    .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.large)
-                    .padding(32.dp)
-            ) {
-                LoadingAnimation(size, scale, alpha)
-                if (text != null) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = text,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    )
-                }
-            }
+            LoadingContent(size, scale, alpha, text)
         }
     } else {
+        // Center within the area provided by the modifier
         Box(
-            modifier = modifier.fillMaxWidth(),
+            modifier = modifier,
             contentAlignment = Alignment.Center
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                LoadingAnimation(size, scale, alpha)
-                if (text != null) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = text,
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    )
-                }
-            }
+            LoadingContent(size, scale, alpha, text)
         }
     }
 }
 
 @Composable
-private fun LoadingAnimation(size: Dp, scale: Float, alpha: Float) {
-    Image(
-        painter = painterResource(id = R.drawable.app_logo),
-        contentDescription = "Loading...",
-        modifier = Modifier
-            .size(size)
-            .scale(scale)
-            .alpha(alpha)
-    )
+private fun LoadingContent(size: Dp, scale: Float, alpha: Float, text: String?) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.app_logo),
+            contentDescription = "InfoCaller Loading",
+            modifier = Modifier
+                .size(size)
+                .scale(scale)
+                .alpha(alpha)
+        )
+        if (text != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            )
+        }
+    }
 }

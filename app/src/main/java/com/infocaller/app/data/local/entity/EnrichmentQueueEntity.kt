@@ -7,7 +7,8 @@ import androidx.room.PrimaryKey
 @Keep
 @Entity(tableName = "enrichment_queue")
 data class EnrichmentQueueEntity(
-    @PrimaryKey val normalizedPhoneNumber: String,
+    @PrimaryKey val identifier: String, // Normalized phone, email, or username
+    val type: String, // PHONE, EMAIL, USERNAME
     val contactId: Long? = null,
     val priority: Int, // 0: LOW, 1: MEDIUM, 2: HIGH
     val requestedAt: Long = System.currentTimeMillis(),

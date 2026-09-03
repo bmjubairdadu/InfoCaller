@@ -1,6 +1,8 @@
 package com.infocaller.app.ui.screens
 
 import android.content.Context
+import android.content.Intent
+import android.app.Activity
 import androidx.core.content.edit
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,7 +33,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     viewModel: com.infocaller.app.ui.viewmodel.CallerViewModel,
     onNavigateToPrivacy: () -> Unit = {},
-    onNavigateToProviderAuth: () -> Unit = {}
+    onNavigateToDetails: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
@@ -62,7 +64,82 @@ fun SettingsScreen(
                 .verticalScroll(scrollState)
                 .padding(16.dp)
         ) {
+            SettingsSection("Identity Lookup") {
+                var searchNumber by remember { mutableStateOf("") }
+                
+                Column(modifier = Modifier.padding(16.dp)) {
+                    OutlinedTextField(
+                        value = searchNumber,
+                        onValueChange = { searchNumber = it },
+                        label = { Text("Search Phone Number") },
+                        placeholder = { Text("+880...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        trailingIcon = {
+                            if (searchNumber.isNotBlank()) {
+                                IconButton(onClick = { searchNumber = "" }) {
+                                    Icon(Icons.Default.Clear, null)
+                                }
+                            }
+                        }
+                    )
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    // Two-phase: CRITICAL scan (Truecaller first) -> contacts excluded, then full book re-scan
+                    Button(
+                        onClick = {
+                            if (searchNumber.isNotBlank()) {
+                                viewModel.searchNumber(searchNumber) // CRITICAL: pauses background ScanningService
+                                // After details extracted, book scan resumes (ScanOrchestrator resumeBackgroundScans) + continue enriching book
+                                viewModel.triggerThrottledSync(context)
+                                onNavigateToDetails(searchNumber)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = searchNumber.length >= 7
+                    ) {
+                        Icon(Icons.Default.Search, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("IDENTIFY CALLER")
+                    }
+                }
+            }
+
             SettingsSection("Calls") {
+                val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+                var currentRingtoneUri by remember { mutableStateOf(prefs.getString("custom_ringtone_uri", null)) }
+                
+                val ringtoneLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.StartActivityForResult()
+                ) { result ->
+                    if (result.resultCode == Activity.RESULT_OK) {
+                        val uri = result.data?.getParcelableExtra<android.net.Uri>(android.media.RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
+                        if (uri != null) {
+                            currentRingtoneUri = uri.toString()
+                            prefs.edit { putString("custom_ringtone_uri", uri.toString()) }
+                        }
+                    }
+                }
+
+                SettingsClickRow(
+                    title = "Incoming Call Ringtone",
+                    subtitle = currentRingtoneUri?.let { android.media.RingtoneManager.getRingtone(context, android.net.Uri.parse(it)).getTitle(context) } ?: "Default System Ringtone",
+                    icon = Icons.Default.MusicNote,
+                    onClick = {
+                        val intent = Intent(android.media.RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+                            putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_TYPE, android.media.RingtoneManager.TYPE_RINGTONE)
+                            putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_TITLE, "Select InfoCaller Ringtone")
+                            putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, currentRingtoneUri?.let { android.net.Uri.parse(it) })
+                            putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+                            putExtra(android.media.RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, true)
+                        }
+                        ringtoneLauncher.launch(intent)
+                    }
+                )
+
                 SettingsToggleRow(
                     title = "Call Recording",
                     subtitle = "Automatically record calls",
@@ -71,24 +148,6 @@ fun SettingsScreen(
                     onCheckedChange = { 
                         if (it) recordingLauncher.launch(PermissionManager.RECORD_AUDIO_PERMISSION)
                         else recordingEnabled = false
-                    }
-                )
-            }
-
-            SettingsSection("Security") {
-                val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-                var spamProtection by remember { mutableStateOf(prefs.getBoolean("spam_protection_enabled", true)) }
-                
-                SettingsToggleRow(
-                    title = "Spam Protection",
-                    subtitle = "Block identified scammers",
-                    icon = Icons.Default.Shield,
-                    checked = spamProtection,
-                    onCheckedChange = { 
-                        spamProtection = it
-                        context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).edit {
-                            putBoolean("spam_protection_enabled", it)
-                        }
                     }
                 )
             }
@@ -114,15 +173,6 @@ fun SettingsScreen(
                         }
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-                )
-            }
-
-            SettingsSection("Intelligence") {
-                SettingsClickRow(
-                    title = "Provider Authorization",
-                    subtitle = "Truecaller, WhatsApp, etc.",
-                    icon = Icons.Default.CloudSync,
-                    onClick = onNavigateToProviderAuth
                 )
             }
 

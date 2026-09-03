@@ -9,7 +9,7 @@ class ProviderManager(private val context: Context) {
     private val _providers = MutableStateFlow<List<LookupProvider>>(emptyList())
     val providers = _providers.asStateFlow()
 
-    private val _registryUrl = MutableStateFlow("")
+    private val _registryUrl = MutableStateFlow("https://registry.infocaller.app/manifest.json")
     val registryUrl = _registryUrl.asStateFlow()
 
     private val _backendUrl = MutableStateFlow("")
@@ -25,39 +25,67 @@ class ProviderManager(private val context: Context) {
 
     private val healthStats = mutableMapOf<String, ProviderHealth>()
 
-    fun registerProvider(provider: LookupProvider) {
+    fun registerProviders(newProviders: List<LookupProvider>) {
         val current = _providers.value.toMutableList()
-        current.removeAll { it.id == provider.id }
-        current.add(provider)
+        newProviders.forEach { provider ->
+            current.removeAll { it.id == provider.id }
+            current.add(provider)
+            if (!healthStats.containsKey(provider.id)) {
+                healthStats[provider.id] = ProviderHealth(providerId = provider.id)
+            }
+        }
         _providers.value = current
-        healthStats[provider.id] = ProviderHealth(providerId = provider.id)
+    }
+
+    fun registerProvider(provider: LookupProvider) {
+        registerProviders(listOf(provider))
     }
 
     fun getHealthyProviders(): List<LookupProvider> {
         return _providers.value.filter { 
             val health = healthStats[it.id]
-            health == null || health.status != ProviderStatus.BROKEN && health.status != ProviderStatus.DISABLED
+            health == null || (health.status != ProviderStatus.BROKEN && 
+                             health.status != ProviderStatus.DISABLED &&
+                             health.status != ProviderStatus.UNAVAILABLE &&
+                             health.status != ProviderStatus.NOT_CONFIGURED &&
+                             // Exclude DEGRADED after 10 failures, RATE_LIMITED is temporarily kept but deprioritized
+                             !(health.status == ProviderStatus.DEGRADED && health.failureCount >= 10) &&
+                             health.status != ProviderStatus.RATE_LIMITED)
         }
+    }
+
+    fun updateStatus(providerId: String, status: ProviderStatus) {
+        val health = healthStats[providerId] ?: ProviderHealth(providerId)
+        healthStats[providerId] = health.copy(status = status)
     }
 
     fun reportResult(providerId: String, success: Boolean, durationMs: Long) {
         val health = healthStats[providerId] ?: return
         val newHealth = if (success) {
+            val newCount = health.successCount + 1
             health.copy(
-                successCount = health.successCount + 1,
+                successCount = newCount,
                 lastSuccess = System.currentTimeMillis(),
-                avgDurationMs = (health.avgDurationMs * health.successCount + durationMs) / (health.successCount + 1),
-                status = ProviderStatus.HEALTHY
+                avgDurationMs = if (health.avgDurationMs==0L) durationMs else ((health.avgDurationMs * health.successCount + durationMs) / newCount),
+                status = if (health.status == ProviderStatus.DEGRADED || health.status == ProviderStatus.RATE_LIMITED) ProviderStatus.HEALTHY else health.status
             )
         } else {
             val newFailCount = health.failureCount + 1
             health.copy(
                 failureCount = newFailCount,
                 lastFailure = System.currentTimeMillis(),
-                status = if (newFailCount > 5) ProviderStatus.DEGRADED else health.status
+                status = when {
+                    newFailCount > 15 -> ProviderStatus.BROKEN
+                    newFailCount > 5 -> ProviderStatus.DEGRADED
+                    else -> health.status
+                }
             )
         }
         healthStats[providerId] = newHealth
+    }
+    fun reportRateLimited(providerId: String) {
+        val h = healthStats[providerId] ?: return
+        healthStats[providerId] = h.copy(status = ProviderStatus.RATE_LIMITED, lastFailure = System.currentTimeMillis())
     }
 
     data class ProviderHealth(

@@ -3,8 +3,10 @@ package com.infocaller.app.data.repository
 import android.content.ContentResolver
 import android.provider.CallLog
 import android.provider.ContactsContract
+import android.provider.Telephony
 import com.infocaller.app.domain.model.CallLogEntry
 import com.infocaller.app.domain.model.Contact
+import com.infocaller.app.domain.model.SmsMessage
 import com.infocaller.app.domain.repository.DeviceDataRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -40,7 +42,7 @@ class DeviceDataRepositoryImpl(
     .debounce(300L)
     .flowOn(Dispatchers.IO)
 
-    private fun fetchRecentCallsSync(): List<CallLogEntry> {
+    override fun fetchRecentCallsSync(): List<CallLogEntry> {
         val calls = mutableListOf<CallLogEntry>()
         try {
             val projection = arrayOf(
@@ -48,7 +50,8 @@ class DeviceDataRepositoryImpl(
                 CallLog.Calls.CACHED_NAME,
                 CallLog.Calls.TYPE,
                 CallLog.Calls.DATE,
-                CallLog.Calls.DURATION
+                CallLog.Calls.DURATION,
+                CallLog.Calls.PHONE_ACCOUNT_ID
             )
 
             val cursor = contentResolver.query(
@@ -65,6 +68,7 @@ class DeviceDataRepositoryImpl(
                 val typeIdx = it.getColumnIndex(CallLog.Calls.TYPE)
                 val dateIdx = it.getColumnIndex(CallLog.Calls.DATE)
                 val durationIdx = it.getColumnIndex(CallLog.Calls.DURATION)
+                val subIdx = it.getColumnIndex(CallLog.Calls.PHONE_ACCOUNT_ID)
 
                 while (it.moveToNext()) {
                     calls.add(
@@ -73,7 +77,8 @@ class DeviceDataRepositoryImpl(
                             name = it.getString(nameIdx),
                             type = it.getInt(typeIdx),
                             date = it.getLong(dateIdx),
-                            duration = it.getLong(durationIdx)
+                            duration = it.getLong(durationIdx),
+                            subscriptionId = it.getString(subIdx)
                         )
                     )
                 }
@@ -107,7 +112,7 @@ class DeviceDataRepositoryImpl(
     .debounce(500L)
     .flowOn(Dispatchers.IO)
 
-    fun fetchContactsSync(): List<Contact> {
+    override fun fetchContactsSync(): List<Contact> {
         val contacts = mutableListOf<Contact>()
         try {
             val projection = arrayOf(
@@ -163,5 +168,81 @@ class DeviceDataRepositoryImpl(
 
     override suspend fun clearCallLog() {
         contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
+    }
+
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    override fun getMessages(): Flow<List<SmsMessage>> = callbackFlow {
+        val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                trySend(fetchMessagesSync())
+            }
+        }
+
+        contentResolver.registerContentObserver(
+            Telephony.Sms.CONTENT_URI,
+            true,
+            observer
+        )
+
+        trySend(fetchMessagesSync())
+
+        awaitClose {
+            contentResolver.unregisterContentObserver(observer)
+        }
+    }
+    .debounce(500L)
+    .flowOn(Dispatchers.IO)
+
+    override fun fetchMessagesSync(): List<SmsMessage> {
+        val messages = mutableListOf<SmsMessage>()
+        try {
+            val projection = arrayOf(
+                Telephony.Sms._ID,
+                Telephony.Sms.ADDRESS,
+                Telephony.Sms.BODY,
+                Telephony.Sms.DATE,
+                Telephony.Sms.TYPE,
+                Telephony.Sms.READ
+            )
+
+            val cursor = contentResolver.query(
+                Telephony.Sms.CONTENT_URI,
+                projection,
+                null,
+                null,
+                Telephony.Sms.DATE + " DESC"
+            )
+
+            cursor?.use {
+                val idIdx = it.getColumnIndex(Telephony.Sms._ID)
+                val addressIdx = it.getColumnIndex(Telephony.Sms.ADDRESS)
+                val bodyIdx = it.getColumnIndex(Telephony.Sms.BODY)
+                val dateIdx = it.getColumnIndex(Telephony.Sms.DATE)
+                val typeIdx = it.getColumnIndex(Telephony.Sms.TYPE)
+                val readIdx = it.getColumnIndex(Telephony.Sms.READ)
+
+                while (it.moveToNext()) {
+                    messages.add(
+                        SmsMessage(
+                            id = it.getLong(idIdx),
+                            address = it.getString(addressIdx) ?: "",
+                            body = it.getString(bodyIdx) ?: "",
+                            date = it.getLong(dateIdx),
+                            type = it.getInt(typeIdx),
+                            read = it.getInt(readIdx)
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            // Handle error
+        }
+        return messages
+    }
+
+    override suspend fun deleteSms(id: Long) {
+        val selection = "${Telephony.Sms._ID} = ?"
+        val selectionArgs = arrayOf(id.toString())
+        contentResolver.delete(Telephony.Sms.CONTENT_URI, selection, selectionArgs)
     }
 }

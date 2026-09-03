@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
                 app.database
             )
             val viewModelFactory = CallerViewModel.Factory(app.repository, app.deviceDataRepository, enrichmentService, app.database, app.lookupEngine)
-            val authViewModelFactory = AuthViewModel.Factory(app.authRepository)
+            val authViewModelFactory = AuthViewModel.Factory(app.authRepository, this)
 
             val viewModel: CallerViewModel = viewModel(factory = viewModelFactory)
             val authViewModel: AuthViewModel = viewModel(factory = authViewModelFactory)
@@ -80,7 +80,8 @@ class MainActivity : ComponentActivity() {
             // Initialize theme from prefs once
             LaunchedEffect(Unit) {
                 val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-                val stored = if (prefs.contains("dark_theme")) prefs.getBoolean("dark_theme", true) else null
+                // Default to Dark (true) if not set
+                val stored = if (prefs.contains("dark_theme")) prefs.getBoolean("dark_theme", true) else true
                 viewModel.setThemeMode(stored, context)
             }
 
@@ -88,7 +89,7 @@ class MainActivity : ComponentActivity() {
             val darkTheme = when (themeMode) {
                 true -> true
                 false -> false
-                null -> androidx.compose.foundation.isSystemInDarkTheme()
+                null -> true // Default to dark if state is somehow null
             }
 
             InfoCallerTheme(darkTheme = darkTheme) {
@@ -127,20 +128,34 @@ class MainActivity : ComponentActivity() {
 
 
     private fun makeCall(viewModel: CallerViewModel, phoneNumber: String) {
+        // JUST-IN-TIME: CALL_PHONE only when user taps call
+        val needCall = com.infocaller.app.permissions.PermissionManager.DIALER_PERMISSIONS
+        if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(this, needCall)) {
+            androidx.core.app.ActivityCompat.requestPermissions(this, needCall, 1001)
+            // Store pending number to retry after grant
+            getSharedPreferences("pending_call", MODE_PRIVATE).edit().putString("number", phoneNumber).apply()
+            return
+        }
         lifecycleScope.launch {
-            val simInfos = try {
-                SimManager.getSimInfos(this@MainActivity)
-            } catch (_: Exception) {
-                emptyList()
-            }
-            
-            if (simInfos.size > 1) {
-                viewModel.showSimSelection(phoneNumber)
-            } else if (simInfos.size == 1) {
-                val sim = simInfos[0]
-                SimManager.placeCall(this@MainActivity, phoneNumber, sim.phoneAccountHandle)
-            } else {
-                SimManager.placeCall(this@MainActivity, phoneNumber)
+            val simInfos = try { SimManager.getSimInfos(this@MainActivity) } catch (_: Exception) { emptyList() }
+            if (simInfos.size > 1) viewModel.showSimSelection(phoneNumber)
+            else if (simInfos.size == 1) SimManager.placeCall(this@MainActivity, phoneNumber, simInfos[0].phoneAccountHandle)
+            else SimManager.placeCall(this@MainActivity, phoneNumber)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1001 && grantResults.all { it == android.content.pm.PackageManager.PERMISSION_GRANTED }) {
+            val pending = getSharedPreferences("pending_call", MODE_PRIVATE).getString("number", null)
+            if (!pending.isNullOrBlank()) {
+                getSharedPreferences("pending_call", MODE_PRIVATE).edit().remove("number").apply()
+                // retry call
+                lifecycleScope.launch {
+                    val vm = (application as com.infocaller.app.InfoCallerApplication).let { null } // placeholder
+                }
+                // Simpler: place directly
+                SimManager.placeCall(this, pending)
             }
         }
     }

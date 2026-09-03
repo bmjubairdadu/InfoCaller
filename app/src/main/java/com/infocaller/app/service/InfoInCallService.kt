@@ -8,6 +8,7 @@ import android.util.Log
 import com.infocaller.app.InfoCallerApplication
 import com.infocaller.app.data.local.CallManager
 import com.infocaller.app.ui.InCallActivity
+import androidx.core.net.toUri
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 
@@ -65,13 +66,23 @@ class InfoInCallService : InCallService() {
         val channelId = "incoming_calls"
         val notificationManager = getSystemService(android.app.NotificationManager::class.java)
 
+        val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+        val customRingtoneUri = prefs.getString("custom_ringtone_uri", null)
+
         val channel = android.app.NotificationChannel(
             channelId, 
             "Incoming Calls", 
             android.app.NotificationManager.IMPORTANCE_HIGH,
         ).apply {
             lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
-            setSound(null, null) 
+            if (customRingtoneUri != null) {
+                setSound(customRingtoneUri.toUri(), android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build())
+            } else {
+                setSound(null, null) 
+            }
             enableVibration(true)
             enableLights(true)
         }
@@ -107,6 +118,8 @@ class InfoInCallService : InCallService() {
         val location = com.infocaller.app.util.LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
         val subText = if (enrichment == null && displayName == number) "Identifying..." else location
 
+        // When screen is on: heads-up with Answer/Decline. When off: full-screen InCallActivity.
+        val isScreenOn = (getSystemService(Context.POWER_SERVICE) as android.os.PowerManager).isInteractive
         val notification = androidx.core.app.NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_menu_call)
             .setContentTitle(displayName)
@@ -114,15 +127,36 @@ class InfoInCallService : InCallService() {
             .setSubText(if (displayName != number) subText else null)
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_MAX)
             .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(pendingIntent, true)
+            .setFullScreenIntent(pendingIntent, isScreenOn.not()) // heads-up when screen on, full-screen when off
             .setOngoing(true)
             .setAutoCancel(false)
+            .setOnlyAlertOnce(true)
+            .setColor(0xFFFBBF24.toInt())
+            .setColorized(true)
             .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
             .addAction(android.R.drawable.ic_menu_call, "Answer", answerPendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", declinePendingIntent)
-            .build()
+            
+        // Add Large Icon if photo exists
+        val photoUrl = enrichment?.profileImageUrl ?: com.infocaller.app.util.PhoneNumberUtils.getContactPhotoUri(this, number)
+        if (photoUrl != null) {
+            try {
+                val loader = coil.ImageLoader(this)
+                val request = coil.request.ImageRequest.Builder(this)
+                    .data(photoUrl)
+                    .target { result ->
+                        val bitmap = (result as android.graphics.drawable.BitmapDrawable).bitmap
+                        notification.setLargeIcon(bitmap)
+                        notificationManager.notify(1, notification.build())
+                    }
+                    .build()
+                loader.enqueue(request)
+            } catch (e: Exception) {
+                Log.e("InfoInCallService", "Failed to load notification icon", e)
+            }
+        }
 
-        notificationManager.notify(1, notification)
+        notificationManager.notify(1, notification.build())
     }
 
     override fun onCallRemoved(call: Call) {

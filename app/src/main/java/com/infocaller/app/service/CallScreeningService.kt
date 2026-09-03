@@ -9,7 +9,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 /**
- * Service to handle incoming calls and block spam numbers based on local DB.
+ * Service to handle incoming calls and block numbers based on local blocklist.
  */
 class CallScreeningService : CallScreeningService() {
 
@@ -28,24 +28,14 @@ class CallScreeningService : CallScreeningService() {
             CoroutineScope(Dispatchers.IO).launch {
                 val db = AppDatabase.getDatabase(applicationContext)
                 
-                // 1. Check verified community spam list
-                var isSpam = db.callerDao().isSpam(phoneNumber)
-                
-                // 2. Check local enrichment cache for high-score spam
-                if (!isSpam) {
-                    val enrichment = db.enrichmentDao().getEnrichmentSync(phoneNumber)
-                    if (enrichment != null) {
-                        isSpam = enrichment.spamStatus == "SPAM" || 
-                                 enrichment.spamStatus == "SCAM" || 
-                                 (enrichment.spamScore > 70)
-                    }
-                }
+                // 1. Check local blocklist
+                val isBlocked = db.blocklistDao().isBlocked(phoneNumber)
                 
                 val response = CallResponse.Builder()
-                    .setDisallowCall(isSpam)
-                    .setRejectCall(isSpam)
-                    .setSkipCallLog(isSpam)
-                    .setSkipNotification(isSpam)
+                    .setDisallowCall(isBlocked)
+                    .setRejectCall(isBlocked)
+                    .setSkipCallLog(isBlocked)
+                    .setSkipNotification(isBlocked)
                     .build()
                 
                 respondToCall(details, response)

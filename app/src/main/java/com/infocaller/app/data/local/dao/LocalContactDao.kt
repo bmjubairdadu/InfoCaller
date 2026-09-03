@@ -9,6 +9,10 @@ interface LocalContactDao {
     @Query("SELECT * FROM local_contacts ORDER BY displayName ASC")
     fun getAllContacts(): Flow<List<LocalContactEntity>>
 
+    @Transaction
+    @Query("SELECT * FROM local_contacts ORDER BY displayName ASC")
+    fun getAllEnrichedContacts(): Flow<List<com.infocaller.app.data.local.model.EnrichedContact>>
+
     @Query("SELECT * FROM local_contacts WHERE isSynced = 0")
     suspend fun getUnsyncedContacts(): List<LocalContactEntity>
 

@@ -14,22 +14,31 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.*
 import androidx.core.net.toUri
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -41,6 +50,8 @@ import com.infocaller.app.util.ContactUtils
 import com.infocaller.app.util.LocationUtils
 import com.infocaller.app.util.SocialUtils
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class InCallActivity : ComponentActivity() {
@@ -71,7 +82,7 @@ class InCallActivity : ComponentActivity() {
 
 @Composable
 fun InCallScreen(onDismiss: () -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
     val enrichmentEngine = app.enrichmentEngine
     
@@ -100,15 +111,6 @@ fun InCallScreen(onDismiss: () -> Unit) {
     var callState by remember { mutableStateOf(call?.state ?: Call.STATE_DISCONNECTED) }
 
     val infiniteTransition = rememberInfiniteTransition(label = "Pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "PulseScale"
-    )
 
     DisposableEffect(Unit) {
         CallManager.init(context)
@@ -136,33 +138,76 @@ fun InCallScreen(onDismiss: () -> Unit) {
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        val bgGradient = if (isBlocked || enrichment?.spamStatus == "SPAM") {
-            Brush.verticalGradient(listOf(Error.copy(alpha = 0.4f), MaterialTheme.colorScheme.background))
-        } else {
-            Brush.verticalGradient(listOf(Primary.copy(alpha = 0.25f), MaterialTheme.colorScheme.background))
-        }
+    // Social Profiles for UI
+    val socialProfiles = remember(enrichment?.socialProfilesJson) {
+        SocialUtils.fromJson(enrichment?.socialProfilesJson)
+    }
 
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        val imageModel = contactPhotoUri ?: enrichment?.profileImageUrl
+        // Clean professional incoming screen: true overlay when screen on(days), full-screen when pocketed.
+        // No extra app notifications here - only InfoInCallService notification handles lock-screen.
+        if (imageModel != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(imageModel)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize().blur(60.dp).alpha(0.35f),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+            )
+        }
+        val themeColor = if (isBlocked) Error else Primary
+        val bgGradient = Brush.verticalGradient(listOf(themeColor.copy(alpha = 0.25f), Color.Transparent, Color.Black.copy(alpha = 0.85f)))
         Box(modifier = Modifier.fillMaxSize().background(bgGradient))
 
         Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 48.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
+            // 2. Caller Info Section
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(top = 80.dp)
+                modifier = Modifier.padding(top = 40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Box(modifier = Modifier.size(120.dp).scale(pulseScale).background(Primary.copy(alpha = 0.15f), CircleShape))
+                    // Pulsing Rings
+                    repeat(2) { i ->
+                        val ringScale by infiniteTransition.animateFloat(
+                            initialValue = 1f,
+                            targetValue = 1.6f + (i * 0.2f),
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(2000, delayMillis = i * 500, easing = LinearOutSlowInEasing),
+                                repeatMode = RepeatMode.Restart
+                            ),
+                            label = "RingScale"
+                        )
+                        val ringAlpha by infiniteTransition.animateFloat(
+                            initialValue = 0.4f,
+                            targetValue = 0f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(2000, delayMillis = i * 500, easing = LinearOutSlowInEasing),
+                                repeatMode = RepeatMode.Restart
+                            ),
+                            label = "RingAlpha"
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(100.dp)
+                                .scale(ringScale)
+                                .alpha(ringAlpha)
+                                .background(themeColor, CircleShape)
+                        )
+                    }
+
                     Surface(
-                        modifier = Modifier.size(100.dp),
+                        modifier = Modifier.size(120.dp).shadow(24.dp, CircleShape),
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.surfaceVariant,
-                        border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = 0.1f))
+                        border = androidx.compose.foundation.BorderStroke(3.dp, themeColor.copy(alpha = 0.5f))
                     ) {
-                        val imageModel = contactPhotoUri ?: enrichment?.profileImageUrl
                         if (imageModel != null) {
                             AsyncImage(
                                 model = imageModel,
@@ -174,41 +219,103 @@ fun InCallScreen(onDismiss: () -> Unit) {
                         } else {
                             val initials = ContactUtils.getInitials(contactName ?: enrichment?.publicName)
                             Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                Text(text = initials, style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold), color = Primary)
+                                Text(text = initials, style = MaterialTheme.typography.displayMedium.copy(fontWeight = FontWeight.Bold), color = themeColor)
                             }
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(32.dp))
-                Text(text = contactName ?: enrichment?.publicName ?: "Unknown Caller", style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.ExtraBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-                Text(text = number, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
 
-                if (enrichment?.spamStatus == "SPAM" || (enrichment?.spamScore ?: 0) > 50) {
-                    Card(modifier = Modifier.padding(top = 16.dp), colors = CardDefaults.cardColors(containerColor = Error.copy(alpha = 0.15f))) {
-                        Text(text = "POTENTIAL SPAM", color = Error, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                Spacer(modifier = Modifier.height(40.dp))
+
+                AnimatedVisibility(
+                    visible = true,
+                    enter = fadeIn(tween(600)) + slideInVertically(tween(600)) { it / 2 }
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = contactName ?: enrichment?.publicName ?: "Unknown Caller",
+                            style = MaterialTheme.typography.headlineLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        
+                        Text(
+                            text = com.infocaller.app.util.PhoneNumberUtils.formatAsYouType(number),
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
                     }
                 }
 
                 val location = LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
                 if (location.isNotBlank()) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
-                        Icon(Icons.Default.Place, null, tint = Primary, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(location, style = MaterialTheme.typography.bodyMedium)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically, 
+                        modifier = Modifier.padding(top = 16.dp).alpha(0.8f)
+                    ) {
+                        Icon(Icons.Default.Place, null, tint = themeColor, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(location, style = MaterialTheme.typography.bodyLarge, color = Color.White)
                     }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(text = getCallStateText(callState), style = MaterialTheme.typography.titleLarge, color = if (callState == Call.STATE_RINGING) Secondary else MaterialTheme.colorScheme.onSurfaceVariant)
+                
+                // Only used social - no generic placeholders
+                val usedSocials = remember(socialProfiles) { com.infocaller.app.util.SocialUtils.filteredUsedProfiles(socialProfiles) }
+                if (usedSocials.isNotEmpty()) {
+                    Row(modifier = Modifier.padding(top = 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        usedSocials.forEach { profile -> SocialMiniIcon(profile) }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                // Call State
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (callState == Call.STATE_RINGING) {
+                        val infiniteIconTransition = rememberInfiniteTransition(label = "IconPulse")
+                        val iconScale by infiniteIconTransition.animateFloat(
+                            initialValue = 1f, targetValue = 1.2f,
+                            animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "IconScale"
+                        )
+                        Icon(
+                            Icons.Rounded.PhoneInTalk, null, 
+                            tint = Secondary, 
+                            modifier = Modifier.size(24.dp).scale(iconScale)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                    }
+                    Text(
+                        text = getCallStateText(callState).uppercase(),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 2.sp,
+                        color = if (callState == Call.STATE_RINGING) Secondary else Color.White.copy(alpha = 0.5f)
+                    )
+                }
             }
 
-            Box(modifier = Modifier.fillMaxWidth().padding(bottom = 48.dp)) {
+            // 3. Controls Section
+            Box(modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
                 if (callState == Call.STATE_RINGING) {
-                    IncomingCallControls(
-                        onAccept = { call?.answer(VideoProfile.STATE_AUDIO_ONLY) },
-                        onDecline = { call?.reject(false, null); onDismiss() }
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        val usedForConnect = remember(socialProfiles) { com.infocaller.app.util.SocialUtils.filteredUsedProfiles(socialProfiles) }
+                        if (usedForConnect.isNotEmpty()) {
+                            Text("QUICK CONNECT", color = Color.White.copy(alpha = 0.4f), style = MaterialTheme.typography.labelSmall, letterSpacing = 2.sp, modifier = Modifier.padding(bottom = 12.dp))
+                            Row(modifier = Modifier.padding(bottom = 32.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                                usedForConnect.take(3).forEach { profile -> SocialActionCircle(profile) }
+                            }
+                        }
+
+                        SwipeToAnswer(
+                            onAccept = { call?.answer(VideoProfile.STATE_AUDIO_ONLY) },
+                            onDecline = { call?.reject(false, null); onDismiss() }
+                        )
+                    }
                 } else {
                     ActiveCallControls(
+                        number = number,
                         isMuted = isMuted,
                         isSpeakerOn = isSpeakerOn,
                         isHolding = isHolding,
@@ -227,47 +334,153 @@ fun InCallScreen(onDismiss: () -> Unit) {
 }
 
 @Composable
-fun IncomingCallControls(onAccept: () -> Unit, onDecline: () -> Unit) {
+fun SocialActionCircle(profile: com.infocaller.app.domain.model.SocialProfile) {
+    val context = LocalContext.current
+    
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(
+            onClick = { SocialUtils.openSocialProfile(context, profile) },
+            modifier = Modifier.size(56.dp).shadow(8.dp, CircleShape),
+            shape = CircleShape,
+            color = Color.White.copy(alpha = 0.1f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                AsyncImage(
+                    model = SocialUtils.getLogoUrl(profile.platform),
+                    contentDescription = profile.platform,
+                    modifier = Modifier.size(32.dp).clip(CircleShape),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                )
+            }
+        }
+        Text(
+            profile.platform.uppercase(), 
+            modifier = Modifier.padding(top = 8.dp), 
+            fontSize = 9.sp, 
+            color = Color.White.copy(alpha = 0.5f),
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+fun SwipeToAnswer(onAccept: () -> Unit, onDecline: () -> Unit) {
+    val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     val screenWidth = LocalConfiguration.current.screenWidthDp.dp
     val sliderWidth = screenWidth - 64.dp
     val sliderWidthPx = with(density) { sliderWidth.toPx() }
     var offsetX by remember { mutableFloatStateOf(0f) }
-    val handleSize = 72.dp
+    val handleSize = 80.dp
     val handleSizePx = with(density) { handleSize.toPx() }
     val maxOffset = (sliderWidthPx - handleSizePx) / 2
 
-    Box(modifier = Modifier.fillMaxWidth().height(handleSize + 16.dp).padding(horizontal = 32.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.05f)), contentAlignment = Alignment.Center) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Decline", color = Error.copy(alpha = 0.4f), fontWeight = FontWeight.Bold)
-            Text("Answer", color = Success.copy(alpha = 0.4f), fontWeight = FontWeight.Bold)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(100.dp)
+            .padding(horizontal = 16.dp)
+            .glassy(radius = 50.dp, blur = 20.dp)
+            .background(Color.White.copy(alpha = 0.05f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.alpha(0.6f)) {
+                Icon(Icons.Default.Close, null, tint = Error, modifier = Modifier.size(20.dp))
+                Text("DECLINE", color = Error, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.alpha(0.6f)) {
+                Icon(Icons.Default.Check, null, tint = Success, modifier = Modifier.size(20.dp))
+                Text("ANSWER", color = Success, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+            }
         }
-        Box(modifier = Modifier.offset { IntOffset(offsetX.roundToInt(), 0) }.size(handleSize).shadow(12.dp, CircleShape).background(brush = Brush.linearGradient(colors = when { offsetX > 40f -> listOf(Success, Success.copy(alpha = 0.7f)); offsetX < -40f -> listOf(Error, Error.copy(alpha = 0.7f)); else -> listOf(Primary, PrimaryVariant) }), shape = CircleShape).draggable(orientation = Orientation.Horizontal, state = rememberDraggableState { delta -> offsetX = (offsetX + delta).coerceIn(-maxOffset, maxOffset) }, onDragStopped = { if (offsetX >= maxOffset * 0.7f) onAccept() else if (offsetX <= -maxOffset * 0.7f) onDecline(); offsetX = 0f }), contentAlignment = Alignment.Center) {
-            Icon(imageVector = when { offsetX > 40f -> Icons.Default.Call; offsetX < -40f -> Icons.Default.CallEnd; else -> Icons.Default.UnfoldMoreDouble }, contentDescription = null, tint = if (offsetX.roundToInt() == 0) Color.Black else Color.White, modifier = Modifier.size(32.dp))
+
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(offsetX.roundToInt(), 0) }
+                .size(handleSize)
+                .padding(4.dp)
+                .shadow(16.dp, CircleShape)
+                .background(
+                    brush = Brush.linearGradient(
+                        colors = when {
+                            offsetX > 50f -> listOf(Success, Color(0xFF00C853))
+                            offsetX < -50f -> listOf(Error, Color(0xFFD50000))
+                            else -> listOf(Color.White, Color.White.copy(alpha = 0.8f))
+                        }
+                    ),
+                    shape = CircleShape
+                )
+                .draggable(
+                    orientation = Orientation.Horizontal,
+                    state = rememberDraggableState { delta ->
+                        offsetX = (offsetX + delta).coerceIn(-maxOffset, maxOffset)
+                    },
+                    onDragStarted = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+                    onDragStopped = {
+                        if (offsetX >= maxOffset * 0.8f) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onAccept()
+                        } else if (offsetX <= -maxOffset * 0.8f) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onDecline()
+                        }
+                        offsetX = 0f
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = when {
+                    offsetX > 50f -> Icons.Default.Call
+                    offsetX < -50f -> Icons.Default.CallEnd
+                    else -> Icons.Default.UnfoldMoreDouble
+                },
+                contentDescription = null,
+                tint = if (abs(offsetX) < 50f) Color.Black else Color.White,
+                modifier = Modifier.size(32.dp)
+            )
         }
     }
 }
 
 @Composable
-fun ActiveCallControls(isMuted: Boolean, isSpeakerOn: Boolean, isHolding: Boolean, isRecording: Boolean, onMute: () -> Unit, onSpeaker: () -> Unit, onHold: () -> Unit, onEnd: () -> Unit, onKeypad: () -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+fun ActiveCallControls(number: String, isMuted: Boolean, isSpeakerOn: Boolean, isHolding: Boolean, isRecording: Boolean, onMute: () -> Unit, onSpeaker: () -> Unit, onHold: () -> Unit, onEnd: () -> Unit, onKeypad: () -> Unit) {
+    val context = LocalContext.current
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            InCallButton(icon = if (isMuted) Icons.Default.MicOff else Icons.Default.Mic, label = "Mute", active = isMuted, onClick = onMute)
+            InCallButton(icon = if (isMuted) Icons.Rounded.MicOff else Icons.Rounded.Mic, label = "Mute", active = isMuted, onClick = onMute)
             InCallButton(icon = Icons.AutoMirrored.Filled.VolumeUp, label = "Speaker", active = isSpeakerOn, onClick = onSpeaker)
-            InCallButton(icon = if (isRecording) Icons.Default.FiberManualRecord else Icons.Default.RadioButtonUnchecked, label = if (isRecording) "Recording" else "Record", active = isRecording, onClick = { CallManager.toggleRecording(context as? android.app.Activity ?: return@InCallButton, "") })
-            InCallButton(icon = if (isHolding) Icons.Default.PlayArrow else Icons.Default.Pause, label = if (isHolding) "Resume" else "Hold", active = isHolding, onClick = onHold)
-            InCallButton(icon = Icons.Default.Dialpad, label = "Keypad", onClick = onKeypad)
+            InCallButton(
+                icon = if (isRecording) Icons.Rounded.FiberManualRecord else Icons.Rounded.RadioButtonUnchecked, 
+                label = if (isRecording) "Recording" else "Record", 
+                active = isRecording, 
+                onClick = { 
+                    CallManager.toggleRecording(context as? android.app.Activity ?: return@InCallButton, number) 
+                }
+            )
+            InCallButton(icon = if (isHolding) Icons.Rounded.PlayArrow else Icons.Rounded.Pause, label = if (isHolding) "Resume" else "Hold", active = isHolding, onClick = onHold)
+            InCallButton(icon = Icons.Rounded.Dialpad, label = "Keypad", onClick = onKeypad)
         }
-        Spacer(modifier = Modifier.height(40.dp))
-        Surface(onClick = onEnd, modifier = Modifier.size(80.dp).shadow(20.dp, CircleShape), shape = CircleShape, color = Error) {
-            Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.CallEnd, null, tint = Color.White, modifier = Modifier.size(36.dp)) }
+        Spacer(modifier = Modifier.height(48.dp))
+        Surface(
+            onClick = onEnd, 
+            modifier = Modifier.size(80.dp).shadow(24.dp, CircleShape), 
+            shape = CircleShape, 
+            color = Error
+        ) {
+            Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.CallEnd, null, tint = Color.White, modifier = Modifier.size(36.dp)) }
         }
     }
 }
 
 @Composable
-fun InCallButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
+fun InCallButton(icon: ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(onClick = onClick, modifier = Modifier.size(60.dp), shape = CircleShape, color = if (active) Primary else Color.White.copy(alpha = 0.1f)) {
             Box(contentAlignment = Alignment.Center) { Icon(icon, label, tint = if (active) Color.Black else Color.White) }
@@ -295,6 +508,28 @@ fun DtmfGrid(onDigit: (Char) -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun SocialMiniIcon(profile: com.infocaller.app.domain.model.SocialProfile) {
+    val context = LocalContext.current
+    
+    Surface(
+        onClick = { SocialUtils.openSocialProfile(context, profile) },
+        modifier = Modifier.size(36.dp),
+        shape = CircleShape,
+        color = Color.White.copy(alpha = 0.1f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            AsyncImage(
+                model = SocialUtils.getLogoUrl(profile.platform),
+                contentDescription = profile.platform,
+                modifier = Modifier.size(20.dp).clip(CircleShape),
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit
+            )
         }
     }
 }

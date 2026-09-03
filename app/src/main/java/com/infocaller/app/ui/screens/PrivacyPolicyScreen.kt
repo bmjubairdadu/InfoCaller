@@ -41,7 +41,7 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
                 .padding(24.dp)
         ) {
             PolicySection("Information We Collect", 
-                "InfoCaller collects contact information, call logs, and phone state to provide caller identification and spam protection. We do not collect or store private contact names provided by you locally.")
+                "InfoCaller collects contact information, call logs, and phone state to provide caller identification features. We do not collect or store private contact names provided by you locally.")
             
             PolicySection("Data Enrichment", 
                 "We use public providers (like Truecaller, WhatsApp public data) and a shared registry to enrich caller information. This data is merged to provide the best possible identification.")

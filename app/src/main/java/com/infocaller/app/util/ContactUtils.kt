@@ -2,6 +2,9 @@ package com.infocaller.app.util
 
 import android.accounts.AccountManager
 import android.content.Context
+import android.net.Uri
+import android.provider.ContactsContract
+import android.content.Intent
 
 object ContactUtils {
 
@@ -35,29 +38,88 @@ object ContactUtils {
         }
     }
 
+    fun editContact(context: Context, phoneNumber: String) {
+        val normalized = PhoneNumberUtils.normalize(phoneNumber)
+        val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(normalized))
+        val projection = arrayOf(ContactsContract.PhoneLookup._ID, ContactsContract.PhoneLookup.LOOKUP_KEY)
+        
+        context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val contactId = cursor.getLong(0)
+                val lookupKey = cursor.getString(1)
+                val contactUri = ContactsContract.Contacts.getLookupUri(contactId, lookupKey)
+                val intent = Intent(Intent.ACTION_EDIT).apply {
+                    data = contactUri
+                }
+                context.startActivity(intent)
+            }
+        }
+    }
+
+    fun getLastIncomingCallNumber(context: Context): String? {
+        val resolver = context.contentResolver
+        val cursor = resolver.query(
+            android.provider.CallLog.Calls.CONTENT_URI,
+            arrayOf(android.provider.CallLog.Calls.NUMBER),
+            "${android.provider.CallLog.Calls.TYPE} = ? OR ${android.provider.CallLog.Calls.TYPE} = ?",
+            arrayOf(android.provider.CallLog.Calls.INCOMING_TYPE.toString(), android.provider.CallLog.Calls.MISSED_TYPE.toString()),
+            "${android.provider.CallLog.Calls.DATE} DESC"
+        )
+        return cursor?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
+    }
+
     fun getContactAccounts(context: Context): List<ContactAccount> {
         val accounts = mutableListOf<ContactAccount>()
         val accountManager = AccountManager.get(context)
         
+        // Add default Phone account
         accounts.add(ContactAccount("Phone", "Local Device", null, null))
         
         try {
+            // Priority 1: Get from AccountManager
             val amAccounts = accountManager.accounts
             for (account in amAccounts) {
                 val type = account.type.lowercase()
-                if (type == "com.google" || type.contains("sim") || type.contains("telecom") || type.contains("contact")) {
-                    val label = when {
-                        type == "com.google" -> "Google"
-                        type.contains("sim") -> "SIM Card"
-                        type.contains("whatsapp") -> "WhatsApp"
-                        else -> account.name
+                val name = account.name
+                
+                val label = when {
+                    type == "com.google" -> "Google ($name)"
+                    type.contains("sim") -> "SIM Card"
+                    type.contains("telecom") -> "Operator"
+                    type.contains("whatsapp") -> "WhatsApp"
+                    else -> name
+                }
+                
+                // Only add if it's likely a writable contacts account
+                if (type == "com.google" || type.contains("sim") || type.contains("telecom") || type.contains("android.contacts")) {
+                    accounts.add(ContactAccount(name, label, name, account.type))
+                }
+            }
+            
+            // Priority 2: Query Contacts Provider for Raw SIM accounts if not found
+            if (accounts.none { it.typeLabel.contains("SIM") }) {
+                val cursor = context.contentResolver.query(
+                    ContactsContract.RawContacts.CONTENT_URI,
+                    arrayOf(ContactsContract.RawContacts.ACCOUNT_NAME, ContactsContract.RawContacts.ACCOUNT_TYPE),
+                    null, null, null
+                )
+                cursor?.use {
+                    val nameIdx = it.getColumnIndex(ContactsContract.RawContacts.ACCOUNT_NAME)
+                    val typeIdx = it.getColumnIndex(ContactsContract.RawContacts.ACCOUNT_TYPE)
+                    while (it.moveToNext()) {
+                        val name = it.getString(nameIdx)
+                        val type = it.getString(typeIdx)
+                        if (type?.lowercase()?.contains("sim") == true) {
+                            accounts.add(ContactAccount(name ?: "SIM", "SIM Card", name, type))
+                        }
                     }
-                    accounts.add(ContactAccount(account.name, label, account.name, account.type))
                 }
             }
         } catch (_: Exception) {}
         
-        return accounts.distinctBy { it.accountName + it.accountType }
+        return accounts.distinctBy { (it.accountName ?: "") + (it.accountType ?: "") }
     }
 }
 

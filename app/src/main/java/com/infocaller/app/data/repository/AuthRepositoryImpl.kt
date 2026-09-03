@@ -10,8 +10,7 @@ class AuthRepositoryImpl : AuthRepository {
     override val currentUser = _currentUser.asStateFlow()
 
     override suspend fun signIn(email: String, password: String): Result<User> {
-        // TODO: Implement actual Firebase Auth sign in
-        // For now, return mock success
+        // Mock success for legacy auth
         val user = User(
             id = "mock-user-id",
             email = email,
@@ -23,8 +22,7 @@ class AuthRepositoryImpl : AuthRepository {
     }
 
     override suspend fun signUp(email: String, password: String): Result<User> {
-        // TODO: Implement actual Firebase Auth sign up
-        // For now, return mock success
+        // Mock success for legacy auth
         val user = User(
             id = "mock-user-id",
             email = email,

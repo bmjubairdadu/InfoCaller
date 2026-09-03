@@ -12,15 +12,29 @@ class PhoneMetadataProviderImpl(private val context: Context) : PhoneMetadataPro
     override val priority: Int = 100
     override val costClass: CostClass = CostClass.FREE
 
-    override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? {
+    override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? {
+        if (type != IdentifierType.PHONE) return null
+        val normalized = identifier
+        // Use libphonenumber geocoder/carrier properly - country from number, not hardcoded
+        val regionCode = PhoneNumberUtils.getCountryCode(normalized)
+        val country = when (regionCode) {
+            "BD" -> "Bangladesh"; "IN" -> "India"; "PK" -> "Pakistan"; "US" -> "United States"
+            "GB" -> "United Kingdom"; "SA" -> "Saudi Arabia"; "AE" -> "United Arab Emirates"
+            "MY" -> "Malaysia"; "SG" -> "Singapore"; else -> regionCode ?: "Unknown"
+        }
         return PartialResult(
-            country = "Bangladesh",
-            region = PhoneNumberUtils.getLocationInfo(normalizedPhoneNumber),
-            carrier = PhoneNumberUtils.getCarrierInfo(normalizedPhoneNumber, this.context),
+            country = country,
+            region = PhoneNumberUtils.getLocationInfo(normalized),
+            carrier = PhoneNumberUtils.getCarrierInfo(normalized, this.context),
             confidence = 1.0f,
             source = name,
             providerId = id,
             providerVersion = version
         )
+    }
+
+    override suspend fun bulkLookup(identifiers: List<String>, type: String, context: LookupContext): Map<String, PartialResult> {
+        if (type != IdentifierType.PHONE) return emptyMap()
+        return emptyMap()
     }
 }

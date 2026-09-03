@@ -14,21 +14,43 @@
 
 ## Technical Details
 
-- **Package**: `com.infocaller.app`
-- **Architecture**: MVVM with Jetpack Compose.
-- **Database**: Room for local persistence and caching.
-- **Providers**: Apify (WhatsApp/Telegram), Truecaller V2, Google Search, and Phone Metadata.
-- **Build System**: Gradle with Kotlin DSL.
+- **Package**: `com.infocaller.app` · `compileSdk/targetSdk 34` · `minSdk 26`
+- **Architecture**: MVVM, Jetpack Compose, Coroutines, Room
+- **OSINT**: Truecaller (truecallerjs `search5-noneu` + `bulk`), Eyecon, WhatsApp Apify (educational), DuckDuckGo/Bing free dorks, GitHub, Sherlock 40 + WhatsMyName, Holehe email, PhoneInfoga, NID DB 115k indexed, Brandfetch SIM logos
+- **Build**: Gradle 9 + Kotlin DSL · R8 minify (`proguard-rules.pro`)
+
+## One-by-One Enrichment (Anti-Block)
+
+All contacts are processed **one by one** with throttling to avoid API blocks:
+- `EnrichmentWorker` enqueues all unknown numbers, then dequeues **LIMIT 1** every cycle.
+- `ContinuousEnrichmentEngine.processNextOneByOne()` enforces **MIN_INTERVAL 3.5s (≈17/min)** + **daily soft cap 800** (prefs `enrichment_limits`).
+- `ScanningService` polls with backoff; priority scans (user search) skip the queue immediately.
+- Per-provider exponential backoff capped at 24h + jitter if a provider rate-limits.
+
+## API Keys — What You Must Provide (professional setup)
+
+All keys go in `local.properties` (never commit). App also works without them via free fallbacks.
+
+| Key | Required? | Where to get | What it unlocks |
+|---|---|---|---|
+| `truecaller.client.secret` | **Recommended** (login still works without) | Truecaller account (Onboarding OTP flow uses `lvc22mp3l1sfv6ujg83rd17btt` fallback) | Truecaller search (primary caller ID) — users OTP-verify in app and cloud secret auto-creates as `truecaller_token` |
+| `apify.token.1` / `apify.token.2` | Optional | apify.com | WhatsApp/Telegram profile via Apify actor (backend `POST /api/v1/lookup/phone`) |
+| `backend.api.key` | Optional (if you run your backend) | You generate | Secures your Node relay (`backend/.env INFOCALLER_API_KEY`) |
+| `numlookup.api.key` | Optional | numlookupapi.com | Carrier/line-type enrichment |
+| `coreclaw.api.key` | Optional | coreclaw.com | Business OSINT |
+| `brandfetch.client.id` | Optional (has fallback) | brandfetch.io | Operator logos |
+
+Free providers (no key needed): DuckDuckGo/Bing/Google dorks, GitHub, Sherlock/WhatsMyName OSINT, Disposable check, IP geocoding, local NID DB (115k), Dark Web surface.
 
 ## Build Instructions
 
-1. Clone the repository:
+1. Clone:
    ```bash
    git clone https://github.com/bmjubairdadu/InfoCaller.git
    ```
 2. Open in Android Studio.
-3. (Optional) Provide API tokens in `local.properties` (e.g., `apify.token`).
-4. Build and run:
+3. Copy `local.properties.example` → `local.properties` and fill only what you need (see table above).
+4. Build:
    ```bash
    ./gradlew assembleDebug
    ```

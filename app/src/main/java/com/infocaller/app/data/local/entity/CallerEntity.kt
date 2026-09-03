@@ -5,12 +5,12 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.infocaller.app.domain.model.Caller
-import com.infocaller.app.domain.model.SpamStatus
 
 @Keep
 @Entity(tableName = "callers", indices = [Index(value = ["phoneNumber"])])
 data class CallerEntity(
     @PrimaryKey val phoneNumber: String,
+    val localName: String? = null,
     val displayName: String?,
     val alias: String?,
     val photoUrl: String?,
@@ -18,10 +18,8 @@ data class CallerEntity(
     val country: String?,
     val region: String?,
     val carrier: String?,
-    val spamScore: Int,
     val reportCount: Int,
     val isVerified: Boolean,
-    val spamStatus: String,
     val socialMediaLinks: String? = null,
     val lastUpdated: Long = System.currentTimeMillis(),
     val source: String = "REMOTE"
@@ -29,6 +27,7 @@ data class CallerEntity(
     fun toDomain(): Caller {
         return Caller(
             phoneNumber = phoneNumber,
+            localName = localName,
             displayName = displayName,
             alias = alias,
             photoUrl = photoUrl,
@@ -36,10 +35,8 @@ data class CallerEntity(
             country = country,
             region = region,
             carrier = carrier,
-            spamScore = spamScore,
             reportCount = reportCount,
             isVerified = isVerified,
-            spamStatus = SpamStatus.valueOf(spamStatus),
             socialMediaLinks = socialMediaLinks?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
         )
     }
@@ -48,6 +45,7 @@ data class CallerEntity(
         fun fromDomain(caller: Caller): CallerEntity {
             return CallerEntity(
                 phoneNumber = caller.phoneNumber,
+                localName = caller.localName,
                 displayName = caller.displayName,
                 alias = caller.alias,
                 photoUrl = caller.photoUrl,
@@ -55,10 +53,8 @@ data class CallerEntity(
                 country = caller.country,
                 region = caller.region,
                 carrier = caller.carrier,
-                spamScore = caller.spamScore,
                 reportCount = caller.reportCount,
                 isVerified = caller.isVerified,
-                spamStatus = caller.spamStatus.name,
                 socialMediaLinks = if (caller.socialMediaLinks.isEmpty()) null else caller.socialMediaLinks.joinToString(","),
                 lastUpdated = System.currentTimeMillis(),
                 source = "LOCAL"

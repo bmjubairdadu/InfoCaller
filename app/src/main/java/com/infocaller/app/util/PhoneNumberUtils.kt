@@ -11,34 +11,71 @@ import java.util.Locale
 object PhoneNumberUtils {
     private val phoneUtil = PhoneNumberUtil.getInstance()
 
-    /**
-     * Standardizes phone numbers to E.164 format.
-     * This is the single source of truth for normalization across InfoCaller.
-     */
+    fun isUssdCode(number: String): Boolean {
+        return number.startsWith("*") && number.endsWith("#")
+    }
+
     fun normalize(phoneNumber: String, defaultRegion: String = "BD"): String {
         val trimmed = phoneNumber.trim()
         if (trimmed.isEmpty()) return ""
         
-        // Remove all non-essential formatting characters
-        val digitsOnly = trimmed.filter { it.isDigit() || it == '+' }
+        if (trimmed.startsWith("*") || (trimmed.startsWith("#") && trimmed.endsWith("#"))) {
+            return trimmed
+        }
+        
+        val filtered = trimmed.filter { it.isDigit() || it == '+' }
         
         try {
-            val parsed: PhoneNumber = phoneUtil.parse(digitsOnly, defaultRegion)
-            if (phoneUtil.isValidNumber(parsed) || phoneUtil.isPossibleNumber(parsed)) {
+            if (filtered.startsWith("+")) {
+                val parsed: PhoneNumber = phoneUtil.parse(filtered, null)
+                if (phoneUtil.isValidNumber(parsed) || phoneUtil.isPossibleNumber(parsed)) {
+                    return phoneUtil.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
+                }
+            }
+            
+            val parsed: PhoneNumber = phoneUtil.parse(filtered, "BD")
+            if (phoneUtil.isValidNumber(parsed)) {
+                return phoneUtil.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
+            }
+            
+            if (!filtered.startsWith("+")) {
+                if (filtered.startsWith("880")) {
+                    val p = phoneUtil.parse("+$filtered", null)
+                    if (phoneUtil.isValidNumber(p)) {
+                        return phoneUtil.format(p, PhoneNumberUtil.PhoneNumberFormat.E164)
+                    }
+                }
+            }
+
+            if (phoneUtil.isPossibleNumber(parsed)) {
                 return phoneUtil.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
             }
         } catch (e: Exception) {
-            Log.w("PhoneNumberUtils", "Normalization failed for $trimmed: ${e.message}")
+            Log.w("PhoneNumberUtils", "Normalization failed for $trimmed")
         }
         
-        // Final fallback: Ensure it starts with + if it looks like an international number
+        val digitsOnly = filtered.filter { it.isDigit() }
         return if (digitsOnly.startsWith("880") && digitsOnly.length == 13) {
             "+$digitsOnly"
-        } else if (digitsOnly.startsWith("0") && digitsOnly.length == 11 && defaultRegion == "BD") {
+        } else if (digitsOnly.startsWith("0") && digitsOnly.length == 11) {
             "+88$digitsOnly"
+        } else if (filtered.startsWith("+")) {
+            filtered
         } else {
             digitsOnly
         }
+    }
+
+    fun getSearchFormats(phoneNumber: String): List<String> {
+        val normalized = normalize(phoneNumber)
+        val clean = normalized.replace("+", "")
+        
+        return listOf(
+            normalized,
+            clean,
+            formatAsYouType(normalized),
+            formatAsYouType(normalized).replace(" ", "-")
+        ).distinct()
     }
 
     fun getCountryCode(phoneNumber: String): String? {
@@ -51,9 +88,24 @@ object PhoneNumberUtils {
         }
     }
 
-    fun getImageUrl(@Suppress("UNUSED_PARAMETER") phoneNumber: String): String? {
-        // Removed unsafe checkleaked.com source as per instruction 33
-        return null
+    fun getSignificantNumber(phoneNumber: String): String? {
+        return try {
+            val normalized = normalize(phoneNumber)
+            val parsed = phoneUtil.parse(normalized, "")
+            parsed.nationalNumber.toString()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun getDialingCode(phoneNumber: String): Int? {
+        return try {
+            val normalized = normalize(phoneNumber)
+            val parsed = phoneUtil.parse(normalized, "")
+            parsed.countryCode
+        } catch (e: Exception) {
+            null
+        }
     }
 
     fun getCarrierInfo(phoneNumber: String, context: Context? = null): String? {
@@ -79,12 +131,24 @@ object PhoneNumberUtils {
     }
 
     fun formatAsYouType(number: String, region: String = "BD"): String {
+        if (number.startsWith("*") || number.startsWith("#")) return number
+        
         val formatter = phoneUtil.getAsYouTypeFormatter(region)
         var result = ""
         for (char in number) {
             result = formatter.inputDigit(char)
         }
         return result
+    }
+
+    fun getLineType(phoneNumber: String): String {
+        return try {
+            val normalized = normalize(phoneNumber)
+            val parsed = phoneUtil.parse(normalized, "")
+            phoneUtil.getNumberType(parsed).name
+        } catch (e: Exception) {
+            "UNKNOWN"
+        }
     }
 
     fun sendSms(context: Context, phoneNumber: String) {

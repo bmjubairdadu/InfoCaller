@@ -1,78 +1,411 @@
 package com.infocaller.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.infocaller.app.InfoCallerApplication
 import com.infocaller.app.ui.viewmodel.AuthUiState
 import com.infocaller.app.ui.viewmodel.AuthViewModel
 import com.infocaller.app.ui.components.InfoCallerLoading
+import com.infocaller.app.ui.components.OtpInputField
+import com.infocaller.app.ui.theme.*
+import com.infocaller.app.util.OtpManager
+import com.infocaller.app.util.PhoneNumberUtils
+import com.infocaller.app.permissions.PermissionManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
     viewModel: AuthViewModel,
-    onNavigateToRegister: () -> Unit,
+    @Suppress("UNUSED_PARAMETER") onNavigateToRegister: () -> Unit,
     onLoginSuccess: () -> Unit
 ) {
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val app = context.applicationContext as InfoCallerApplication
+    val authManager = remember(app) { app.truecallerAuthManager }
+    // Keep provider for lookup fallback only; auth now via TruecallerAuthManager (OTP -> cloud secret auto-create)
+    val truecallerProvider = remember(app) {
+        app.providerManager.providers.value.filterIsInstance<com.infocaller.app.data.remote.TruecallerProviderImpl>().firstOrNull()
+            ?: com.infocaller.app.data.remote.TruecallerProviderImpl(context.applicationContext)
+    }
+    
+    val scope = rememberCoroutineScope()
     val uiState by viewModel.authState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val clipboardManager = LocalClipboardManager.current
+
+    val tcPhone by viewModel.tcPhone.collectAsState()
+    val tcAuthResult by viewModel.tcAuthResult.collectAsState()
+    var tcOtp by remember { mutableStateOf("") }
+    var tcLoading by remember { mutableStateOf(false) }
+
+    val smsPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ -> }
+
+    var autoVerifying by remember { mutableStateOf(false) }
+
+    LaunchedEffect(tcAuthResult) {
+        if (tcAuthResult != null) {
+            val method = tcAuthResult!!.method.lowercase()
+            if (method == "call") {
+                // Request call permissions for auto-verification
+                val callPermissions = PermissionManager.CORE_PERMISSIONS + PermissionManager.CALL_LOG_PERMISSIONS
+                if (!PermissionManager.hasPermissions(context, callPermissions)) {
+                    smsPermissionLauncher.launch(callPermissions)
+                }
+            }
+            
+            OtpManager.otpFlow.collectLatest { code ->
+                if (code != null || method == "already_logged_in") {
+                    val extractedOtp = if (method == "call") {
+                        if (code != null && code.length > 6) code.takeLast(6) else code ?: ""
+                    } else if (method == "already_logged_in") {
+                        tcAuthResult!!.requestId
+                    } else {
+                        code ?: ""
+                    }
+                    
+                    if (extractedOtp.length == 6 || method == "already_logged_in") {
+                        tcOtp = extractedOtp
+                        autoVerifying = true
+                        tcLoading = true
+                        // Cloud secret auto-created on verify (installationId = Bearer token)
+                        val verifyResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, extractedOtp)
+                        if (verifyResult.success) {
+                            viewModel.loginWithTruecaller(null)
+                            snackbarHostState.showSnackbar("Verified - cloud secret auto-created ✓")
+                        } else {
+                            snackbarHostState.showSnackbar("Verification failed: ${verifyResult.message ?: "Invalid code"}")
+                        }
+                        tcLoading = false
+                        autoVerifying = false
+                        OtpManager.clearOtp()
+                    }
+                }
+            }
+        }
+    }
 
     LaunchedEffect(uiState) {
         if (uiState is AuthUiState.Authenticated) {
             onLoginSuccess()
+        } else if (uiState is AuthUiState.Error) {
+            snackbarHostState.showSnackbar((uiState as AuthUiState.Error).message)
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(text = "Login", style = MaterialTheme.typography.headlineLarge)
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            OutlinedTextField(
-                value = email,
-                onValueChange = { email = it },
-                label = { Text("Email") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("Password") },
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            if (uiState is AuthUiState.Loading) {
-                InfoCallerLoading(size = 48.dp)
-            } else {
-                Button(
-                    onClick = { viewModel.login(email, password) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Login")
-                }
-            }
-            
-            if (uiState is AuthUiState.Error) {
-                Text(
-                    text = (uiState as AuthUiState.Error).message,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 8.dp)
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        containerColor = Background
+    ) { padding ->
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (uiState is AuthUiState.Loading || tcLoading) {
+                InfoCallerLoading(
+                    isFullScreen = true, 
+                    text = if (autoVerifying) "Automatic Verification..." else "Authenticating..."
                 )
             }
-            
-            TextButton(onClick = onNavigateToRegister) {
-                Text("Don't have an account? Register")
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    Icons.Default.Security, 
+                    contentDescription = null, 
+                    modifier = Modifier.size(72.dp),
+                    tint = Primary
+                )
+                
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                Text(
+                    text = "Identity Verification",
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Primary,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = "Intelligence at your fingertips. Verify your number to unlock full potential.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(top = 12.dp, start = 32.dp, end = 32.dp),
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(modifier = Modifier.height(40.dp))
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .glassy(radius = 28.dp, borderWidth = 1.5.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (tcAuthResult == null) {
+                            Text(
+                                "Enter Phone Number",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                                modifier = Modifier.align(Alignment.Start)
+                            )
+                            Spacer(Modifier.height(16.dp))
+                            
+                            OutlinedTextField(
+                                value = tcPhone,
+                                onValueChange = { viewModel.setTcPhone(it) },
+                                label = { Text("Phone Number", color = Color.White.copy(alpha = 0.5f)) },
+                                placeholder = { Text("+880...", color = Color.White.copy(alpha = 0.3f)) },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                leadingIcon = { Icon(Icons.Default.Phone, null, tint = Primary) },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    focusedBorderColor = Primary,
+                                    unfocusedBorderColor = Color.White.copy(alpha = 0.2f)
+                                )
+                            )
+
+                            Spacer(modifier = Modifier.height(32.dp))
+                            
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp)
+                                    .alpha(if (tcPhone.length >= 7 && !tcLoading) 1f else 0.5f)
+                                    .brandGradient(radius = 16.dp)
+                                    .clickable(enabled = tcPhone.length >= 7 && !tcLoading) {
+                                        val runAuth = {
+                                            tcLoading = true
+                                            scope.launch {
+                                                val normalized = PhoneNumberUtils.normalize(tcPhone)
+                                                android.util.Log.d("LoginScreen","OTP request for $normalized via TruecallerAuthManager (cloud secret will auto-create on verify)")
+                                                val r = authManager.requestOtp(normalized)
+                                                val result = if (r!=null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
+
+                                                if (result == null) {
+                                                    snackbarHostState.showSnackbar("Truecaller: startAuth returned null - check internet / client secret in local.properties (truecaller.client.secret)")
+                                                } else if (result.statusCode == -1) {
+                                                    snackbarHostState.showSnackbar(result.errorMessage ?: "Connection error. Check your internet.")
+                                                } else if (result.requestId.isBlank() && result.statusCode != 3) {
+                                                    val errorMsg = result.errorMessage ?: ""
+                                                    val isLimitReached = result.statusCode == 5 || 
+                                                        errorMsg.contains("limit reached", ignoreCase = true) ||
+                                                        errorMsg.contains("blocked", ignoreCase = true) ||
+                                                        result.statusCode == 429
+                                                    
+                                                    if (isLimitReached) {
+                                                        viewModel.refreshTcSession(context)
+                                                        snackbarHostState.showSnackbar("Request limit reached or blocked. Session has been reset. Please try again in a few minutes.")
+                                                    } else {
+                                                        val msg = when(result.statusCode) {
+                                                            40104 -> "Configuration Error: Invalid Client Secret."
+                                                            40101 -> "Unauthorized request. Please check your credentials."
+                                                            12 -> "Region error. Try again shortly."
+                                                            else -> errorMsg.takeIf { it.isNotBlank() } ?: "Verification service unavailable (Error ${result.statusCode})."
+                                                        }
+                                                        snackbarHostState.showSnackbar(msg)
+                                                    }
+                                                } else {
+                                                    viewModel.setTcAuthResult(result)
+                                                }
+                                                tcLoading = false
+                                            }
+                                        }
+
+                                        if (!PermissionManager.hasPermissions(context, PermissionManager.SMS_PERMISSION)) {
+                                            smsPermissionLauncher.launch(PermissionManager.SMS_PERMISSION)
+                                            // We still try to run auth as SMS might not be strictly required for the request itself
+                                            // but rather for the automatic extraction later.
+                                            runAuth()
+                                        } else {
+                                            runAuth()
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (tcLoading) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
+                                } else {
+                                    Text(
+                                        "SEND VERIFICATION CODE",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.Black,
+                                        letterSpacing = 1.sp
+                                    )
+                                }
+                            }
+                        } else {
+                            Text(
+                                if (tcAuthResult!!.method == "call") 
+                                    "Verification via Call" 
+                                else if (tcAuthResult!!.method == "whatsapp")
+                                    "Verification via WhatsApp"
+                                else 
+                                    "Enter Verification Code",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                                modifier = Modifier.align(Alignment.Start)
+                            )
+                            Text(
+                                when (tcAuthResult!!.method) {
+                                    "call" -> "We are calling ${PhoneNumberUtils.normalize(tcPhone)}. Please wait..."
+                                    "whatsapp" -> "Open WhatsApp to see the 6-digit code sent to ${PhoneNumberUtils.normalize(tcPhone)}"
+                                    else -> "We've sent a 6-digit code to ${PhoneNumberUtils.normalize(tcPhone)}"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.6f),
+                                modifier = Modifier.padding(top = 4.dp).align(Alignment.Start)
+                            )
+                            
+                            Spacer(modifier = Modifier.height(32.dp))
+                            
+                            if (tcAuthResult!!.method == "sms" || tcAuthResult!!.method == "whatsapp") {
+                                OtpInputField(
+                                    otpText = tcOtp,
+                                    onOtpTextChange = { tcOtp = it },
+                                    modifier = Modifier.wrapContentWidth()
+                                )
+
+                                TextButton(
+                                    onClick = {
+                                        val text = clipboardManager.getText()?.text
+                                        if (text != null && text.length == 6 && text.all { it.isDigit() }) {
+                                            tcOtp = text
+                                        }
+                                    },
+                                    modifier = Modifier.padding(top = 8.dp)
+                                ) {
+                                    Icon(Icons.Default.ContentPaste, null, tint = Color.White.copy(alpha = 0.5f), modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Paste Code", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
+                                }
+                            } else {
+                                // For flash call
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        "Detected flash call? Enter last 6 digits of caller number:",
+                                        color = Color.White.copy(alpha = 0.7f),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(bottom = 16.dp)
+                                    )
+                                    
+                                    OtpInputField(
+                                        otpText = tcOtp,
+                                        onOtpTextChange = { tcOtp = it },
+                                        modifier = Modifier.wrapContentWidth()
+                                    )
+                                    
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp), color = Primary.copy(alpha = 0.3f))
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(24.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(56.dp)
+                                    .alpha(if (tcOtp.length == 6 && !tcLoading) 1f else 0.5f)
+                                    .brandGradient(radius = 16.dp)
+                                    .clickable(enabled = tcOtp.length == 6 && !tcLoading) {
+                                        tcLoading = true
+                                        scope.launch {
+                                            val verifyResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, tcOtp)
+                                            if (verifyResult.success) {
+                                                viewModel.loginWithTruecaller(null)
+                                                snackbarHostState.showSnackbar("Cloud secret created - Truecaller unlocked ✓")
+                                            } else {
+                                                snackbarHostState.showSnackbar(verifyResult.message ?: "Invalid OTP code. Please try again.")
+                                            }
+                                            tcLoading = false
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (tcLoading) {
+                                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
+                                } else {
+                                    Text(
+                                        "VERIFY & CONTINUE",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.Black,
+                                        letterSpacing = 1.sp
+                                    )
+                                }
+                            }
+                            
+                            TextButton(onClick = { viewModel.setTcAuthResult(null); tcOtp = "" }, modifier = Modifier.padding(top = 8.dp)) {
+                                Text("Edit Phone Number", color = Color.White.copy(alpha = 0.6f))
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
+                ) {
+                    Icon(Icons.Default.VerifiedUser, null, tint = TruecallerBlue, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Secured by Truecaller Engine",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TruecallerBlue.copy(alpha = 0.8f),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = "By continuing, you agree to our Terms of Service & Privacy Policy",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.4f),
+                    textAlign = TextAlign.Center,
+                    lineHeight = 16.sp
+                )
             }
         }
     }

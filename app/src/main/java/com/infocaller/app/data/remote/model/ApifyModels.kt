@@ -65,6 +65,20 @@ data class GoogleSearchItem(
     val snippet: String? = null
 )
 
+@Keep
+data class NumverifyResponse(
+    val valid: Boolean? = null,
+    val number: String? = null,
+    val local_format: String? = null,
+    val international_format: String? = null,
+    val country_prefix: String? = null,
+    val country_code: String? = null,
+    val country_name: String? = null,
+    val location: String? = null,
+    val carrier: String? = null,
+    val line_type: String? = null
+)
+
 // InfoCaller Normalized Format for Backend
 @Keep
 data class InfoCallerLookupResponse(
@@ -84,6 +98,8 @@ data class InfoCallerLookupResponse(
     val telegramStatus: String? = null,
     val googleResult: Any? = null,
     val isBusiness: Boolean? = null,
+    val socialProfilesJson: String? = null,
+    val lineType: String? = null,
     val source: String? = null,
     val confidence: String? = null,
     val lastChecked: Long? = null

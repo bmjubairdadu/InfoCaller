@@ -15,22 +15,29 @@ import androidx.core.content.ContextCompat
 
 object PermissionManager {
 
-    val CORE_PERMISSIONS = arrayOf(
-        Manifest.permission.CALL_PHONE,
+    // JUST-IN-TIME groups - each requested only at point of use (see file header comments)
+    // Dialer: CALL_PHONE
+    val DIALER_PERMISSIONS = arrayOf(Manifest.permission.CALL_PHONE)
+
+    // Caller ID overlay while in other app: phone-state trio
+    val CALLER_ID_PERMISSIONS = arrayOf(
         Manifest.permission.READ_PHONE_STATE,
         Manifest.permission.READ_PHONE_NUMBERS,
         Manifest.permission.ANSWER_PHONE_CALLS,
         Manifest.permission.MANAGE_OWN_CALLS
     )
 
+    // Legacy alias for OnboardingScreen stage 2 (maps to CALLER_ID)
+    val CORE_PERMISSIONS get() = CALLER_ID_PERMISSIONS
+
     val CONTACTS_PERMISSIONS = arrayOf(
         Manifest.permission.READ_CONTACTS,
         Manifest.permission.WRITE_CONTACTS
     )
 
-    val CALL_LOG_PERMISSIONS = arrayOf(
-        Manifest.permission.READ_CALL_LOG
-    )
+    // Recents: only READ_CALL_LOG; WRITE_CALL_LOG is lazy (only when deleting)
+    val CALL_LOG_PERMISSIONS = arrayOf(Manifest.permission.READ_CALL_LOG)
+    val WRITE_CALL_LOG_PERMISSION = arrayOf(Manifest.permission.WRITE_CALL_LOG)
 
     val NOTIFICATION_PERMISSION = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         arrayOf(Manifest.permission.POST_NOTIFICATIONS)
@@ -44,7 +51,16 @@ object PermissionManager {
         emptyArray<String>()
     }
 
+    // Settings > Call Recording toggle only
     val RECORD_AUDIO_PERMISSION = arrayOf(Manifest.permission.RECORD_AUDIO)
+
+    // LoginScreen OTP auto-read only
+    val SMS_PERMISSION = arrayOf(Manifest.permission.RECEIVE_SMS)
+
+    val SMS_HISTORY_PERMISSIONS = arrayOf(
+        Manifest.permission.READ_SMS,
+        Manifest.permission.RECEIVE_SMS
+    )
 
     fun canDrawOverlays(context: Context): Boolean {
         return Settings.canDrawOverlays(context)

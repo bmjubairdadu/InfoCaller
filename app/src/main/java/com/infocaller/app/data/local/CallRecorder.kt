@@ -12,61 +12,33 @@ import java.util.*
 class CallRecorder(private val context: Context) {
     private var mediaRecorder: MediaRecorder? = null
     private var isRecording = false
-    private var currentFile: File? = null
+    private var currentUri: android.net.Uri? = null
 
     fun startRecording(phoneNumber: String) {
         if (isRecording) return
 
         try {
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val fileName = "Call_${phoneNumber}_$timeStamp.amr"
-            val storageDir = context.getExternalFilesDir("Recordings")
-            if (storageDir?.exists() == false) {
-                storageDir.mkdirs()
-            }
-            currentFile = File(storageDir, fileName)
-
-            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(context)
-            } else {
-                @Suppress("DEPRECATION")
-                MediaRecorder()
-            }.apply {
-                // Try VOICE_COMMUNICATION first (captures both uplink/downlink)
-                // Falls back to MIC if not permitted
-                val audioSource = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    try {
-                        MediaRecorder.AudioSource.VOICE_COMMUNICATION
-                    } catch (_: Exception) {
-                        MediaRecorder.AudioSource.MIC
-                    }
-                } else {
-                    MediaRecorder.AudioSource.VOICE_CALL
+            val displayName = "Call_${phoneNumber}_$timeStamp"
+            val resolver = context.contentResolver
+            
+            val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val contentValues = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "$displayName.amr")
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "audio/amr")
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/InfoCaller")
+                    put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
                 }
-                setAudioSource(audioSource)
-                setOutputFormat(MediaRecorder.OutputFormat.AMR_NB)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
-                setOutputFile(currentFile?.absolutePath)
-                prepare()
-                start()
+                resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            } else {
+                val storageDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                val appDir = File(storageDir, "InfoCaller")
+                if (!appDir.exists()) appDir.mkdirs()
+                val file = File(appDir, "$displayName.amr")
+                android.net.Uri.fromFile(file)
             }
-            isRecording = true
-            Log.d("CallRecorder", "Started recording: ${currentFile?.absolutePath}")
-        } catch (e: IOException) {
-            Log.e("CallRecorder", "prepare() failed", e)
-            fallbackToMicRecording(phoneNumber)
-        } catch (e: IllegalStateException) {
-            Log.e("CallRecorder", "start() failed", e)
-            fallbackToMicRecording(phoneNumber)
-        }
-    }
 
-    private fun fallbackToMicRecording(phoneNumber: String) {
-        try {
-            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-            val fileName = "Call_${phoneNumber}_$timeStamp.amr"
-            val storageDir = context.getExternalFilesDir("Recordings")
-            currentFile = File(storageDir, fileName)
+            if (uri == null) throw IOException("Failed to create new record.")
 
             mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 MediaRecorder(context)
@@ -74,17 +46,27 @@ class CallRecorder(private val context: Context) {
                 @Suppress("DEPRECATION")
                 MediaRecorder()
             }.apply {
-                setAudioSource(MediaRecorder.AudioSource.MIC)
+                // Try VOICE_COMMUNICATION for best quality on supported devices
+                setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
                 setOutputFormat(MediaRecorder.OutputFormat.AMR_NB)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
-                setOutputFile(currentFile?.absolutePath)
+                
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val pfd = resolver.openFileDescriptor(uri, "w") ?: throw IOException("Failed to open file descriptor.")
+                    setOutputFile(pfd.fileDescriptor)
+                } else {
+                    setOutputFile(uri.path)
+                }
+                
                 prepare()
                 start()
             }
+            
             isRecording = true
-            Log.w("CallRecorder", "Fell back to MIC recording: ${currentFile?.absolutePath}")
+            currentUri = uri
+            Log.d("CallRecorder", "Started recording: $uri")
         } catch (e: Exception) {
-            Log.e("CallRecorder", "Fallback recording failed", e)
+            Log.e("CallRecorder", "start() failed", e)
         }
     }
 
@@ -98,7 +80,17 @@ class CallRecorder(private val context: Context) {
             }
             mediaRecorder = null
             isRecording = false
-            Log.d("CallRecorder", "Stopped recording: ${currentFile?.absolutePath}")
+            
+            val uri = currentUri
+            if (uri != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val contentValues = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                    }
+                    context.contentResolver.update(uri, contentValues, null, null)
+                }
+            }
+            Log.d("CallRecorder", "Stopped recording: $currentUri")
         } catch (e: Exception) {
             Log.e("CallRecorder", "stop() failed", e)
         }

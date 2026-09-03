@@ -13,25 +13,21 @@ import com.infocaller.app.data.local.entity.QueuePriority
 import com.infocaller.app.data.local.entity.QueueStatus
 import com.infocaller.app.data.repository.ContactEnrichmentService
 import com.infocaller.app.data.remote.BackendApiService
-import com.infocaller.app.data.remote.model.InfoCallerLookupResponse
 import com.infocaller.app.domain.model.Caller
-import com.infocaller.app.util.SocialUtils
+import com.infocaller.app.domain.repository.CallerRepository
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.*
 
 class ContinuousEnrichmentEngine(
     private val context: Context,
     private val queueDao: EnrichmentQueueDao,
     private val enrichmentDao: EnrichmentDao,
-    private val lookupEngine: PublicLookupEngine,
+    private val lookupEngine: IPublicLookupEngine,
+    private val orchestrator: IScanOrchestrator,
+    private val repository: CallerRepository,
     private val enrichmentService: ContactEnrichmentService? = null,
     private val backendService: BackendApiService? = null
 ) {
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var job: Job? = null
-
     private val _isOnline = MutableStateFlow(isCurrentlyOnline())
     val isOnline = _isOnline.asStateFlow()
 
@@ -51,201 +47,132 @@ class ContinuousEnrichmentEngine(
         connectivityManager.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 _isOnline.value = true
-                startProcessing()
             }
 
             override fun onLost(network: Network) {
                 _isOnline.value = false
-                stopProcessing()
             }
         })
     }
 
     fun startProcessing() {
-        if (job?.isActive == true) return
-        job = scope.launch {
-            while (isActive && _isOnline.value) {
-                val items = queueDao.getEligibleItems(System.currentTimeMillis(), limit = 5)
-                if (items.isEmpty()) {
-                    delay(30000)
-                    continue
-                }
-                items.forEach { item ->
-                    if (!isActive || !_isOnline.value) return@forEach
-                    processItem(item)
-                }
-                delay(5000)
-            }
-        }
+        // Handled by Worker
     }
 
-    fun stopProcessing() {
-        job?.cancel()
-        job = null
+    // Professional throttling: global rate limit + per-provider backoff
+    private var lastProcessMs = 0L
+    private val MIN_INTERVAL_MS = 3500L // 3.5s between numbers -> ~17/min, safe for free APIs
+    private val BURST_DAILY_CAP = 800 // soft cap per day (prefs-tracked)
+
+    suspend fun processNextOneByOne() = withContext(Dispatchers.IO) {
+        if (!_isOnline.value) return@withContext
+        // Enforce global throttle
+        val now = System.currentTimeMillis()
+        val wait = MIN_INTERVAL_MS - (now - lastProcessMs)
+        if (wait > 0) kotlinx.coroutines.delay(wait)
+        if (!_isOnline.value || !isActive) return@withContext
+        // Daily cap check (professional: prevent runaway costs/blocks)
+        val prefs = context.getSharedPreferences("enrichment_limits", Context.MODE_PRIVATE)
+        val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+        val keyCount = "count_$today"
+        val keyDate = "date"
+        if (prefs.getString(keyDate, "") != today) prefs.edit().putString(keyDate, today).putInt(keyCount, 0).apply()
+        val todayCount = prefs.getInt(keyCount, 0)
+        if (todayCount >= BURST_DAILY_CAP) {
+            android.util.Log.i("EnrichmentEngine", "Daily cap $BURST_DAILY_CAP reached - pausing until tomorrow")
+            return@withContext
+        }
+        val items = queueDao.getEligibleItems(System.currentTimeMillis(), limit = 1)
+        if (items.isNotEmpty()) {
+            val item = items[0]
+            if (isActive && _isOnline.value) {
+                lastProcessMs = System.currentTimeMillis()
+                processItem(item)
+                prefs.edit().putInt(keyCount, todayCount + 1).apply()
+            }
+        }
     }
 
     private suspend fun processItem(item: EnrichmentQueueEntity) {
         try {
-            queueDao.insertOrUpdate(item.copy(status = QueueStatus.PROCESSING, lastAttemptAt = System.currentTimeMillis()))
-            
-            val existing = enrichmentDao.getEnrichmentSync(item.normalizedPhoneNumber)
-            val isStale = existing == null || existing.expiresAt < System.currentTimeMillis()
-            
-            val required = mutableSetOf<Capability>()
-            if (existing?.publicName == null) required.add(Capability.PUBLIC_SEARCH)
-            if (existing?.profileImageUrl == null) required.add(Capability.PROFILE_PHOTO)
-            if (existing?.city == null) required.add(Capability.CITY)
-            if (existing?.country == null) required.add(Capability.COUNTRY)
-            if (existing?.carrier == null) required.add(Capability.CARRIER)
-            if (existing?.isBusiness == null) required.add(Capability.BUSINESS)
-            if (existing?.whatsappStatus == null) required.add(Capability.WHATSAPP)
-            if (existing?.telegramStatus == null) required.add(Capability.TELEGRAM)
-            if (existing?.spamStatus == null) required.add(Capability.SPAM_CHECK)
-            
-            // If globally stale, refresh critical identifying fields regardless
-            if (isStale) {
-                required.add(Capability.PUBLIC_SEARCH)
-                required.add(Capability.SPAM_CHECK)
+            val identifier = item.identifier
+            if (item.type != IdentifierType.PHONE) {
+                queueDao.insertOrUpdate(item.copy(status = QueueStatus.FAILED, reason = "Non-phone type not supported"))
+                return
             }
-
-            if (required.isEmpty()) {
-                queueDao.insertOrUpdate(item.copy(status = QueueStatus.COMPLETED, attemptCount = item.attemptCount + 1))
+            // Gap-aware: skip if contact is already enriched (name+photo present)
+            val existingEnrichment = enrichmentDao.getEnrichmentSync(com.infocaller.app.util.PhoneNumberUtils.normalize(identifier))
+            val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(existingEnrichment)
+            if (gaps.isComplete) {
+                Log.d("EnrichmentEngine", "Skipping ${item.identifier} - already complete (name+photo present)")
+                queueDao.insertOrUpdate(item.copy(status = QueueStatus.COMPLETED, lastAttemptAt = System.currentTimeMillis()))
                 return
             }
 
-            val partials = lookupEngine.lookupPartials(item.normalizedPhoneNumber, requiredCapabilities = required) { partial ->
-                savePartialToCache(item.normalizedPhoneNumber, item.contactId, partial)
-            }
-            
-            val finalResult = ConfidenceEngine.merge(item.normalizedPhoneNumber, partials)
-            saveLookupResultToCache(finalResult, item.contactId)
+            queueDao.insertOrUpdate(item.copy(status = QueueStatus.PROCESSING, lastAttemptAt = System.currentTimeMillis()))
 
-            // Privacy Safe Publish
-            val registryResult = ConfidenceEngine.mergeForRegistry(item.normalizedPhoneNumber, partials)
-            if (registryResult.confidence > 0.6f) {
-                publishToSharedRegistry(registryResult)
-            }
+            // Perform scan via prioritized orchestrator - pass missing capabilities as hint
+            val requiredCaps = if (existingEnrichment != null) {
+                // Convert missing capability names to enum via gap checker
+                val missing = com.infocaller.app.util.EnrichmentGapChecker.missingCapabilities(gaps)
+                missing.mapNotNull { try { Capability.valueOf(it) } catch (_:Exception) { null } }.toSet()
+            } else emptySet()
+            orchestrator.startScan(identifier, ScanPriority.BACKGROUND).collect { state ->
+                if (state is ScanState.Completed) {
+                    val res = state.result
+                    repository.saveLookupResult(res)
 
-            // Sync back to system contacts
-            enrichmentService?.updateExistingContact(
-                phoneNumber = item.normalizedPhoneNumber,
-                caller = Caller(
-                    phoneNumber = item.normalizedPhoneNumber,
-                    displayName = finalResult.name,
-                    alias = finalResult.sources.firstOrNull(),
-                    photoUrl = finalResult.imageUrl,
-                    organization = finalResult.carrier,
-                    carrier = finalResult.carrier,
-                    country = finalResult.country,
-                    region = finalResult.region,
-                    spamScore = finalResult.spamScore,
-                    spamStatus = finalResult.spamStatus
-                )
-            )
+                    // PROACTIVE SYNC: Fill only missing fields (gap-aware)
+                    val beforeGaps = gaps
+                    val newGaps = com.infocaller.app.util.EnrichmentGapChecker.check(
+                        enrichmentDao.getEnrichmentSync(com.infocaller.app.util.PhoneNumberUtils.normalize(identifier))
+                    )
+                    // Name is locked to user's saved name - never overwrite. Save discovered name to alternateName only.
+                    // Throttled one-by-one already handled by MIN_INTERVAL; update only missing photo/other fields.
+                    val shouldSync = res.confidence >= 0.6f && (!res.imageUrl.isNullOrBlank() || !res.name.isNullOrBlank() || !res.city.isNullOrBlank() || !res.about.isNullOrBlank())
+                    if (shouldSync) {
+                        // displayName is null here to honor "name never change" - ContactEnrichmentService will skip DISPLAY_NAME op
+                        enrichmentService?.updateExistingContact(
+                            phoneNumber = identifier,
+                            caller = Caller(
+                                phoneNumber = identifier,
+                                displayName = null, // locked - alternateName carries WhatsApp/Truecaller name instead
+                                alias = res.name ?: res.alternateName,
+                                photoUrl = if (beforeGaps.missingPhoto) res.imageUrl else null,
+                                organization = res.carrier,
+                                carrier = res.carrier,
+                                country = res.country,
+                                region = res.region,
+                                reportCount = 0,
+                                isVerified = false,
+                                socialMediaLinks = res.socialProfiles.mapNotNull { it.profileUrl }
+                            )
+                        )
+                    }
+                }
+            }
 
             queueDao.insertOrUpdate(item.copy(status = QueueStatus.COMPLETED, attemptCount = item.attemptCount + 1))
         } catch (e: Exception) {
-            Log.e("EnrichmentEngine", "Failed to process ${item.normalizedPhoneNumber}", e)
-            val nextAttempt = System.currentTimeMillis() + (Math.pow(2.0, item.attemptCount.toDouble()).toLong() * 60000)
+            Log.e("EnrichmentEngine", "Failed to process ${item.identifier}", e)
+            // capped exponential backoff 1m,2m,4m.. max 24h + jitter 0..30s to avoid thundering herd
+            val exp = (1L shl minOf(item.attemptCount, 10)) * 60_000L
+            val capped = minOf(exp, 86_400_000L)
+            val jitter = (0..30_000L).random()
+            val nextAttempt = System.currentTimeMillis() + capped + jitter
             queueDao.insertOrUpdate(item.copy(status = QueueStatus.RETRY_WAIT, nextAttemptAt = nextAttempt, attemptCount = item.attemptCount + 1, reason = e.message))
         }
     }
 
-    private suspend fun publishToSharedRegistry(result: com.infocaller.app.domain.model.LookupResult) {
-        if (backendService == null) return
-        try {
-            val record = InfoCallerLookupResponse(
-                phoneNumber = result.phoneNumber,
-                publicName = result.name,
-                profileImageUrl = result.imageUrl,
-                about = result.about,
-                carrier = result.carrier,
-                country = result.country,
-                city = result.city,
-                region = result.region,
-                whatsappStatus = result.socialProfiles.find { it.platform == "WhatsApp" }?.status?.name,
-                telegramStatus = result.socialProfiles.find { it.platform == "Telegram" }?.status?.name,
-                isBusiness = result.isBusiness,
-                source = "user_contributed",
-                confidence = if (result.confidence > 0.8f) "HIGH" else "MEDIUM",
-                lastChecked = System.currentTimeMillis()
-            )
-            backendService.publishToRegistry(record)
-        } catch (e: Exception) {
-            Log.e("EnrichmentEngine", "Registry publish failed", e)
-        }
-    }
-
-    private suspend fun savePartialToCache(number: String, contactId: Long?, partial: PartialResult) {
-        val existing = enrichmentDao.getEnrichmentSync(number)
-        val updated = ContactEnrichmentEntity(
-            normalizedPhoneNumber = number,
-            contactId = contactId ?: existing?.contactId,
-            publicName = partial.name ?: existing?.publicName,
-            alternateName = partial.alternateName ?: existing?.alternateName,
-            profileImageUrl = partial.imageUrl ?: existing?.profileImageUrl,
-            about = partial.about ?: existing?.about,
-            city = partial.city ?: existing?.city,
-            carrier = partial.carrier ?: existing?.carrier,
-            country = partial.country ?: existing?.country,
-            region = partial.region ?: existing?.region,
-            timezone = partial.timezone ?: existing?.timezone,
-            email = partial.email ?: existing?.email,
-            isBusiness = partial.isBusiness ?: existing?.isBusiness,
-            whatsappStatus = partial.socialProfiles.find { it.platform == "WhatsApp" }?.status?.name ?: existing?.whatsappStatus,
-            telegramStatus = partial.socialProfiles.find { it.platform == "Telegram" }?.status?.name ?: existing?.telegramStatus,
-            socialProfilesJson = if (partial.socialProfiles.isNotEmpty()) SocialUtils.toJson(partial.socialProfiles) else existing?.socialProfilesJson,
-            spamScore = if (partial.spamScore > 0) partial.spamScore else (existing?.spamScore ?: 0),
-            spamType = partial.spamType ?: existing?.spamType,
-            spamStatus = if (partial.spamScore > 50) "SPAM" else existing?.spamStatus,
-            source = (existing?.source?.split(",")?.toMutableSet() ?: mutableSetOf()).apply { partial.source?.let { add(it) } }.joinToString(","),
-            confidence = maxOf(existing?.confidence?.toFloatOrNull() ?: 0f, partial.confidence).toString(),
-            lastChecked = System.currentTimeMillis(),
-            expiresAt = existing?.expiresAt ?: (System.currentTimeMillis() + 3600000)
-        )
-        enrichmentDao.insertEnrichment(updated)
-    }
-
-    private suspend fun saveLookupResultToCache(result: com.infocaller.app.domain.model.LookupResult, contactId: Long?) {
-        enrichmentDao.insertEnrichment(
-            ContactEnrichmentEntity(
-                normalizedPhoneNumber = result.phoneNumber,
-                contactId = contactId,
-                publicName = result.name,
-                alternateName = result.alternateName,
-                profileImageUrl = result.imageUrl,
-                about = result.about,
-                city = result.city,
-                carrier = result.carrier,
-                country = result.country,
-                region = result.region,
-                timezone = result.timezone,
-                email = result.email,
-                isBusiness = result.isBusiness,
-                whatsappStatus = result.socialProfiles.find { it.platform == "WhatsApp" }?.status?.name,
-                telegramStatus = result.socialProfiles.find { it.platform == "Telegram" }?.status?.name,
-                socialProfilesJson = SocialUtils.toJson(result.socialProfiles),
-                spamScore = result.spamScore,
-                spamType = result.spamType,
-                spamStatus = result.spamStatus.name,
-                source = result.sources.joinToString(","),
-                confidence = result.confidence.toString(),
-                lastChecked = System.currentTimeMillis(),
-                expiresAt = System.currentTimeMillis() + (7 * 24 * 60 * 60 * 1000L)
-            )
-        )
-    }
-
-    suspend fun enqueue(number: String, priority: Int = QueuePriority.MEDIUM, contactId: Long? = null) {
-        val existing = queueDao.getQueueItemSync(number)
+    suspend fun enqueue(id: String, type: String = IdentifierType.PHONE, priority: Int = QueuePriority.MEDIUM, contactId: Long? = null) {
+        val existing = queueDao.getQueueItemSync(id)
         if (existing != null && existing.status == QueueStatus.COMPLETED) {
             if (priority > existing.priority) {
                 queueDao.insertOrUpdate(existing.copy(priority = priority, status = QueueStatus.PENDING, nextAttemptAt = 0))
             }
             return
         }
-        queueDao.insertOrUpdate(EnrichmentQueueEntity(normalizedPhoneNumber = number, contactId = contactId, priority = priority, status = QueueStatus.PENDING))
-        if (_isOnline.value) startProcessing()
+        queueDao.insertOrUpdate(EnrichmentQueueEntity(identifier = id, type = type, contactId = contactId, priority = priority, status = QueueStatus.PENDING))
     }
 
     fun getEnrichment(number: String): Flow<ContactEnrichmentEntity?> {

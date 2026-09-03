@@ -9,8 +9,14 @@ interface EnrichmentDao {
     @Query("SELECT * FROM contact_enrichment WHERE normalizedPhoneNumber = :number")
     fun getEnrichment(number: String): Flow<ContactEnrichmentEntity?>
 
+    @Query("SELECT * FROM contact_enrichment WHERE normalizedPhoneNumber IN (:numbers)")
+    fun getEnrichments(numbers: List<String>): Flow<List<ContactEnrichmentEntity>>
+
     @Query("SELECT * FROM contact_enrichment WHERE normalizedPhoneNumber = :number")
     suspend fun getEnrichmentSync(number: String): ContactEnrichmentEntity?
+
+    @Query("SELECT * FROM contact_enrichment WHERE contactId = :cid")
+    suspend fun getEnrichmentsByContactId(cid: Long): List<ContactEnrichmentEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEnrichment(enrichment: ContactEnrichmentEntity)

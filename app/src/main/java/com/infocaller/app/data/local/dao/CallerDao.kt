@@ -18,9 +18,6 @@ interface CallerDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCallers(callers: List<CallerEntity>)
 
-    @Query("SELECT COUNT(*) > 0 FROM callers WHERE phoneNumber = :phoneNumber AND spamStatus = 'SPAM'")
-    suspend fun isSpam(phoneNumber: String): Boolean
-
     @Delete
     suspend fun deleteCaller(caller: CallerEntity)
 }

@@ -38,7 +38,6 @@ import androidx.savedstate.*
 import coil.compose.AsyncImage
 import com.infocaller.app.data.repository.ContactEnrichmentService
 import com.infocaller.app.domain.model.Caller
-import com.infocaller.app.domain.model.SpamStatus
 import com.infocaller.app.domain.repository.CallerRepository
 import com.infocaller.app.ui.theme.*
 import com.infocaller.app.util.*
@@ -89,20 +88,26 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
         return START_STICKY
     }
 
+    // Silent: CallOverlayService should not add a second notification - incoming call is handled by InfoInCallService only.
     private fun showForegroundNotification() {
         val channelId = "call_overlay_channel"
-        val channel = NotificationChannel(channelId, "Call Overlay Service", NotificationManager.IMPORTANCE_LOW)
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(channel)
-
-        val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("InfoCaller Active")
-            .setContentText("Identifying incoming call...")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(channelId, "Call Overlay", NotificationManager.IMPORTANCE_MIN).apply {
+                setShowBadge(false); enableVibration(false); setSound(null,null)
+            }
+            getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
+        }
+        val n = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("").setContentText("")
+            .setSmallIcon(android.R.drawable.ic_menu_call)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setOngoing(false)
             .build()
-
-        startForeground(1, notification)
+        startForeground(1, n)
+        // Hide immediately - overlay itself is the UI, not the notification
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            try { if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_DETACH) else @Suppress("DEPRECATION") stopForeground(false) } catch(_:Exception){}
+        }, 400)
     }
 
     private fun showOverlay(phoneNumber: String) {
@@ -188,16 +193,12 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
             colors = CardDefaults.cardColors(containerColor = Color.Transparent)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                val isSpam = isBlocked || enrichment?.spamStatus == "SPAM" || enrichment?.spamStatus == "SCAM"
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
                             brush = Brush.horizontalGradient(
-                                colors = if (isSpam)
-                                    listOf(Color(0xFFEF4444), Color(0xFFB91C1C))
-                                else
-                                    listOf(GradientStart, GradientEnd)
+                                colors = listOf(GradientStart, GradientEnd)
                             )
                         )
                         .padding(16.dp)
@@ -236,10 +237,8 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                         Spacer(modifier = Modifier.width(16.dp))
 
                         Column(modifier = Modifier.weight(1f)) {
-                            val nameText = if (isSpam && contactName == null) "SPAM DETECTED" else displayName
-                            
                             Text(
-                                text = nameText,
+                                text = displayName,
                                 style = MaterialTheme.typography.titleLarge,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold
@@ -292,18 +291,11 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     socialProfiles.forEach { profile ->
-                                        val icon = when (profile.platform.lowercase()) {
-                                            "whatsapp" -> Icons.AutoMirrored.Filled.Chat
-                                            "telegram" -> Icons.AutoMirrored.Filled.Send
-                                            "facebook" -> Icons.Default.Facebook
-                                            "instagram" -> Icons.Default.CameraAlt
-                                            else -> Icons.Default.Link
-                                        }
-                                        Icon(
-                                            icon, 
-                                            contentDescription = profile.platform, 
-                                            tint = if (SocialUtils.isConfirmed(profile)) Success else Color.White.copy(alpha = 0.7f), 
-                                            modifier = Modifier.size(16.dp)
+                                        AsyncImage(
+                                            model = SocialUtils.getLogoUrl(profile.platform),
+                                            contentDescription = profile.platform,
+                                            modifier = Modifier.size(16.dp).clip(CircleShape),
+                                            contentScale = ContentScale.Fit
                                         )
                                     }
                                 }

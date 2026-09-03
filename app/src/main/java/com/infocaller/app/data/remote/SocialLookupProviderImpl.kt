@@ -12,20 +12,14 @@ class SocialLookupProviderImpl : SocialProvider {
     override val priority: Int = 30
     override val costClass: CostClass = CostClass.FREE
 
-    override suspend fun lookup(normalizedPhoneNumber: String, context: LookupContext): PartialResult? {
-        val cleanNumber = normalizedPhoneNumber.filter { it.isDigit() }
-        // For simplicity, always return these as public matches for now
-        // A real implementation might check API presence
-        val profiles = listOf(
-            SocialProfile("WhatsApp", normalizedPhoneNumber, "https://wa.me/$cleanNumber", SocialLookupStatus.PUBLIC_MATCH),
-            SocialProfile("Telegram", normalizedPhoneNumber, "https://t.me/$cleanNumber", SocialLookupStatus.POSSIBLE_MATCH)
-        )
-        return PartialResult(
-            socialProfiles = profiles,
-            confidence = 0.5f,
-            source = name,
-            providerId = id,
-            providerVersion = version
-        )
+    // DEPRECATED stub - real check moved to SocialEnumProviderImpl/WhatsappApifyProvider; keep as no-op to avoid false positives
+    override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? {
+        return null
+    }
+    }
+
+    override suspend fun bulkLookup(identifiers: List<String>, type: String, context: LookupContext): Map<String, PartialResult> {
+        if (type != IdentifierType.PHONE) return emptyMap()
+        return emptyMap()
     }
 }

@@ -27,35 +27,28 @@ object SocialUtils {
 
     fun getSocialIntent(context: Context, profile: SocialProfile): Intent? {
         val url = profile.profileUrl ?: return null
+        if (profile.platform.lowercase() == "whatsapp") {
+            // WhatsApp direct chat with preset hello message
+            val waUri = if (url.contains("wa.me") || url.contains("api.whatsapp.com")) {
+                // inject hello text if missing
+                if (url.contains("text=")) Uri.parse(url)
+                else Uri.parse("${url}${if (url.contains("?")) "&" else "?"}text=${Uri.encode("Hello")}")
+            } else Uri.parse(url)
+            return Intent(Intent.ACTION_VIEW).apply { data = waUri; setPackage("com.whatsapp") }
+        }
         val uri = Uri.parse(url)
-        
         return when (profile.platform.lowercase()) {
-            "whatsapp" -> {
-                Intent(Intent.ACTION_VIEW).apply {
-                    data = uri
-                    setPackage("com.whatsapp")
-                }
-            }
-            "telegram" -> {
-                Intent(Intent.ACTION_VIEW).apply {
-                    data = uri
-                    setPackage("org.telegram.messenger")
-                }
-            }
-            "facebook" -> {
-                Intent(Intent.ACTION_VIEW).apply {
-                    data = uri
-                    setPackage("com.facebook.katana")
-                }
-            }
-            "instagram" -> {
-                Intent(Intent.ACTION_VIEW).apply {
-                    data = uri
-                    setPackage("com.instagram.android")
-                }
-            }
+            "telegram" -> Intent(Intent.ACTION_VIEW).apply { data = uri; setPackage("org.telegram.messenger") }
+            "facebook" -> Intent(Intent.ACTION_VIEW).apply { data = uri; setPackage("com.facebook.katana") }
+            "instagram" -> Intent(Intent.ACTION_VIEW).apply { data = uri; setPackage("com.instagram.android") }
             else -> Intent(Intent.ACTION_VIEW, uri)
         }
+    }
+
+    fun whatsappHelloIntent(context: Context, phoneE164: String, message: String = "Hello"): Intent {
+        val digits = phoneE164.filter { it.isDigit() }
+        val uri = Uri.parse("https://wa.me/$digits?text=${Uri.encode(message)}")
+        return Intent(Intent.ACTION_VIEW, uri).apply { setPackage("com.whatsapp") }
     }
 
     fun openSocialProfile(context: Context, profile: SocialProfile) {
@@ -72,5 +65,28 @@ object SocialUtils {
     fun isConfirmed(profile: SocialProfile): Boolean {
         return profile.status == SocialLookupStatus.CONFIRMED || 
                profile.status == SocialLookupStatus.PUBLIC_MATCH
+    }
+
+    fun getLogoUrl(platform: String): String {
+        val id = try { com.infocaller.app.BuildConfig.BRANDFETCH_CLIENT_ID } catch(_:Exception) { "1idt4fOOzudt9xCz11q" }
+        val domain = when (platform.lowercase()) {
+            "whatsapp" -> "whatsapp.com"; "telegram" -> "telegram.org"; "facebook" -> "facebook.com"
+            "instagram" -> "instagram.com"; "linkedin" -> "linkedin.com"; "twitter", "x" -> "x.com"
+            "github" -> "github.com"; "skype" -> "skype.com"; "snapchat" -> "snapchat.com"
+            "tiktok" -> "tiktok.com"; "viber" -> "viber.com"; "signal" -> "signal.org"
+            "line" -> "line.me"; "messenger" -> "messenger.com"; "youtube" -> "youtube.com"
+            "reddit" -> "reddit.com"; "behance" -> "behance.net"; "dribbble" -> "dribbble.com"
+            else -> "${platform.lowercase()}.com"
+        }
+        return "https://cdn.brandfetch.io/domain/$domain?c=$id"
+    }
+
+    /** Only render logos where status is CONFIRMED or PUBLIC_MATCH - filter out failed/UNKNOWN */
+    fun filteredUsedProfiles(profiles: List<SocialProfile>): List<SocialProfile> {
+        return profiles.filter { p ->
+            !p.profileUrl.isNullOrBlank() &&
+            (p.status == SocialLookupStatus.CONFIRMED || p.status == SocialLookupStatus.PUBLIC_MATCH) &&
+            p.platform.lowercase() !in setOf("generic","unknown")
+        }.distinctBy { it.platform.lowercase() }
     }
 }

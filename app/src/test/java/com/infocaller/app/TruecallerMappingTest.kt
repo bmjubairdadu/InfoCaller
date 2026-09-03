@@ -34,11 +34,7 @@ class TruecallerMappingTest {
               "service": "facebook",
               "caption": "https://facebook.com/john"
             }
-          ],
-          "spamInfo": {
-            "spamScore": 15,
-            "spamType": "Sales"
-          }
+          ]
         }
         """.trimIndent()
 
@@ -57,6 +53,5 @@ class TruecallerMappingTest {
         assertEquals(1, result.socialProfiles.size)
         assertEquals("Facebook", result.socialProfiles[0].platform)
         assertEquals("https://facebook.com/john", result.socialProfiles[0].profileUrl)
-        assertEquals(15, result.spamScore)
     }
 }
