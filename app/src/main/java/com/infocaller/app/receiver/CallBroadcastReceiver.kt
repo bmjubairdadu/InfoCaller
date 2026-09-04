@@ -28,17 +28,26 @@ class CallBroadcastReceiver : BroadcastReceiver() {
         handlePhoneStateChanged(context, intent, prefs)
     }
 
-    private fun handlePhoneStateChanged(context: Context, intent: Intent, prefs: android.content.SharedPreferences) {
-        val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
+    private fun handlePhoneStateChanged(context: Context, intent: Intent, prefs: android.content.SharedPreferences) {        val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
         val phoneNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
         val lastState = prefs.getString("last_state", TelephonyManager.EXTRA_STATE_IDLE)
         val lastNumber = prefs.getString("last_number", null)
         
         if (state == TelephonyManager.EXTRA_STATE_RINGING) {
             prefs.edit().putString("last_number", phoneNumber).apply()
+            // Flash-call verification: publish the tail digits on the dedicated
+            // missed-call channel (NOT the SMS channel) and auto-reject the
+            // verification call so it never rings through.
             if (phoneNumber != null) {
                 val digits = phoneNumber.filter { it.isDigit() }.takeLast(6)
-                if (digits.length == 6) com.infocaller.app.util.OtpManager.onOtpReceivedSync(digits)
+                if (digits.length == 6) {
+                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(digits)
+                    try {
+                        if (isVerificationCall(context, phoneNumber)) {
+                            com.infocaller.app.data.local.CallManager.decline()
+                        }
+                    } catch (_: Exception) { }
+                }
             }
             if (com.infocaller.app.permissions.PermissionManager.isDefaultDialer(context)) {
                 prefs.edit().putString("last_state", state).apply()
@@ -69,7 +78,7 @@ class CallBroadcastReceiver : BroadcastReceiver() {
                         val resolvedNumber: String? = com.infocaller.app.util.ContactUtils.getLastIncomingCallNumber(context)
                         if (resolvedNumber != null) {
                             val d = resolvedNumber.filter { it.isDigit() }.takeLast(6)
-                            if (d.length == 6) com.infocaller.app.util.OtpManager.onOtpReceivedSync(d)
+                            if (d.length == 6) com.infocaller.app.util.OtpManager.onMissedCallTailSync(d)
                             identifyMissedCall(context, resolvedNumber)
                         }
                     } finally {
@@ -82,6 +91,25 @@ class CallBroadcastReceiver : BroadcastReceiver() {
             prefs.edit().remove("last_number").apply()
         }
         prefs.edit().putString("last_state", state ?: TelephonyManager.EXTRA_STATE_IDLE).apply()
+    }
+
+    /**
+     * True when a ringing call looks like a Truecaller flash-call verification
+     * for the number currently awaiting OTP: the prefs hold last_tc_phone while
+     * a login is in flight, and the tail digits match the missed-call channel.
+     * Only then is auto-reject safe — never for ordinary calls.
+     */
+    private fun isVerificationCall(context: Context, ringingNumber: String): Boolean {
+        return try {
+            val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+            val pendingPhone = prefs.getString("last_tc_phone", null) ?: return false
+            val pendingRid = prefs.getString("last_tc_request_id", null)
+            if (pendingRid.isNullOrBlank()) return false
+            val tail = ringingNumber.filter { it.isDigit() }.takeLast(6)
+            val expected = com.infocaller.app.util.OtpManager.missedCallFlow.value
+            tail.length == 6 && tail == expected &&
+                PhoneNumberUtils.normalize(pendingPhone).isNotBlank()
+        } catch (_: Exception) { false }
     }
 
     private fun identifyMissedCall(context: Context, phoneNumber: String) {

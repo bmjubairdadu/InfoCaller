@@ -105,6 +105,22 @@ fun DetailsScreen(
                             }
                         },
                         actions = {
+                            IconButton(onClick = {
+                                scope.launch {
+                                    val res = DetailsPngExporter.export(
+                                        context, phoneNumber,
+                                        contact?.displayName, caller, enrichment
+                                    )
+                                    snackbarHostState.showSnackbar(
+                                        res.fold(
+                                            onSuccess = { "Saved PNG to $it" },
+                                            onFailure = { it.message ?: "Download failed" }
+                                        )
+                                    )
+                                }
+                            }) {
+                                Icon(Icons.Default.Download, "Download PNG", tint = Primary)
+                            }
                             if (!isContact && phoneNumber.isNotBlank()) {
                                 IconButton(onClick = { showAddContactDialog = true }) {
                                     Icon(Icons.Default.PersonAdd, "Add Contact", tint = Primary)
@@ -215,7 +231,8 @@ fun DetailsScreen(
                     modifier = Modifier.padding(innerPadding).fillMaxSize().verticalScroll(scrollState),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    val displayName = contact?.displayName ?: enrichment?.publicName ?: caller?.displayName ?: "Unknown"
+                    // Missing data is skipped, never "N/A" / "Unknown" placeholders.
+                    val displayName = contact?.displayName ?: enrichment?.publicName ?: caller?.displayName ?: phoneNumber.ifBlank { "" }
                     Spacer(modifier = Modifier.height(24.dp))
                     Box(modifier = Modifier.size(140.dp).glassy(radius = 70.dp).shadow(24.dp, CircleShape), contentAlignment = Alignment.Center) {
                         val photoUrl = contact?.photoUri ?: enrichment?.profileImageUrl
@@ -261,18 +278,19 @@ fun DetailsScreen(
                     Spacer(modifier = Modifier.height(32.dp))
                     DetailSection("Public Information") {
                         val location = LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
-                        DetailRow(Icons.Default.LocationOn, "Location", location.ifBlank { "Unknown" })
+                        if (location.isNotBlank()) DetailRow(Icons.Default.LocationOn, "Location", location)
                         enrichment?.timezone?.let { DetailRow(Icons.Default.Schedule, "Timezone", it) }
-                        
-                        val carrierName = enrichment?.carrier ?: caller?.carrier ?: "Unknown"
+
+                        val carrierName = enrichment?.carrier ?: caller?.carrier
                         val simInfos by viewModel.simInfos.collectAsState()
                         val carrierLogoPath = remember(carrierName, simInfos) {
-                            simInfos.find { it.carrierName.contains(carrierName, ignoreCase = true) }?.localLogoPath
+                            if (carrierName.isNullOrBlank()) null
+                            else simInfos.find { it.carrierName.contains(carrierName, ignoreCase = true) }?.localLogoPath
                         }
 
-                        DetailRow(
-                            icon = Icons.Default.CellTower, 
-                            label = "Carrier", 
+                        if (!carrierName.isNullOrBlank()) DetailRow(
+                            icon = Icons.Default.CellTower,
+                            label = "Carrier",
                             value = carrierName,
                             trailingContent = {
                                 if (carrierLogoPath != null) {

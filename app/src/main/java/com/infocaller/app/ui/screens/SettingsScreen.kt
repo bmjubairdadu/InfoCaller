@@ -70,7 +70,7 @@ fun SettingsScreen(
         ) {
             SettingsSection("Identity Lookup") {
                 var searchNumber by remember { mutableStateOf("") }
-                
+
                 Column(modifier = Modifier.padding(16.dp)) {
                     OutlinedTextField(
                         value = searchNumber,
@@ -88,13 +88,15 @@ fun SettingsScreen(
                             }
                         }
                     )
-                    
+
                     Spacer(modifier = Modifier.height(12.dp))
-                    
+
                     Button(
                         onClick = {
                             if (searchNumber.isNotBlank()) {
-                                viewModel.searchNumber(searchNumber)
+                                // Manual search: pause background work and focus
+                                // exclusively on this number (CRITICAL priority).
+                                viewModel.searchNumberManual(searchNumber)
                                 viewModel.triggerThrottledSync(context)
                                 onNavigateToDetails(searchNumber)
                             }
@@ -106,6 +108,57 @@ fun SettingsScreen(
                         Icon(Icons.Default.Search, null)
                         Spacer(Modifier.width(8.dp))
                         Text("IDENTIFY CALLER")
+                    }
+                }
+            }
+
+            SettingsSection("NID Lookup") {
+                var nid by remember { mutableStateOf("") }
+                var dob by remember { mutableStateOf("") }
+                var nidError by remember { mutableStateOf<String?>(null) }
+
+                Column(modifier = Modifier.padding(16.dp)) {
+                    OutlinedTextField(
+                        value = nid,
+                        onValueChange = { nid = it.filter { c -> c.isDigit() }; nidError = null },
+                        label = { Text("NID (10/13/17 digits)") },
+                        leadingIcon = { Icon(Icons.Default.Fingerprint, null) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = dob,
+                        onValueChange = { dob = it; nidError = null },
+                        label = { Text("Date of Birth (YYYY-MM-DD)") },
+                        placeholder = { Text("1992-10-11") },
+                        leadingIcon = { Icon(Icons.Default.Cake, null) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true
+                    )
+                    nidError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            if (nid.length < 7) { nidError = "Enter valid NID (min 7 digits)"; return@Button }
+                            if (dob.isNotBlank() && !Regex("\\d{4}-\\d{2}-\\d{2}").matches(dob)) { nidError = "DOB must be YYYY-MM-DD"; return@Button }
+                            nidError = null
+                            val identifier = if (dob.isNotBlank()) "$nid|$dob" else nid
+                            viewModel.searchNidManual(identifier)
+                            viewModel.triggerThrottledSync(context)
+                            onNavigateToDetails(identifier)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = nid.length >= 7
+                    ) {
+                        Icon(Icons.Default.Search, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("SEARCH NID")
                     }
                 }
             }

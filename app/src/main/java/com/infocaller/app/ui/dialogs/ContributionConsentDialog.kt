@@ -58,6 +58,15 @@ fun ContributionConsentDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Permission note: accepting does NOT yet grant system access. " +
+                        "When you next open the Contacts tab, Android will ask for " +
+                        "contacts access (to read numbers for one-by-one lookup) — " +
+                        "grant it only then, contextually.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         },
         confirmButton = {

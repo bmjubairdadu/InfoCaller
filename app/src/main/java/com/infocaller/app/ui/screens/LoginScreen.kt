@@ -64,12 +64,24 @@ fun LoginScreen(
     var tcOtp by remember { mutableStateOf("") }
     var tcLoading by remember { mutableStateOf(false) }
 
+    // SMS auto-fill is opt-in from the OTP screen itself. We deliberately NEVER
+    // request it on the SEND button: popping a system dialog the moment the
+    // user taps SEND reads as "skipped OTP, went to permissions".
+    // autoFillEnabled is read on the OTP screen to decide whether to offer
+    // the "enable auto-fill" row.
+    var autoFillEnabled by remember {
+        mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.SMS_PERMISSION))
+    }
     val smsPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ -> }
+    ) { results ->
+        autoFillEnabled = results.values.all { it }
+    }
 
     @Suppress("UNUSED_PARAMETER")
     var autoVerifying by remember { mutableStateOf(false) }
+    var authError by remember { mutableStateOf<String?>(null) }
+    var verifyError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(tcAuthResult) {
         if (tcAuthResult == null) return@LaunchedEffect
@@ -83,34 +95,60 @@ fun LoginScreen(
             snackbarHostState.showSnackbar("Already verified ✓")
             return@LaunchedEffect
         }
-        val last: String? = OtpManager.lastOtpFlow.value
-        if (last != null && last.length == 6 && tcOtp.isEmpty()) {
-            tcOtp = last
-            val preResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, last)
-            if (preResult.success) {
-                viewModel.loginWithTruecaller(null)
-                snackbarHostState.showSnackbar("Auto-verified from SMS ✓")
-                OtpManager.clearOtp()
-                return@LaunchedEffect
+        // SMS auto-fill (only when RECEIVE_SMS was granted from this screen).
+        // Manual entry below always stays visible — the code may be on another phone.
+        if (autoFillEnabled) {
+            val last: String? = OtpManager.lastOtpFlow.value
+            if (last != null && last.length == 6 && tcOtp.isEmpty()) {
+                tcOtp = last
+                val preResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, last)
+                if (preResult.success) {
+                    viewModel.loginWithTruecaller(null)
+                    snackbarHostState.showSnackbar("Auto-verified from SMS ✓")
+                    OtpManager.clearOtp()
+                    return@LaunchedEffect
+                }
             }
         }
-        OtpManager.otpFlow.collectLatest { code: String? ->
-            if (code == null) return@collectLatest
-            val codeStr: String = code
-            val extractedOtp: String = when (method) {
-                "call", "flashcall", "missedcall" -> if (codeStr.length > 6) codeStr.takeLast(6) else codeStr
-                else -> codeStr
-            }
-            if (extractedOtp.length == 6) {
-                tcOtp = extractedOtp
-                val verifyResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, extractedOtp)
+        // Missed-call (flash-call) auto-verify: tail digits arrive on the
+        // dedicated channel and the verification call was already rejected.
+        launch {
+            OtpManager.missedCallFlow.collectLatest { tail: String? ->
+                if (tail == null || tail.length != 6) return@collectLatest
+                if (method != "call" && method != "flashcall" && method != "missedcall") return@collectLatest
+                tcOtp = tail
+                val verifyResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, tail)
                 if (verifyResult.success) {
                     viewModel.loginWithTruecaller(null)
-                    snackbarHostState.showSnackbar("Auto-verified ✓")
+                    snackbarHostState.showSnackbar("Auto-verified from missed call ✓")
                 } else {
-                    snackbarHostState.showSnackbar("Auto-verify failed: ${verifyResult.message ?: "Invalid code"} - tap VERIFY to retry")
+                    snackbarHostState.showSnackbar("Auto-verify failed: ${verifyResult.message ?: "Invalid code"} - enter the code manually")
                 }
-                OtpManager.clearOtp()
+                OtpManager.clearMissedCallTail()
+            }
+        }
+        // WhatsApp codes cannot be auto-read (no API) — but if the user pastes
+        // or the SMS channel fires, still attempt. Manual entry is the path.
+        launch {
+            OtpManager.otpFlow.collectLatest { code: String? ->
+                if (!autoFillEnabled) return@collectLatest
+                if (code == null) return@collectLatest
+                val codeStr: String = code
+                val extractedOtp: String = when (method) {
+                    "call", "flashcall", "missedcall" -> if (codeStr.length > 6) codeStr.takeLast(6) else codeStr
+                    else -> codeStr
+                }
+                if (extractedOtp.length == 6 && tcOtp.isEmpty()) {
+                    tcOtp = extractedOtp
+                    val verifyResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, extractedOtp)
+                    if (verifyResult.success) {
+                        viewModel.loginWithTruecaller(null)
+                        snackbarHostState.showSnackbar("Auto-verified ✓")
+                    } else {
+                        snackbarHostState.showSnackbar("Auto-verify failed: ${verifyResult.message ?: "Invalid code"} - tap VERIFY to retry")
+                    }
+                    OtpManager.clearOtp()
+                }
             }
         }
     }
@@ -206,7 +244,19 @@ fun LoginScreen(
                             )
 
                             Spacer(modifier = Modifier.height(32.dp))
-                            
+
+                            // Persistent inline error: snackbars vanish, so a failed
+                            // OTP request must leave a visible reason on screen.
+                            authError?.let { err ->
+                                Text(
+                                    err,
+                                    color = Color(0xFFFFB4A9),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(bottom = 12.dp).fillMaxWidth()
+                                )
+                            }
+
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -214,16 +264,19 @@ fun LoginScreen(
                                     .alpha(if (tcPhone.length >= 7 && !tcLoading) 1f else 0.5f)
                                     .brandGradient(radius = 16.dp)
                                     .clickable(enabled = tcPhone.length >= 7 && !tcLoading) {
-                                        val runAuth = {
+                                        val runAuth: () -> Unit = {
                                             tcLoading = true
+                                            authError = null
                                             scope.launch {
                                                 val normalized = PhoneNumberUtils.normalize(tcPhone)
                                                 val r = authManager.requestOtp(normalized)
                                                 val result = if (r!=null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
 
                                                 if (result == null) {
+                                                    authError = "Connection error — check internet"
                                                     snackbarHostState.showSnackbar("Connection error — check internet")
                                                 } else if (result.statusCode == -1) {
+                                                    authError = result.errorMessage ?: "Connection error. Check your internet."
                                                     snackbarHostState.showSnackbar(result.errorMessage ?: "Connection error. Check your internet.")
                                                 } else if (result.requestId.isBlank() && result.statusCode != 3) {
                                                     val errorMsg = result.errorMessage ?: ""
@@ -231,6 +284,7 @@ fun LoginScreen(
                                                     val isLimit = result.statusCode == 5 || result.statusCode == 6 || result.statusCode == 429
                                                     if (isLimit) {
                                                         viewModel.refreshTcSession(context)
+                                                        authError = errorMsg.takeIf { it.isNotBlank() } ?: "Too many requests. Try again after 1 hour."
                                                         snackbarHostState.showSnackbar(errorMsg.takeIf { it.isNotBlank() } ?: "Too many requests. Try again after 1 hour.")
                                                     } else {
                                                         val msg = when(result.statusCode) {
@@ -239,6 +293,7 @@ fun LoginScreen(
                                                             12 -> "Region error. Try again shortly."
                                                             else -> errorMsg.takeIf { it.isNotBlank() } ?: "Verification service unavailable (Error ${result.statusCode})."
                                                         }
+                                                        authError = msg
                                                         snackbarHostState.showSnackbar(msg)
                                                     }
                                                 } else {
@@ -252,12 +307,11 @@ fun LoginScreen(
                                             }
                                         }
 
-                                        if (!PermissionManager.hasPermissions(context, PermissionManager.SMS_PERMISSION)) {
-                                            smsPermissionLauncher.launch(PermissionManager.SMS_PERMISSION)
-                                            runAuth()
-                                        } else {
-                                            runAuth()
-                                        }
+                                        // SEND never triggers a permission dialog: the OTP
+                                        // request fires immediately so the code box
+                                        // always appears. Auto-fill is offered later
+                                        // from the OTP screen itself.
+                                        runAuth()
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
@@ -286,9 +340,9 @@ fun LoginScreen(
                             )
                             Text(
                                 when (tcAuthResult!!.method) {
-                                    "call" -> "We are calling your number. Please wait..."
-                                    "whatsapp" -> "Open WhatsApp to see the 6-digit code"
-                                    else -> "We've sent a 6-digit code to your phone"
+                                    "call" -> "We are calling your number. The call is rejected automatically — just wait or type the code."
+                                    "whatsapp" -> "Open WhatsApp to see the 6-digit code, then type it below"
+                                    else -> "We've sent a 6-digit code to your phone — type it below"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White.copy(alpha = 0.6f),
@@ -297,12 +351,34 @@ fun LoginScreen(
                             
                             Spacer(modifier = Modifier.height(8.dp))
 
+                            // Auto-fill is opt-in HERE on the OTP screen — never on
+                            // the SEND button. Manual entry always works regardless.
+                            if (!autoFillEnabled && (tcAuthResult!!.method == "sms" || tcAuthResult!!.method == "whatsapp")) {
+                                TextButton(
+                                    onClick = { smsPermissionLauncher.launch(PermissionManager.SMS_PERMISSION) },
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                ) {
+                                    Icon(Icons.AutoMirrored.Filled.Chat, null, tint = Primary, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Enable SMS auto-fill (optional)", color = Primary, fontSize = 12.sp)
+                                }
+                            }
+
                             if (tcAuthResult!!.method == "sms" || tcAuthResult!!.method == "whatsapp") {
                                 OtpInputField(
                                     otpText = tcOtp,
-                                    onOtpTextChange = { tcOtp = it },
+                                    onOtpTextChange = { tcOtp = it; verifyError = null },
                                     modifier = Modifier.wrapContentWidth()
                                 )
+                                if (tcAuthResult!!.method == "whatsapp") {
+                                    Text(
+                                        "WhatsApp codes can't be read automatically — type the 6 digits from WhatsApp here.",
+                                        color = Color.White.copy(alpha = 0.5f),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(top = 8.dp)
+                                    )
+                                }
 
                                 TextButton(
                                     onClick = {
@@ -318,17 +394,22 @@ fun LoginScreen(
                                     Text("Paste Code", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
                                 }
                             } else {
+                                // Flash-call / missed-call path: the verification call is
+                                // auto-rejected by the receiver and the tail digits
+                                // auto-fill above. Manual entry stays visible for
+                                // codes arriving on a different phone.
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
-                                        "Detected flash call? Enter last 6 digits of caller number:",
+                                        "Waiting for the verification call — it will be rejected automatically. Or enter the last 6 digits of the caller number:",
                                         color = Color.White.copy(alpha = 0.7f),
                                         style = MaterialTheme.typography.labelSmall,
+                                        textAlign = TextAlign.Center,
                                         modifier = Modifier.padding(bottom = 16.dp)
                                     )
                                     
                                     OtpInputField(
                                         otpText = tcOtp,
-                                        onOtpTextChange = { tcOtp = it },
+                                        onOtpTextChange = { tcOtp = it; verifyError = null },
                                         modifier = Modifier.wrapContentWidth()
                                     )
                                     
@@ -338,6 +419,16 @@ fun LoginScreen(
                             }
 
                             Spacer(modifier = Modifier.height(24.dp))
+                            // Persistent verify error — snackbars vanish too fast.
+                            verifyError?.let { err ->
+                                Text(
+                                    err,
+                                    color = Color(0xFFFFB4A9),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(bottom = 12.dp).fillMaxWidth()
+                                )
+                            }
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -346,12 +437,14 @@ fun LoginScreen(
                                     .brandGradient(radius = 16.dp)
                                     .clickable(enabled = tcOtp.length == 6 && !tcLoading) {
                                         tcLoading = true
+                                        verifyError = null
                                         scope.launch {
                                             val verifyResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, tcOtp)
                                             if (verifyResult.success) {
                                                 viewModel.loginWithTruecaller(null)
                                                 snackbarHostState.showSnackbar("Cloud secret created - Truecaller unlocked ✓")
                                             } else {
+                                                verifyError = verifyResult.message ?: "Invalid OTP code. Please try again."
                                                 snackbarHostState.showSnackbar(verifyResult.message ?: "Invalid OTP code. Please try again.")
                                             }
                                             tcLoading = false
@@ -371,7 +464,7 @@ fun LoginScreen(
                                 }
                             }
                             
-                            TextButton(onClick = { viewModel.setTcAuthResult(null); tcOtp = "" }, modifier = Modifier.padding(top = 8.dp)) {
+                            TextButton(onClick = { viewModel.setTcAuthResult(null); tcOtp = ""; verifyError = null }, modifier = Modifier.padding(top = 8.dp)) {
                                 Text("Edit Phone Number", color = Color.White.copy(alpha = 0.6f))
                             }
                         }

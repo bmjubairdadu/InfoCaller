@@ -61,12 +61,18 @@ fun RecentsScreen(
         // now so the list populates immediately instead of staying empty.
         if (hasPermission) viewModel.refreshDeviceData()
     }
-    // One-shot: never re-fire on rotation/recomposition.
+    // One-shot, contextual, minimal: request ONLY the still-missing call-log
+    // permission when this tab is first opened — never a bulk set.
     var permissionRequested by rememberSaveable { mutableStateOf(false) }
+    fun requestMissingCallLog() {
+        val missing = PermissionManager.missingPermissions(context, PermissionManager.CALL_LOG_PERMISSIONS)
+        if (missing.isEmpty()) { hasPermission = true; return }
+        launcher.launch(missing)
+    }
     LaunchedEffect(hasPermission) {
         if (!hasPermission && !permissionRequested) {
             permissionRequested = true
-            launcher.launch(PermissionManager.CALL_LOG_PERMISSIONS)
+            requestMissingCallLog()
         }
     }
 
@@ -112,7 +118,7 @@ fun RecentsScreen(
         ) { screenPadding ->
             Box(modifier = Modifier.fillMaxSize()) {
                 if (!hasPermission) {
-                    PermissionEmptyState(title = "Recents Permission", description = "To show your call history, InfoCaller needs access to your call logs.", onGrant = { launcher.launch(PermissionManager.CALL_LOG_PERMISSIONS) })
+                    PermissionEmptyState(title = "Recents Permission", description = "To show your call history, InfoCaller needs access to your call logs.", onGrant = { requestMissingCallLog() })
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),

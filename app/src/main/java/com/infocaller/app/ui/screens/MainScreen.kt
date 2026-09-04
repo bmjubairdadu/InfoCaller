@@ -5,9 +5,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
 import androidx.core.content.edit
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.ContactPhone
-import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -68,11 +66,11 @@ fun MainScreen(
     }
 
     val tabs = remember {
+        // Requested order: Recent, then Contacts, then Settings.
+        // Dial Pad lives inside Contacts (FAB), NID lives in search/details.
         listOf(
-            BottomNavItem("dialer", "Dialer", Icons.Default.Call),
-            BottomNavItem("recents", "Recents", Icons.Default.History),
+            BottomNavItem("recents", "Recent", Icons.Default.History),
             BottomNavItem("contacts", "Contacts", Icons.Default.ContactPhone),
-            BottomNavItem("nid", "NID", Icons.Default.Fingerprint),
             BottomNavItem("settings", "Settings", Icons.Default.Settings)
         )
     }
@@ -158,7 +156,7 @@ fun MainScreen(
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = "dialer",
+            startDestination = "recents",
             modifier = Modifier.fillMaxSize(),
             enterTransition = { fadeIn(animationSpec = tween(150)) },
             exitTransition = { fadeOut(animationSpec = tween(150)) }
@@ -177,23 +175,12 @@ fun MainScreen(
                 ContactsScreen(
                     viewModel = viewModel,
                     innerPadding = innerPadding,
+                    onMakeCall = onMakeCall,
                     onNavigateToDetails = { number ->
                         viewModel.searchNumber(number)
                         parentNavController.navigate("details/" + android.net.Uri.encode(number))
                     }
                 )
-            }
-            composable("dialer") {
-                DialerScreen(
-                    viewModel = viewModel,
-                    onCall = { number ->
-                        onMakeCall(number)
-                    },
-                    innerPadding = innerPadding
-                )
-            }
-            composable("nid") {
-                NidLookupScreen(viewModel = viewModel)
             }
         }
     }

@@ -24,12 +24,19 @@ import com.infocaller.app.ui.theme.Primary
 @Composable
 fun OnboardingScreen(onComplete: () -> Unit) {
     val context = LocalContext.current
-    // Stages: 1 = dialer role, 2 = essential call permissions, 3 = overlay,
-    // 5 = notifications, 6 = done. -1 is the settings escape hatch.
+    // Contextual-permission model: onboarding secures ONLY what is needed to
+    // place/answer calls and screen spam (dialer role, spam role, call
+    // permissions, overlay). Call log + contacts are requested lazily on the
+    // Recent / Contacts tabs; nothing is bulk-requested up front.
+    // Stages: 1 = dialer role, 1b (10) = Caller ID & spam role,
+    // 2 = essential call permissions, 3 = overlay, 5 = notifications, 6 = done.
+    // -1 is the settings escape hatch.
     var currentStage by rememberSaveable { mutableIntStateOf(1) }
     var permanentlyDenied by rememberSaveable { mutableStateOf(false) }
     var roleAttempted by rememberSaveable { mutableStateOf(false) }
     var roleError by rememberSaveable { mutableStateOf<String?>(null) }
+    var spamRoleError by rememberSaveable { mutableStateOf<String?>(null) }
+    var spamRoleAttempted by rememberSaveable { mutableStateOf(false) }
     var callPermsError by rememberSaveable { mutableStateOf(false) }
 
 
@@ -38,10 +45,26 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     ) { _ ->
         if (PermissionManager.isDefaultDialer(context)) {
             roleError = null
-            currentStage = 2
+            // Pre-Q the dialer default covers screening; Q+ needs the
+            // separate Caller ID & spam role next.
+            currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                !PermissionManager.isCallScreeningRoleHeld(context)
+            ) 10 else 2
         } else if (roleAttempted) {
             // User dismissed or picked another app: say so instead of stalling silently.
-            roleError = "Still not set — pick InfoCaller in the system list, or skip for now."
+            // Keep the retry button visible — one tap re-fires the system picker.
+            roleError = "Still not set — pick InfoCaller in the system list, then tap \"Check again\"."
+        }
+    }
+
+    val spamRoleLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { _ ->
+        if (PermissionManager.isCallScreeningRoleHeld(context)) {
+            spamRoleError = null
+            currentStage = 2
+        } else if (spamRoleAttempted) {
+            spamRoleError = "Still not set — pick InfoCaller as the Caller ID & spam app, then tap \"Check again\"."
         }
     }
 
@@ -61,6 +84,12 @@ fun OnboardingScreen(onComplete: () -> Unit) {
         // overlay granted while on stage 3 -> notifications/done.
         if (PermissionManager.isDefaultDialer(context) && currentStage == 1) {
             roleError = null
+            currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                !PermissionManager.isCallScreeningRoleHeld(context)
+            ) 10 else 2
+        }
+        if (currentStage == 10 && PermissionManager.isCallScreeningRoleHeld(context)) {
+            spamRoleError = null
             currentStage = 2
         }
         if (currentStage == 3 && PermissionManager.canDrawOverlays(context)) {
@@ -115,6 +144,48 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                         })
                     } catch (_: Exception) { PermissionManager.openAppSettings(context) }
                 },
+                onCheckAgain = {
+                    // Re-verify after the user returns from system settings.
+                    // If granted, advance; otherwise keep the error visible.
+                    if (PermissionManager.isDefaultDialer(context)) {
+                        roleError = null
+                        currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                            !PermissionManager.isCallScreeningRoleHeld(context)
+                        ) 10 else 2
+                    } else {
+                        roleError = "Still not set — pick InfoCaller in the system list, then tap \"Check again\"."
+                    }
+                },
+                onSkip = { currentStage = 2 }
+            )
+            10 -> SpamRoleExplanation(
+                error = spamRoleError,
+                onGrant = {
+                    spamRoleAttempted = true
+                    spamRoleError = null
+                    try {
+                        val intent = PermissionManager.createCallScreeningRoleIntent(context)
+                        if (intent != null) spamRoleLauncher.launch(intent)
+                        else spamRoleError = "Your system didn't return a request screen. Use system settings instead."
+                    } catch (_: Exception) {
+                        spamRoleError = "The system blocked the request. Use system settings instead."
+                    }
+                },
+                onOpenDefaultApps = {
+                    try {
+                        context.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        })
+                    } catch (_: Exception) { PermissionManager.openAppSettings(context) }
+                },
+                onCheckAgain = {
+                    if (PermissionManager.isCallScreeningRoleHeld(context)) {
+                        spamRoleError = null
+                        currentStage = 2
+                    } else {
+                        spamRoleError = "Still not set — pick InfoCaller as the Caller ID & spam app, then tap \"Check again\"."
+                    }
+                },
                 onSkip = { currentStage = 2 }
             )
             2 -> CallPermissionsExplanation(
@@ -123,6 +194,8 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                     callPermsError = false
                     callPermsLauncher.launch(PermissionManager.REQUIRED_RUNTIME_CALL_PERMISSIONS)
                 },
+                // Call log + contacts are NOT asked here — Recent asks for the
+                // log and Contacts asks for contacts, contextually, on first open.
                 onSkip = { currentStage = 3 }
             )
             3 -> OverlayPermissionRationale(
@@ -148,7 +221,8 @@ fun RoleDialerExplanation(
     error: String?,
     onGrant: () -> Unit,
     onOpenDefaultApps: () -> Unit,
-    onSkip: () -> Unit
+    onSkip: () -> Unit,
+    onCheckAgain: () -> Unit = {}
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Default Phone App", style = MaterialTheme.typography.headlineLarge, color = Color.White)
@@ -164,6 +238,10 @@ fun RoleDialerExplanation(
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedButton(onClick = onOpenDefaultApps) {
                 Text("Open system settings", color = Color.White)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(onClick = onCheckAgain) {
+                Text("Check again", color = Color.White)
             }
         }
         Spacer(modifier = Modifier.height(32.dp))
@@ -206,6 +284,43 @@ fun CallPermissionsExplanation(
     }
 }
 
+
+@Composable
+fun SpamRoleExplanation(
+    error: String?,
+    onGrant: () -> Unit,
+    onOpenDefaultApps: () -> Unit,
+    onCheckAgain: () -> Unit,
+    onSkip: () -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Caller ID & Spam App", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            "To detect spam and identify unknown callers before the phone rings, InfoCaller must be set as your Caller ID & spam app. This is separate from the default Phone app setting.",
+            textAlign = TextAlign.Center,
+            color = Color.White.copy(alpha = 0.7f)
+        )
+        if (error != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(error, textAlign = TextAlign.Center, color = Color(0xFFFFB4A9))
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(onClick = onOpenDefaultApps) {
+                Text("Open system settings", color = Color.White)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(onClick = onCheckAgain) {
+                Text("Check again", color = Color.White)
+            }
+        }
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) {
+            Text("Set as Spam App")
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        TextButton(onClick = onSkip) { Text("Skip for now", color = Color.White.copy(alpha = 0.7f)) }
+    }
+}
 
 @Composable
 fun NotificationRationale(onGrant: () -> Unit) {    Column(horizontalAlignment = Alignment.CenterHorizontally) {

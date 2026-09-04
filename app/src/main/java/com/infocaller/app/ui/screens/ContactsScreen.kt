@@ -54,6 +54,7 @@ import kotlinx.coroutines.launch
 fun ContactsScreen(
     viewModel: CallerViewModel,
     onNavigateToDetails: (String) -> Unit,
+    onMakeCall: (String) -> Unit = {},
     innerPadding: PaddingValues = PaddingValues(0.dp)
 ) {
     val context = LocalContext.current
@@ -94,14 +95,21 @@ fun ContactsScreen(
         // now so the list populates immediately instead of staying empty.
         if (hasPermission) viewModel.refreshDeviceData()
     }
-    // One-shot: fire once per composition entry, never on rotation/recomposition.
+    // One-shot, contextual, minimal: request ONLY the still-missing contact
+    // permissions when this tab is first opened — never a bulk set. The
+    // contribution (GitHub-share) decision is the separate consent dialog above.
     var permissionRequested by rememberSaveable { mutableStateOf(false) }
+    fun requestMissingContacts() {
+        val missing = PermissionManager.missingPermissions(context, PermissionManager.CONTACTS_PERMISSIONS)
+        if (missing.isEmpty()) { hasPermission = true; return }
+        val act = activity
+        if (act != null && PermissionManager.shouldShowRationale(act, missing)) showRationale = true
+        else launcher.launch(missing)
+    }
     LaunchedEffect(hasPermission) {
         if (!hasPermission && !permissionRequested) {
             permissionRequested = true
-            val act = activity
-            if (act != null && PermissionManager.shouldShowRationale(act, PermissionManager.CONTACTS_PERMISSIONS)) showRationale = true
-            else launcher.launch(PermissionManager.CONTACTS_PERMISSIONS)
+            requestMissingContacts()
         }
     }
 
@@ -114,7 +122,7 @@ fun ContactsScreen(
             confirmButton = {
                 TextButton(onClick = { 
                     showRationale = false
-                    launcher.launch(PermissionManager.CONTACTS_PERMISSIONS) 
+                    requestMissingContacts() 
                 }) {
                     Text("Grant", color = Primary)
                 }
@@ -129,8 +137,10 @@ fun ContactsScreen(
 
     val enrichedContacts by viewModel.enrichedContacts.collectAsState()
     var searchQuery by rememberSaveable { mutableStateOf("") }
-    var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var contactToDelete by remember { mutableStateOf<LocalContactEntity?>(null) }
+    // Dial Pad lives here (bottom-right FAB). Add-contact flows through the
+    // dial pad's own auto-populated sheet, so no separate "+" button is needed.
+    var showDialPad by rememberSaveable { mutableStateOf(false) }
 
     // WorkManager may be uninitialized on some ROMs — getInstance() throws and
     // would crash composition. Fall back to an empty flow (no sync indicator).
@@ -225,7 +235,7 @@ fun ContactsScreen(
             },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { showAddDialog = true },
+                onClick = { showDialPad = true },
                 modifier = Modifier
                     .padding(bottom = innerPadding.calculateBottomPadding() + 16.dp)
                     .size(56.dp)
@@ -242,7 +252,7 @@ fun ContactsScreen(
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add Contact", tint = Color.Black)
+                    Icon(Icons.Default.Dialpad, contentDescription = "Dial Pad", tint = Color.Black)
                 }
             }
         }
@@ -258,7 +268,7 @@ fun ContactsScreen(
                     title = "Contacts Permission",
                     description = "To show and manage your contacts, InfoCaller needs access to your contacts list."
                 ) {
-                    launcher.launch(PermissionManager.CONTACTS_PERMISSIONS)
+                    requestMissingContacts()
                 }
             } else {
                 LazyColumn(
@@ -410,14 +420,14 @@ fun ContactsScreen(
         )
     }
 
-    if (showAddDialog) {
-        AddContactBottomSheet(
+    if (showDialPad) {
+        DialPadBottomSheet(
             viewModel = viewModel,
-            phoneNumber = "",
-            onDismiss = { showAddDialog = false },
-            onContactSaved = { 
-                showAddDialog = false
-            }
+            onCall = { number ->
+                showDialPad = false
+                onMakeCall(number)
+            },
+            onDismiss = { showDialPad = false }
         )
     }
 }

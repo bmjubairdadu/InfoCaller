@@ -34,12 +34,28 @@ class ScanningService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!isRunning) {
             isRunning = true
-            // Keep the service in foreground while the queue drains; do NOT detach after 500ms —
-            // detaching a specialUse FGS immediately violates foreground-service policy on A12+.
+            // Transient resume notice only: show the foreground notification, run
+            // one queue pass, then stop. The service must NOT linger 24/7 — the
+            // user's spec is a ~3s "resumed" notice on app open / after reboot.
             startForeground(NOTIFICATION_ID, createNotification())
+            scheduleAutoStop()
             startContinuousScanning()
         }
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    private fun scheduleAutoStop() {
+        serviceScope.launch {
+            try {
+                delay(3000)
+            } catch (_: Exception) { }
+            try {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } catch (_: Exception) { }
+            try {
+                stopSelf()
+            } catch (_: Exception) { }
+        }
     }
 
     private fun startContinuousScanning() {
@@ -88,14 +104,15 @@ class ScanningService : Service() {
     }
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Caller ID active")
-            .setContentText("Identifying incoming calls in background")
+            .setContentTitle("Caller ID resumed")
+            .setContentText("InfoCaller background identification is active")
             .setSmallIcon(R.drawable.app_logo)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setOngoing(true)
-            .setAutoCancel(false)
+            .setOngoing(false)
+            .setAutoCancel(true)
             .setOnlyAlertOnce(true)
+            .setTimeoutAfter(3000)
             .build()
     }
 

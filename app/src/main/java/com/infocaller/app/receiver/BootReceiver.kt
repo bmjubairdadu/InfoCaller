@@ -68,7 +68,7 @@ class BootReceiver : BroadcastReceiver() {
             .build()
         if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
             mgr.notify(id, n)
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ try { mgr.cancel(id) } catch (_: Exception) {} }, 2500)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ try { mgr.cancel(id) } catch (_: Exception) {} }, 3000)
         }
     }
 }

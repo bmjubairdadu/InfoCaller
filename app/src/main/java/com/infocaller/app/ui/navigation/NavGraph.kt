@@ -27,8 +27,12 @@ fun NavGraph(
 ) {
     val context = LocalContext.current
     
-    val isCoreOk = PermissionManager.isDefaultDialer(context) && 
-                  PermissionManager.hasPermissions(context, PermissionManager.CORE_PERMISSIONS)
+    // Contextual-permission gate: onboarding secures dialer role + spam role +
+    // basic call permissions + overlay. Call log / contacts are requested
+    // lazily on Recent / Contacts tabs, so they are NOT part of this gate.
+    val isCoreOk = PermissionManager.isDefaultDialer(context) &&
+                  PermissionManager.isCallScreeningRoleHeld(context) &&
+                  PermissionManager.hasPermissions(context, PermissionManager.REQUIRED_RUNTIME_CALL_PERMISSIONS)
     val isOverlayOk = PermissionManager.canDrawOverlays(context)
     val isNotificationsOk = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
         PermissionManager.hasPermission(context, android.Manifest.permission.POST_NOTIFICATIONS)

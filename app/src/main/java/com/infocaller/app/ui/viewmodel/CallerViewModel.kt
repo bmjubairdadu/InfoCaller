@@ -103,6 +103,21 @@ class CallerViewModel(
         searchByIdentifier(normalized, com.infocaller.app.domain.engine.IdentifierType.PHONE)
     }
 
+    /**
+     * Manual search entry point (contacts / recents / dial pad / settings):
+     * CRITICAL priority pauses background scans (ScanOrchestrator cancels
+     * BACKGROUND jobs) and focuses exclusively on this number. Same path is
+     * used for incoming calls via the overlay.
+     */
+    fun searchNumberManual(phoneNumber: String) {
+        searchNumber(phoneNumber)
+    }
+
+    /** Manual NID search: same focus semantics, NID identifier type. */
+    fun searchNidManual(identifier: String) {
+        searchByIdentifier(identifier, com.infocaller.app.domain.engine.IdentifierType.NID)
+    }
+
     fun performFullLookup(phoneNumber: String) {
         val normalized = PhoneNumberUtils.normalize(phoneNumber)
         viewModelScope.launch {
