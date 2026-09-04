@@ -32,12 +32,15 @@ object SimManager {
 
     suspend fun getSimInfos(context: Context): List<SimInfo> {
         val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
-        val subscriptionManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
-        val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+        // Telephony services may be null on non-telephony devices (required=false);
+        // a hard cast here would crash first launch ("keeps stopping").
+        val subscriptionManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
+            ?: return emptyList()
+        val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
         
         val phoneAccounts = try {
-            telecomManager.callCapablePhoneAccounts
-        } catch (_: SecurityException) {
+            telecomManager?.callCapablePhoneAccounts ?: emptyList<PhoneAccountHandle>()
+        } catch (_: Exception) {
             emptyList<PhoneAccountHandle>()
         }
         val subInfos = try {

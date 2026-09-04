@@ -26,7 +26,17 @@ class InfoCallerApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        database = AppDatabase.getDatabase(this)
+        // A corrupt DB file throws inside Room.databaseBuilder and would kill every
+        // launch ("keeps stopping" loop). All tables are re-syncable caches, so on
+        // failure delete once and rebuild instead of boot-looping.
+        database = try {
+            AppDatabase.getDatabase(this)
+        } catch (_: Exception) {
+            try {
+                deleteDatabase("infocaller_database")
+            } catch (_: Exception) { }
+            AppDatabase.getDatabase(this)
+        }
         deviceDataRepository = DeviceDataRepositoryImpl(contentResolver)
         authRepository = AuthRepositoryImpl()
 
@@ -131,6 +141,12 @@ class InfoCallerApplication : Application() {
             enrichmentService
         )
 
-        com.infocaller.app.service.ScanningService.start(this)
+        // Never let a background-process start kill the app: starting an FGS from
+        // background throws on Android 12+ (ForegroundServiceStartNotAllowedException).
+        // If this throw escaped, every lateinit above would stay uninitialized and the
+        // next Activity access would crash with UninitializedPropertyAccessException.
+        try {
+            com.infocaller.app.service.ScanningService.start(this)
+        } catch (_: Exception) { }
     }
 }

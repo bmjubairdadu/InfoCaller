@@ -192,12 +192,6 @@ fun LoginScreen(
                                 value = tcPhone,
                                 onValueChange = { viewModel.setTcPhone(it) },
                                 label = { Text("Phone Number", color = Color.White.copy(alpha = 0.5f)) },
-                                placeholder = { Text("+8801...", color = Color.White.copy(alpha = 0.3f)) },
-                                supportingText = {
-                                    if (tcPhone.isNotBlank() && tcPhone.filter { it.isDigit() }.length < 10) {
-                                        Text("Enter full number with country code, e.g. +8801XXXXXXXXX", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
-                                    }
-                                },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp),
                                 leadingIcon = { Icon(Icons.Default.Phone, null, tint = Primary) },

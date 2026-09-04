@@ -77,13 +77,17 @@ fun DialerScreen(
     var clipboardNumber by rememberSaveable { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
-        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        val clip = clipboard.primaryClip
-        if (clip != null && clip.itemCount > 0) {
-            val text = clip.getItemAt(0).text?.toString() ?: ""
-            val clean = text.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }
-            if (clean.length in 3..15) clipboardNumber = clean
-        }
+        // Clipboard access throws on some ROMs / restricted contexts — never let a
+        // paste hint crash the launch screen.
+        try {
+            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val clip = clipboard.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                val text = clip.getItemAt(0).text?.toString() ?: ""
+                val clean = text.filter { it.isDigit() || it == '+' || it == '*' || it == '#' }
+                if (clean.length in 3..15) clipboardNumber = clean
+            }
+        } catch (_: Exception) { }
     }
 
     // Cancellable debounce: each keystroke cancels the previous pending lookup

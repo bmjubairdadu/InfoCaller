@@ -27,14 +27,24 @@ class ImageAnalysisService(private val context: Context) : IImageAnalysisService
         .setMinFaceSize(0.1f)
         .build()
 
-    private val detector = FaceDetection.getClient(detectorOptions)
+    // ML Kit client creation touches Play Services — on devices without it this
+    // throws during Application.onCreate ("keeps stopping" on launch). Lazily
+    // resolve to null and skip analysis instead of crashing.
+    private val detector by lazy {
+        try {
+            FaceDetection.getClient(detectorOptions)
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     override suspend fun analyze(candidate: PhotoCandidate): PhotoCandidate = withContext(Dispatchers.IO) {
         try {
+            val activeDetector = detector ?: return@withContext candidate
             val bitmap = downloadBitmap(candidate.url) ?: return@withContext candidate
             
             val image = InputImage.fromBitmap(bitmap, 0)
-            val faces = detector.process(image).await()
+            val faces = activeDetector.process(image).await()
             
             val sharpness = computeLaplacianVariance(bitmap)
             

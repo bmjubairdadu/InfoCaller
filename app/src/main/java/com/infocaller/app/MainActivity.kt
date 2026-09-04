@@ -25,45 +25,53 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         
-        val workRequest = androidx.work.PeriodicWorkRequestBuilder<com.infocaller.app.worker.EnrichmentWorker>(
-            1, java.util.concurrent.TimeUnit.HOURS
-        )
-        .setConstraints(
-            androidx.work.Constraints.Builder()
-                .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
-                .setRequiresBatteryNotLow(true)
-                .build()
-        )
-        .build()
+        // WorkManager may not be initialized on some devices/ROMs — a throw here
+        // would crash onCreate ("keeps stopping" on launch), so never let it escape.
+        try {
+            val workRequest = androidx.work.PeriodicWorkRequestBuilder<com.infocaller.app.worker.EnrichmentWorker>(
+                1, java.util.concurrent.TimeUnit.HOURS
+            )
+            .setConstraints(
+                androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                    .setRequiresBatteryNotLow(true)
+                    .build()
+            )
+            .build()
 
-        androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "EnrichmentSync",
-            androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-            workRequest
-        )
+            androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "EnrichmentSync",
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                workRequest
+            )
+        } catch (_: Exception) { }
 
-        val updateRequest = androidx.work.PeriodicWorkRequestBuilder<com.infocaller.app.worker.ProviderUpdateWorker>(
-            12, java.util.concurrent.TimeUnit.HOURS
-        )
-        .setConstraints(
-            androidx.work.Constraints.Builder()
-                .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
-                .build()
-        )
-        .build()
+        try {
+            val updateRequest = androidx.work.PeriodicWorkRequestBuilder<com.infocaller.app.worker.ProviderUpdateWorker>(
+                12, java.util.concurrent.TimeUnit.HOURS
+            )
+            .setConstraints(
+                androidx.work.Constraints.Builder()
+                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                    .build()
+            )
+            .build()
 
-        androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "ProviderUpdate",
-            androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-            updateRequest
-        )
+            androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "ProviderUpdate",
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                updateRequest
+            )
+        } catch (_: Exception) { }
 
         // Community DB auto-download: periodic (KEEP = idempotent) + one immediate
         // sync only on cold start — NOT on every rotation/recreation.
-        com.infocaller.app.worker.CommunitySyncWorker.schedulePeriodic(this)
-        if (savedInstanceState == null) {
-            com.infocaller.app.worker.CommunitySyncWorker.triggerNow(this)
-        }
+        try {
+            com.infocaller.app.worker.CommunitySyncWorker.schedulePeriodic(this)
+            if (savedInstanceState == null) {
+                com.infocaller.app.worker.CommunitySyncWorker.triggerNow(this)
+            }
+        } catch (_: Exception) { }
 
         enableEdgeToEdge()
         setContent {

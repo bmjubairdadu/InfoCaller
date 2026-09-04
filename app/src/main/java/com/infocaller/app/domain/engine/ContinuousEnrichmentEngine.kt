@@ -30,27 +30,39 @@ class ContinuousEnrichmentEngine(
     val isOnline = _isOnline.asStateFlow()
 
     init {
-        monitorConnectivity()
+        // A throw here would kill Application.onCreate ("keeps stopping" on every
+        // launch), so the callback registration must never escape.
+        try {
+            monitorConnectivity()
+        } catch (_: Exception) { }
     }
 
     private fun isCurrentlyOnline(): Boolean {
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = connectivityManager.activeNetwork ?: return false
-        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        return try {
+            val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return true
+            val network = connectivityManager.activeNetwork ?: return false
+            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        } catch (_: Exception) {
+            true
+        }
     }
 
     private fun monitorConnectivity() {
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        connectivityManager.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                _isOnline.value = true
-            }
+        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return
+        try {
+            connectivityManager.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    _isOnline.value = true
+                }
 
-            override fun onLost(network: Network) {
-                _isOnline.value = false
-            }
-        })
+                override fun onLost(network: Network) {
+                    _isOnline.value = false
+                }
+            })
+        } catch (_: Exception) { }
     }
 
     fun startProcessing() {

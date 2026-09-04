@@ -256,7 +256,11 @@ class CallerViewModel(
     }
 
     fun getEnrichments(numbers: List<String>): Flow<List<com.infocaller.app.data.local.entity.ContactEnrichmentEntity>> {
-        return database.enrichmentDao().getEnrichments(numbers.map { PhoneNumberUtils.normalize(it) })
+        // Room generates "IN ()" for an empty list, which is a syntax error and
+        // crashes collectors (fresh install with no call history). Short-circuit.
+        val normalized = numbers.map { PhoneNumberUtils.normalize(it) }.filter { it.isNotBlank() }.distinct()
+        if (normalized.isEmpty()) return kotlinx.coroutines.flow.flowOf(emptyList())
+        return database.enrichmentDao().getEnrichments(normalized)
     }
 }
 

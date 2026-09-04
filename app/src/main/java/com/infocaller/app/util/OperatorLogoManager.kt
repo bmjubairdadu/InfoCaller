@@ -137,8 +137,18 @@ class OperatorLogoManager(private val context: Context, private val database: Ap
     }
     
     suspend fun getLocalLogoPath(sim: SimInfo): String? = withContext(Dispatchers.IO) {
-        val key = getOperatorKey(sim)
-        val logo = database.operatorLogoDao().getLogo(key)
-        return@withContext logo?.localFilePath?.takeIf { File(it).exists() }
+        try {
+            val key = getOperatorKey(sim)
+            val logo = database.operatorLogoDao().getLogo(key)
+            val path = logo?.localFilePath
+            if (path.isNullOrBlank()) return@withContext null
+            return@withContext try {
+                if (File(path).exists()) path else null
+            } catch (_: Exception) {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 }

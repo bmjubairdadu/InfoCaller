@@ -127,9 +127,16 @@ fun ContactsScreen(
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var contactToDelete by remember { mutableStateOf<LocalContactEntity?>(null) }
 
-    val workInfos by androidx.work.WorkManager.getInstance(context)
-        .getWorkInfosForUniqueWorkFlow("ThrottledSync")
-        .collectAsState(initial = emptyList())
+    // WorkManager may be uninitialized on some ROMs — getInstance() throws and
+    // would crash composition. Fall back to an empty flow (no sync indicator).
+    val workInfos by remember {
+        try {
+            androidx.work.WorkManager.getInstance(context)
+                .getWorkInfosForUniqueWorkFlow("ThrottledSync")
+        } catch (_: Exception) {
+            kotlinx.coroutines.flow.flowOf(emptyList())
+        }
+    }.collectAsState(initial = emptyList())
     
     val isSyncing = remember(workInfos) {
         workInfos.any { it.state == androidx.work.WorkInfo.State.RUNNING }

@@ -82,51 +82,60 @@ class EnrichmentWorker(
     }
 
     private fun importSystemContacts(dao: com.infocaller.app.data.local.dao.LocalContactDao) {
-        val resolver = applicationContext.contentResolver
-        val currentTime = System.currentTimeMillis()
-        val cursor = resolver.query(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(
-                ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
-                ContactsContract.CommonDataKinds.Phone.LOOKUP_KEY,
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                ContactsContract.CommonDataKinds.Phone.NUMBER,
-                ContactsContract.CommonDataKinds.Phone.PHOTO_URI,
-                ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI
-            ),
-            null,
-            null,
-            null
-        )
-
-        cursor?.use {
-            val contacts = mutableListOf<LocalContactEntity>()
-            val idIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
-            val keyIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.LOOKUP_KEY)
-            val nameIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-            val numIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-            val photoIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_URI)
-            val thumbIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI)
-
-            while (it.moveToNext()) {
-                val name = it.getString(nameIdx) ?: "Unknown"
-                val rawNumber = it.getString(numIdx) ?: ""
-                val normalized = com.infocaller.app.util.PhoneNumberUtils.normalize(rawNumber)
-                
-                contacts.add(LocalContactEntity(
-                    id = it.getLong(idIdx),
-                    lookupKey = it.getString(keyIdx),
-                    displayName = name,
-                    phoneNumber = normalized,
-                    photoUri = it.getString(photoIdx),
-                    photoThumbnailUri = it.getString(thumbIdx),
-                    lastSynced = currentTime
-                ))
+        // A throw here must never escape into doWork's retry path forever (battery
+        // drain) — and a missing column index (-1) would crash outright. Fail quiet.
+        try {
+            val resolver = applicationContext.contentResolver
+            val currentTime = System.currentTimeMillis()
+            val cursor = try {
+                resolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(
+                        ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+                        ContactsContract.CommonDataKinds.Phone.LOOKUP_KEY,
+                        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                        ContactsContract.CommonDataKinds.Phone.NUMBER,
+                        ContactsContract.CommonDataKinds.Phone.PHOTO_URI,
+                        ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI
+                    ),
+                    null,
+                    null,
+                    null
+                )
+            } catch (_: Exception) {
+                return
             }
-            
-            runBlocking {
-                dao.insertContacts(contacts)
+
+            cursor?.use {
+                val contacts = mutableListOf<LocalContactEntity>()
+                val idIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
+                val keyIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.LOOKUP_KEY)
+                val nameIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                val numIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                val photoIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_URI)
+                val thumbIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI)
+                if (idIdx < 0 || numIdx < 0) return
+
+                while (it.moveToNext()) {
+                    val name = try { it.getString(nameIdx) } catch (_: Exception) { null } ?: "Unknown"
+                    val rawNumber = try { it.getString(numIdx) } catch (_: Exception) { null } ?: ""
+                    val normalized = com.infocaller.app.util.PhoneNumberUtils.normalize(rawNumber)
+
+                    contacts.add(LocalContactEntity(
+                        id = try { it.getLong(idIdx) } catch (_: Exception) { continue },
+                        lookupKey = try { it.getString(keyIdx) } catch (_: Exception) { null } ?: "",
+                        displayName = name,
+                        phoneNumber = normalized,
+                        photoUri = try { it.getString(photoIdx) } catch (_: Exception) { null },
+                        photoThumbnailUri = try { it.getString(thumbIdx) } catch (_: Exception) { null },
+                        lastSynced = currentTime
+                    ))
+                }
+
+                runBlocking {
+                    dao.insertContacts(contacts)
+                }
             }
-        }
+        } catch (_: Exception) { }
     }
 }
