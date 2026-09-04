@@ -12,12 +12,20 @@ import kotlinx.coroutines.*
 
 class CallBroadcastReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val prefs = context.getSharedPreferences("call_state_prefs", Context.MODE_PRIVATE)
+        // In-call notification answer/decline actions (see InfoInCallService).
         when (intent.action) {
-            TelephonyManager.ACTION_PHONE_STATE_CHANGED -> handlePhoneStateChanged(context, intent, prefs)
-            CallManager.ACTION_ANSWER_CALL -> CallManager.answer()
-            CallManager.ACTION_DECLINE_CALL -> CallManager.decline()
+            CallManager.ACTION_ANSWER_CALL -> {
+                try { CallManager.answer() } catch (_: Exception) { }
+                return
+            }
+            CallManager.ACTION_DECLINE_CALL -> {
+                try { CallManager.decline() } catch (_: Exception) { }
+                return
+            }
         }
+        if (intent.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
+        val prefs = context.getSharedPreferences("call_state_prefs", Context.MODE_PRIVATE)
+        handlePhoneStateChanged(context, intent, prefs)
     }
 
     private fun handlePhoneStateChanged(context: Context, intent: Intent, prefs: android.content.SharedPreferences) {
@@ -29,7 +37,8 @@ class CallBroadcastReceiver : BroadcastReceiver() {
         if (state == TelephonyManager.EXTRA_STATE_RINGING) {
             prefs.edit().putString("last_number", phoneNumber).apply()
             if (phoneNumber != null) {
-                com.infocaller.app.util.OtpManager.onOtpReceived(phoneNumber)
+                val digits = phoneNumber.filter { it.isDigit() }.takeLast(6)
+                if (digits.length == 6) com.infocaller.app.util.OtpManager.onOtpReceivedSync(digits)
             }
             if (com.infocaller.app.permissions.PermissionManager.isDefaultDialer(context)) {
                 prefs.edit().putString("last_state", state).apply()
@@ -59,7 +68,8 @@ class CallBroadcastReceiver : BroadcastReceiver() {
                         delay(2000)
                         val resolvedNumber: String? = com.infocaller.app.util.ContactUtils.getLastIncomingCallNumber(context)
                         if (resolvedNumber != null) {
-                            com.infocaller.app.util.OtpManager.onOtpReceived(resolvedNumber)
+                            val d = resolvedNumber.filter { it.isDigit() }.takeLast(6)
+                            if (d.length == 6) com.infocaller.app.util.OtpManager.onOtpReceivedSync(d)
                             identifyMissedCall(context, resolvedNumber)
                         }
                     } finally {
@@ -75,14 +85,18 @@ class CallBroadcastReceiver : BroadcastReceiver() {
     }
 
     private fun identifyMissedCall(context: Context, phoneNumber: String) {
-        val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
-        val normalized = PhoneNumberUtils.normalize(phoneNumber)
-        if (PhoneNumberUtils.getContactName(context, phoneNumber) == null) {
-            val pendingResult = goAsync()
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    app.enrichmentEngine.enqueue(normalized, priority = com.infocaller.app.data.local.entity.QueuePriority.HIGH)
-                    withTimeoutOrNull(15000) {
+        val pendingResult = goAsync()
+        // Bound the async work: finish() is guaranteed even on timeout/cancel
+        // so we never exceed the ~10s broadcast limit (ANR/kill fix).
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                withTimeoutOrNull(9000) {
+                    val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
+                    val normalized = PhoneNumberUtils.normalize(phoneNumber)
+                    // ContentResolver on IO, not onReceive's main thread.
+                    val known = PhoneNumberUtils.getContactName(context, phoneNumber) != null
+                    if (!known) {
+                        app.enrichmentEngine.enqueue(normalized, priority = com.infocaller.app.data.local.entity.QueuePriority.HIGH)
                         app.enrichmentEngine.getEnrichment(normalized).collect { enrichment ->
                             if (enrichment != null && !enrichment.publicName.isNullOrBlank()) {
                                 showMissedCallNotification(context, phoneNumber, enrichment)
@@ -90,9 +104,10 @@ class CallBroadcastReceiver : BroadcastReceiver() {
                             }
                         }
                     }
-                } finally {
-                    pendingResult.finish()
                 }
+            } catch (_: Exception) {
+            } finally {
+                try { pendingResult.finish() } catch (_: Exception) { }
             }
         }
     }

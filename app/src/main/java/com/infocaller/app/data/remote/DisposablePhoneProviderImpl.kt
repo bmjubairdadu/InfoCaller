@@ -7,10 +7,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
-/**
- * Disposable Phone Number Provider.
- * Checks against public blacklists (e.g., ip1sms, tempophone).
- */
+
 class DisposablePhoneProviderImpl : LookupProvider {
     override val id: String = "disposable_check"
     override val name: String = "Disposable Guard"
@@ -34,7 +31,6 @@ class DisposablePhoneProviderImpl : LookupProvider {
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) return cachedSet
             val body = response.body?.string() ?: return cachedSet
-            // extract digits between quotes
             val set = Regex("\"(\\d{6,15})\"").findAll(body).map { it.groupValues[1] }.toSet()
             cachedSet = set; cacheAt = System.currentTimeMillis(); set
         } catch (_: Exception) { cachedSet }
@@ -44,7 +40,6 @@ class DisposablePhoneProviderImpl : LookupProvider {
         if (type != IdentifierType.PHONE) return@withContext null
         val cleanNumber = identifier.filter { it.isDigit() }
         val set = getSet() ?: return@withContext null
-        // check full number and suffix match for disposable prefixes
         if (set.contains(cleanNumber) || set.any { cleanNumber.endsWith(it) || it.endsWith(cleanNumber) }) {
             return@withContext PartialResult(
                 about = "Known disposable/temporary phone number.",

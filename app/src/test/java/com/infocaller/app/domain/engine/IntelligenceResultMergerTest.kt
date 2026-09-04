@@ -11,8 +11,6 @@ class IntelligenceResultMergerTest {
         val current = LookupResult(phoneNumber = "+1", name = "Local Name")
         val next = PartialResult(name = "Discovered")
         
-        // IntelligenceResultMerger.merge doesn't handle the system localName preservation (that's in CallerRepositoryImpl)
-        // but it should handle not overwriting valid names with placeholders.
         val placeholderNext = PartialResult(name = "unknown")
         val result = IntelligenceResultMerger.merge(current, placeholderNext)
         assertEquals("Local Name", result.name)

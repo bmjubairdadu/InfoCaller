@@ -4,14 +4,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 object OtpManager {
-    private val _otpFlow = MutableStateFlow<String?>(null)
-    val otpFlow = _otpFlow.asStateFlow()
+    private val _lastOtp = MutableStateFlow<String?>(null)
+    val lastOtpFlow = _lastOtp.asStateFlow()
+    val otpFlow get() = _lastOtp.asStateFlow()
 
-    fun onOtpReceived(otp: String) {
-        _otpFlow.value = otp
-    }
-
-    fun clearOtp() {
-        _otpFlow.value = null
-    }
+    suspend fun onOtpReceived(otp: String) { _lastOtp.value = otp }
+    fun onOtpReceivedSync(otp: String) { _lastOtp.value = otp }
+    fun clearOtp() { _lastOtp.value = null }
 }

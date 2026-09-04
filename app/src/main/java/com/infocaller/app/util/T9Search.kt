@@ -10,15 +10,11 @@ object T9Search {
         if (input.isEmpty()) return true
         val normalizedName = name.lowercase()
         
-        // 1. Direct contains check (numeric)
         if (normalizedName.contains(input)) return true
         
-        // 2. T9 Sequence Match
         var nameIdx = 0
         var inputIdx = 0
         
-        // This is a simplified T9 check: does the name contain a sequence that matches the input?
-        // More advanced: check start of every word in name.
         val words = normalizedName.split(" ", "-", ".")
         
         for (word in words) {

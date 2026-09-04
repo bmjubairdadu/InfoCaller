@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,14 +56,20 @@ fun RecentsScreen(
     }
     
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results -> hasPermission = results.values.all { it } }
-    // JUST-IN-TIME: READ_CALL_LOG only when Recents opened
-    LaunchedEffect(Unit) { if (!hasPermission) launcher.launch(PermissionManager.CALL_LOG_PERMISSIONS) }
+    // One-shot: never re-fire on rotation/recomposition.
+    var permissionRequested by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(hasPermission) {
+        if (!hasPermission && !permissionRequested) {
+            permissionRequested = true
+            launcher.launch(PermissionManager.CALL_LOG_PERMISSIONS)
+        }
+    }
 
     val recentCalls by viewModel.recentCalls.collectAsState()
     val simInfos by viewModel.simInfos.collectAsState()
     
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var searchQuery by remember { mutableStateOf("") }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
 
     val numbers = remember(recentCalls) { recentCalls.map { it.number }.distinct() }
     val enrichments by viewModel.getEnrichments(numbers).collectAsState(initial = emptyList())
@@ -133,6 +140,27 @@ fun RecentsScreen(
                             val enrichment = enrichmentMap[entry.number]
                             val sim = simInfos.find { it.subscriptionId.toString() == entry.subscriptionId }
                             CallLogItem(entry, enrichment = enrichment, operatorLogoPath = sim?.localLogoPath, onClick = { onNavigateToDetails(entry.number) })
+                        }
+                        if (filteredCalls.isEmpty()) {
+                            item {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        if (searchQuery.isEmpty()) "No recent calls" else "No matches for \"$searchQuery\"",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color.White
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        if (searchQuery.isEmpty()) "Calls you make or receive will appear here."
+                                        else "Try a different name or number.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = Color.White.copy(alpha = 0.6f)
+                                    )
+                                }
+                            }
                         }
                     }
                 }

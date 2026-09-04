@@ -1,6 +1,5 @@
 package com.infocaller.app.data.remote
 
-import android.util.Log
 import com.infocaller.app.domain.engine.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -11,11 +10,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/**
- * Indian UPI Intelligence Provider.
- * Derived from BulkVPALookup.
- * Uses upibankvalidator.com to resolve names associated with common UPI handles.
- */
+
 class UpiLookupProviderImpl : LookupProvider {
     override val id: String = "upi_intel"
     override val name: String = "UPI Indian Intel"
@@ -73,9 +68,11 @@ class UpiLookupProviderImpl : LookupProvider {
                 .build()
 
             val response = client.newCall(request).execute()
-            if (response.isSuccessful) {
-                val body = response.body?.string() ?: return null
-                val json = JSONObject(body)
+            val ok = response.isSuccessful
+            val body = response.body?.string()
+            response.close()
+            if (ok) {
+                val json = JSONObject(body ?: return null)
                 if (json.optBoolean("isUpiRegistered", false)) {
                     val name = json.optString("name")
                     if (name.isNotBlank() && !name.contains("error", ignoreCase = true)) {
@@ -83,8 +80,8 @@ class UpiLookupProviderImpl : LookupProvider {
                     }
                 }
             }
-        } catch (e: Exception) {
-            Log.e("UpiLookup", "Failed for $vpa", e)
+        } catch (_: Exception) {
+            null
         }
         return null
     }

@@ -60,10 +60,6 @@
 # Coil
 -keep class coil.** { *; }
 
-# Firebase
--keep class com.google.firebase.** { *; }
--keep class com.google.android.gms.** { *; }
-
 # App Specific Models
 -keep class com.infocaller.app.domain.model.** { *; }
 -keep class com.infocaller.app.data.local.entity.** { *; }

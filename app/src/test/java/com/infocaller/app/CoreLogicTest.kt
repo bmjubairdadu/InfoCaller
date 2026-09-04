@@ -35,7 +35,6 @@ class CoreLogicTest {
         
         val merged = ConfidenceEngine.merge("+8801731421373", results)
         
-        // Multi-source match should boost confidence
         assertEquals("John Doe", merged.name)
         assertTrue("Confidence should be boosted for dual match", merged.confidence > 0.5f)
     }

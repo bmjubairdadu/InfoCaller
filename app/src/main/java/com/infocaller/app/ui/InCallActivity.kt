@@ -138,15 +138,12 @@ fun InCallScreen(onDismiss: () -> Unit) {
         }
     }
 
-    // Social Profiles for UI
     val socialProfiles = remember(enrichment?.socialProfilesJson) {
         SocialUtils.fromJson(enrichment?.socialProfilesJson)
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         val imageModel = contactPhotoUri ?: enrichment?.profileImageUrl
-        // Clean professional incoming screen: true overlay when screen on(days), full-screen when pocketed.
-        // No extra app notifications here - only InfoInCallService notification handles lock-screen.
         if (imageModel != null) {
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
@@ -167,13 +164,11 @@ fun InCallScreen(onDismiss: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // 2. Caller Info Section
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.padding(top = 40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    // Pulsing Rings
                     repeat(2) { i ->
                         val ringScale by infiniteTransition.animateFloat(
                             initialValue = 1f,
@@ -261,7 +256,6 @@ fun InCallScreen(onDismiss: () -> Unit) {
                     }
                 }
                 
-                // Only used social - no generic placeholders
                 val usedSocials = remember(socialProfiles) { com.infocaller.app.util.SocialUtils.filteredUsedProfiles(socialProfiles) }
                 if (usedSocials.isNotEmpty()) {
                     Row(modifier = Modifier.padding(top = 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -271,7 +265,6 @@ fun InCallScreen(onDismiss: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(24.dp))
                 
-                // Call State
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (callState == Call.STATE_RINGING) {
                         val infiniteIconTransition = rememberInfiniteTransition(label = "IconPulse")
@@ -296,7 +289,6 @@ fun InCallScreen(onDismiss: () -> Unit) {
                 }
             }
 
-            // 3. Controls Section
             Box(modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp)) {
                 if (callState == Call.STATE_RINGING) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {

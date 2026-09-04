@@ -6,16 +6,12 @@ import com.infocaller.app.domain.model.SocialLookupStatus
 import com.infocaller.app.domain.model.SocialProfile
 import com.infocaller.app.domain.model.PhotoCandidate
 
-/**
- * Robust parser for Truecaller V2 search responses.
- * Updated based on API Reference.
- */
+
 object TruecallerParser {
 
     fun mapResult(data: JsonObject, providerId: String, providerVersion: String): PartialResult {
         val name = data.get("name")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
         val altName = data.get("altName")?.takeIf { !it.isJsonNull }?.asString
-        // truecallerjs/Benojir: image field is "image" - also try phones[0].image for some responses
         val image = data.get("image")?.takeIf { !it.isJsonNull }?.asString
             ?: data.get("avatar")?.takeIf { !it.isJsonNull }?.asString
             ?: data.get("picture")?.takeIf { !it.isJsonNull }?.asString
@@ -26,7 +22,6 @@ object TruecallerParser {
         val city = primaryAddress?.get("city")?.takeIf { !it.isJsonNull }?.asString
         val country = primaryAddress?.get("countryCode")?.takeIf { !it.isJsonNull }?.asString ?: primaryAddress?.get("country")?.takeIf { !it.isJsonNull }?.asString
         val timezone = primaryAddress?.get("timeZone")?.takeIf { !it.isJsonNull }?.asString
-        // Benojir: also parse spamInfo for deep OSINT
         val spamInfo = data.getAsJsonObject("spamInfo")
         val spamType = spamInfo?.get("spamType")?.takeIf { !it.isJsonNull }?.asString
         val spamScore = spamInfo?.get("spamScore")?.takeIf { !it.isJsonNull }?.asInt
@@ -45,11 +40,8 @@ object TruecallerParser {
                 email = id
             } else if (!service.isNullOrBlank() && !id.isNullOrBlank()) {
                 val platform = service.replaceFirstChar { it.uppercase() }
-                // Only add if it's a real handle, not a generic URL
                 if (id.contains(".") && !id.startsWith("http")) {
-                   // Handle possibly an email or other ID
                 } else if (id.startsWith("http") && id.length < 25) {
-                   // Skip generic short URLs
                 } else {
                     socialProfiles.add(SocialProfile(
                         platform = platform,

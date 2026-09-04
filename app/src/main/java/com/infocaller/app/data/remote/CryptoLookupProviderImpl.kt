@@ -30,7 +30,6 @@ class CryptoLookupProviderImpl(
         if (type != IdentifierType.CRYPTO_WALLET) return@withContext null
         
         try {
-            // Using blockchain.info for basic BTC balance/tx check
             val url = "https://blockchain.info/rawaddr/$identifier"
             val request = Request.Builder().url(url).build()
             val response = httpClient.newCall(request).execute()

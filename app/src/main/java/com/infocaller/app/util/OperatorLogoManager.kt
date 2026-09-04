@@ -106,7 +106,6 @@ class OperatorLogoManager(private val context: Context, private val database: Ap
             }
         }
 
-        // If all failed, mark as failed in DB to avoid constant retries in this session
         if (dao.getLogo(key) == null) {
             dao.insertLogo(OperatorLogoEntity(
                 operatorKey = key,

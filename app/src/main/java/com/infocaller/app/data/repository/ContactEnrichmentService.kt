@@ -17,7 +17,6 @@ import com.infocaller.app.domain.repository.CallerRepository
 import com.infocaller.app.domain.engine.PublicLookupEngine
 import com.infocaller.app.domain.engine.Capability
 import com.infocaller.app.data.local.database.AppDatabase
-import com.infocaller.app.data.local.entity.ContactBackupEntity
 import com.infocaller.app.data.local.entity.ContactEnrichmentEntity
 import com.infocaller.app.util.ContactUtils
 import com.infocaller.app.util.SocialUtils
@@ -64,7 +63,6 @@ class ContactEnrichmentService(
                 saveLookupResultToCache(lookupResult, rawContactId)
             }
             
-            // Background enrichment for missing fields
             enrichSingleContact(normalized, rawContactId)
             
             true
@@ -149,16 +147,11 @@ class ContactEnrichmentService(
 
             if (contactId == -1L) return@withContext false
 
-            // POLICY: The name you saved manually is NEVER overwritten. Only enrich if placeholder AND gap.
-            // "Everything else will change but name never change" - exactly as requested.
             val isSavedRealName = !ContactUtils.isPlaceholderName(existingName) && existingName != normalized && existingName?.filter { it.isDigit() } != normalized.filter { it.isDigit() }
-            // If real saved name exists, we NEVER touch DISPLAY_NAME regardless of gaps
             val shouldUpdateName = !isSavedRealName && com.infocaller.app.util.EnrichmentGapChecker.check(database?.enrichmentDao()?.getEnrichmentSync(normalized)).missingName && !ContactUtils.isPlaceholderName(caller.displayName) && caller.displayName != null
 
-            // For already-saved real names, we still update photo/other fields but skip NAME op entirely
-            // Log skip for diagnostics
             if (isSavedRealName && caller.displayName != null) {
-                android.util.Log.d("ContactEnrich","Name locked for $normalized ('$existingName') - skipping enrichment rename")
+                // Keep the user's own saved name; enrichment must never rename it.
             }
 
             val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(database?.enrichmentDao()?.getEnrichmentSync(normalized))
@@ -174,7 +167,6 @@ class ContactEnrichmentService(
                     .build())
             }
 
-            // Update photo ONLY if both system and enrichment lack photo (gap-aware)
             val shouldUpdatePhoto = photoId == -1L && gaps.missingPhoto && caller.photoUrl != null
             if (shouldUpdatePhoto) {
                 val bitmap = downloadBitmap(caller.photoUrl)
@@ -195,8 +187,7 @@ class ContactEnrichmentService(
                 context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ArrayList(ops))
             }
             true
-        } catch (e: Exception) {
-            Log.e("EnrichmentService", "Update contact failed for $phoneNumber", e)
+        } catch (_: Exception) {
             false
         }
     }
@@ -204,14 +195,17 @@ class ContactEnrichmentService(
     private fun downloadBitmap(url: String): Bitmap? {
         return try {
             if (url.startsWith("content://") || url.startsWith("file://")) {
-                val inputStream = context.contentResolver.openInputStream(url.toUri())
-                BitmapFactory.decodeStream(inputStream)
+                context.contentResolver.openInputStream(url.toUri())?.use { inputStream ->
+                    BitmapFactory.decodeStream(inputStream)
+                }
             } else {
                 val connection = URL(url).openConnection()
                 connection.doInput = true
-                connection.connect()
-                val input = connection.getInputStream()
-                BitmapFactory.decodeStream(input)
+                connection.connectTimeout = 10000
+                connection.readTimeout = 10000
+                connection.getInputStream().use { input ->
+                    BitmapFactory.decodeStream(input)
+                }
             }
         } catch (e: Exception) {
             null
@@ -278,7 +272,7 @@ class ContactEnrichmentService(
         val normalized = PhoneNumberUtils.normalize(phoneNumber)
         val existing = database?.enrichmentDao()?.getEnrichmentSync(normalized)
         val isStale = existing == null || existing.expiresAt < System.currentTimeMillis()
-        
+
         if (isStale) {
             val result = lookupEngine?.performLookup(normalized)
             if (result != null) {
@@ -286,36 +280,5 @@ class ContactEnrichmentService(
             }
         }
     }
-
-    suspend fun emergencyCleanup(onProgress: (String) -> Unit): Int = withContext(Dispatchers.IO) {
-        val contacts = database?.localContactDao()?.getAllContactsSync() ?: return@withContext 0
-        var cleaned = 0
-        
-        // 1. Identify stubs
-        val stubs = contacts.filter { ContactUtils.isPlaceholderName(it.displayName) }
-        onProgress("Found ${stubs.size} placeholder contacts.")
-        
-        stubs.forEachIndexed { index, contact ->
-            onProgress("Processing ${index + 1}/${stubs.size}: ${contact.displayName}")
-            
-            // 2. Deep Lookup
-            val res = lookupEngine?.performLookup(contact.phoneNumber)
-            
-            if (res?.name != null && !ContactUtils.isPlaceholderName(res.name)) {
-                // 3. Apply fix
-                val success = updateExistingContact(contact.phoneNumber, Caller(
-                    phoneNumber = contact.phoneNumber, 
-                    displayName = res.name,
-                    alias = null,
-                    photoUrl = res.imageUrl,
-                    organization = res.carrier,
-                    country = res.country,
-                    region = res.region,
-                    carrier = res.carrier
-                ))
-                if (success) cleaned++
-            }
-        }
-        cleaned
-    }
 }
+

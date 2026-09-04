@@ -14,7 +14,6 @@ data class NidEntity(
     val dob: String,
     val database: String? = null,
     val tg: String? = null,
-    // enriched fields from NID gov lookup (filled after NID+ DOB deep fetch)
     val nameEn: String? = null,
     val nameBn: String? = null,
     val fatherName: String? = null,

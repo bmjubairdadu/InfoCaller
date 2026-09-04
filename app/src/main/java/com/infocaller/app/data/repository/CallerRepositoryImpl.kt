@@ -38,7 +38,6 @@ class CallerRepositoryImpl(
     override suspend fun searchCaller(phoneNumber: String): Caller? {
         val normalized = PhoneNumberUtils.normalize(phoneNumber)
         
-        // 1. Check local DB
         val cached = callerDao.getCallerSync(normalized)
         if (cached != null) {
             val age = System.currentTimeMillis() - cached.lastUpdated
@@ -46,9 +45,6 @@ class CallerRepositoryImpl(
             if (isFresh) return cached.toDomain()
         }
 
-        // 2. Perform Foreground Scan via Orchestrator
-        // Note: For searchCaller we wait for completion to maintain backward compatibility,
-        // but new UI will use startScan directly for progressive updates.
         return try {
             val finalState = orchestrator.startScan(phoneNumber, ScanPriority.FOREGROUND).first { 
                 it is ScanState.Completed || it is ScanState.Error 
@@ -69,7 +65,6 @@ class CallerRepositoryImpl(
         val normalized = PhoneNumberUtils.normalize(result.phoneNumber)
         val existing = enrichmentDao.getEnrichmentSync(normalized)
 
-        // Skip if incoming result has no new fields beyond what we already have
         if (existing != null) {
             val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(existing)
             if (gaps.isComplete) {
@@ -81,20 +76,20 @@ class CallerRepositoryImpl(
             }
         }
 
-        // 1. Preserve local contact name if already in DB
         val existingCaller = callerDao.getCallerSync(normalized)
         val localName = existingCaller?.localName ?: findLocalNameInSystem(normalized)
 
-        // 2. Merge with existing enrichment record (field-aware: keep existing if new is blank)
         val merged = mapToEntity(result, existing)
         enrichmentDao.insertEnrichment(merged)
-        
-        // 3. Update main Caller list entry (non-destructive, NAME LOCKED if user-saved)
-        val hasRealSavedName = existingCaller?.displayName != null && !com.infocaller.app.util.ContactUtils.isPlaceholderName(existingCaller.displayName)
+
+        // localName (user's private name) is preserved; displayName tracks the public
+        // caller-ID result. Placeholders never overwrite a real saved name.
+        val incomingPublicName =
+            result.name?.takeIf { !com.infocaller.app.util.ContactUtils.isPlaceholderName(it) }
         callerDao.insertCaller(CallerEntity(
             phoneNumber = normalized,
             localName = localName,
-            displayName = if (hasRealSavedName) existingCaller?.displayName else (result.name ?: existingCaller?.displayName),
+            displayName = incomingPublicName ?: existingCaller?.displayName,
             alias = result.alternateName ?: existingCaller?.alias,
             photoUrl = result.imageUrl ?: existingCaller?.photoUrl,
             organization = result.carrier ?: existingCaller?.organization,
@@ -125,21 +120,18 @@ class CallerRepositoryImpl(
     }
 
     private fun mapToEntity(res: LookupResult, existing: ContactEnrichmentEntity?): ContactEnrichmentEntity {
-        // NAME LOCK: If existing publicName is a real saved name (not placeholder), never overwrite with enrichment name.
-        // Only update name if existing is null/placeholder (i.e., not user-saved). Use alternateName for discovered names.
         val existingHasRealSavedName = !com.infocaller.app.util.ContactUtils.isPlaceholderName(existing?.publicName) && !existing?.publicName.isNullOrBlank()
         val incomingIsValid = !res.name.isNullOrBlank() && !com.infocaller.app.util.ContactUtils.isPlaceholderName(res.name)
         val publicNameToStore = when {
-            existingHasRealSavedName -> existing?.publicName // LOCKED - never change
-            incomingIsValid -> res.name // first time fill
+            existingHasRealSavedName -> existing?.publicName
+            incomingIsValid -> res.name
             else -> existing?.publicName
         }
         val alternateToStore = when {
-            existingHasRealSavedName && incomingIsValid && res.name != existing?.publicName -> res.name // discovered name goes to alternateName
+            existingHasRealSavedName && incomingIsValid && res.name != existing?.publicName -> res.name
             res.alternateName != null -> res.alternateName
             else -> existing?.alternateName
         }
-        // Preserve existing social profiles if new list is empty
         val socialJson = if (res.socialProfiles.isNotEmpty()) SocialUtils.toJson(res.socialProfiles) else existing?.socialProfilesJson
         val photoJson = if (res.photoCandidates.isNotEmpty()) gson.toJson(res.photoCandidates) else existing?.photoCandidatesJson
         val altNamesJson = if (res.alternateNames.isNotEmpty()) gson.toJson(res.alternateNames) else existing?.alternateNamesJson
@@ -168,7 +160,7 @@ class CallerRepositoryImpl(
             photoCandidatesJson = photoJson,
             alternateNamesJson = altNamesJson,
             lastScannedAt = System.currentTimeMillis(),
-            expiresAt = System.currentTimeMillis() + (30 * 24 * 60 * 60 * 1000L) // 30 days
+            expiresAt = System.currentTimeMillis() + (30 * 24 * 60 * 60 * 1000L)
         )
     }
 

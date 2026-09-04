@@ -10,10 +10,7 @@ import okhttp3.Request
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 
-/**
- * Bridge: discovered email -> social hunt (Gravatar, GitHub, LinkedIn via dorks)
- * Free, no keys. Uses email prefix as username pivot.
- */
+
 class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvider {
     override val id = "email_social_bridge"
     override val name = "Email → Social Bridge"
@@ -31,7 +28,6 @@ class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvid
         val domain = email.substringAfter("@")
         try {
             val profiles = mutableListOf<SocialProfile>()
-            // 1. Gravatar exists
             val hash = java.security.MessageDigest.getInstance("MD5").digest(email.toByteArray()).joinToString(""){"%02x".format(it)}
             val gravReq = Request.Builder().url("https://www.gravatar.com/$hash.json")
                 .header("User-Agent","Mozilla/5.0 (Linux; Android 14)").build()
@@ -49,7 +45,6 @@ class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvid
                     } catch(_:Exception){}
                 }
             }
-            // 2. GitHub username exists (prefix)
             val ghReq = Request.Builder().url("https://github.com/$prefix").header("User-Agent","Mozilla/5.0").build()
             val ghResp = try { client.newCall(ghReq).execute() } catch(_:Exception){ null }
             if (ghResp?.code == 200) {
@@ -58,7 +53,6 @@ class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvid
                     profiles.add(SocialProfile("GitHub", prefix, "https://github.com/$prefix", SocialLookupStatus.PUBLIC_MATCH))
                 }
             }
-            // 3. LinkedIn via DDG dork by email
             try {
                 val q = "\"$email\" site:linkedin.com/in"
                 val url = "https://html.duckduckgo.com/html/?q=${URLEncoder.encode(q, "UTF-8")}"

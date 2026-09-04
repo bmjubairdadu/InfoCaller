@@ -25,7 +25,6 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         
-        // Schedule periodic enrichment sync
         val workRequest = androidx.work.PeriodicWorkRequestBuilder<com.infocaller.app.worker.EnrichmentWorker>(
             1, java.util.concurrent.TimeUnit.HOURS
         )
@@ -43,7 +42,6 @@ class MainActivity : ComponentActivity() {
             workRequest
         )
 
-        // Schedule Provider Update Check
         val updateRequest = androidx.work.PeriodicWorkRequestBuilder<com.infocaller.app.worker.ProviderUpdateWorker>(
             12, java.util.concurrent.TimeUnit.HOURS
         )
@@ -59,6 +57,13 @@ class MainActivity : ComponentActivity() {
             androidx.work.ExistingPeriodicWorkPolicy.KEEP,
             updateRequest
         )
+
+        // Community DB auto-download: periodic (KEEP = idempotent) + one immediate
+        // sync only on cold start — NOT on every rotation/recreation.
+        com.infocaller.app.worker.CommunitySyncWorker.schedulePeriodic(this)
+        if (savedInstanceState == null) {
+            com.infocaller.app.worker.CommunitySyncWorker.triggerNow(this)
+        }
 
         enableEdgeToEdge()
         setContent {
@@ -77,10 +82,8 @@ class MainActivity : ComponentActivity() {
             
             val context = androidx.compose.ui.platform.LocalContext.current
             
-            // Initialize theme from prefs once
             LaunchedEffect(Unit) {
                 val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-                // Default to Dark (true) if not set
                 val stored = if (prefs.contains("dark_theme")) prefs.getBoolean("dark_theme", true) else true
                 viewModel.setThemeMode(stored, context)
             }
@@ -89,7 +92,7 @@ class MainActivity : ComponentActivity() {
             val darkTheme = when (themeMode) {
                 true -> true
                 false -> false
-                null -> true // Default to dark if state is somehow null
+                null -> true
             }
 
             InfoCallerTheme(darkTheme = darkTheme) {
@@ -128,11 +131,9 @@ class MainActivity : ComponentActivity() {
 
 
     private fun makeCall(viewModel: CallerViewModel, phoneNumber: String) {
-        // JUST-IN-TIME: CALL_PHONE only when user taps call
         val needCall = com.infocaller.app.permissions.PermissionManager.DIALER_PERMISSIONS
         if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(this, needCall)) {
             androidx.core.app.ActivityCompat.requestPermissions(this, needCall, 1001)
-            // Store pending number to retry after grant
             getSharedPreferences("pending_call", MODE_PRIVATE).edit().putString("number", phoneNumber).apply()
             return
         }
@@ -150,11 +151,9 @@ class MainActivity : ComponentActivity() {
             val pending = getSharedPreferences("pending_call", MODE_PRIVATE).getString("number", null)
             if (!pending.isNullOrBlank()) {
                 getSharedPreferences("pending_call", MODE_PRIVATE).edit().remove("number").apply()
-                // retry call
                 lifecycleScope.launch {
-                    val vm = (application as com.infocaller.app.InfoCallerApplication).let { null } // placeholder
+                    val vm = (application as com.infocaller.app.InfoCallerApplication).let { null }
                 }
-                // Simpler: place directly
                 SimManager.placeCall(this, pending)
             }
         }

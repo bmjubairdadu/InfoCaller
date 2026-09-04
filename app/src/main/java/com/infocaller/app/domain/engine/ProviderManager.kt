@@ -9,20 +9,6 @@ class ProviderManager(private val context: Context) {
     private val _providers = MutableStateFlow<List<LookupProvider>>(emptyList())
     val providers = _providers.asStateFlow()
 
-    private val _registryUrl = MutableStateFlow("https://registry.infocaller.app/manifest.json")
-    val registryUrl = _registryUrl.asStateFlow()
-
-    private val _backendUrl = MutableStateFlow("")
-    val backendUrl = _backendUrl.asStateFlow()
-
-    fun setRegistryUrl(url: String) {
-        _registryUrl.value = url
-    }
-
-    fun setBackendUrl(url: String) {
-        _backendUrl.value = url
-    }
-
     private val healthStats = mutableMapOf<String, ProviderHealth>()
 
     fun registerProviders(newProviders: List<LookupProvider>) {
@@ -41,17 +27,8 @@ class ProviderManager(private val context: Context) {
         registerProviders(listOf(provider))
     }
 
-    fun getHealthyProviders(): List<LookupProvider> {
-        return _providers.value.filter { 
-            val health = healthStats[it.id]
-            health == null || (health.status != ProviderStatus.BROKEN && 
-                             health.status != ProviderStatus.DISABLED &&
-                             health.status != ProviderStatus.UNAVAILABLE &&
-                             health.status != ProviderStatus.NOT_CONFIGURED &&
-                             // Exclude DEGRADED after 10 failures, RATE_LIMITED is temporarily kept but deprioritized
-                             !(health.status == ProviderStatus.DEGRADED && health.failureCount >= 10) &&
-                             health.status != ProviderStatus.RATE_LIMITED)
-        }
+    fun getAllProviders(): List<LookupProvider> {
+        return _providers.value
     }
 
     fun updateStatus(providerId: String, status: ProviderStatus) {

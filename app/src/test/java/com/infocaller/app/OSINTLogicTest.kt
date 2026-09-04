@@ -12,13 +12,11 @@ class OSINTLogicTest {
         val phoneNumber = "+8801700000000"
         val dorks = OSINTManager.generateExtendedDorkLinks(phoneNumber)
         
-        // Verify presence of new dorks
         val titles = dorks.map { it.title }
         assertTrue("IntelligenceX should be in dorks", titles.contains("IntelligenceX"))
         assertTrue("Dehashed should be in dorks", titles.contains("Dehashed (Preview)"))
         assertTrue("EPIOS should be in dorks", titles.contains("EPIOS (Google OSINT)"))
         
-        // Verify URL encoding
         val intelx = dorks.find { it.title == "IntelligenceX" }
         assertTrue("URL should contain encoded number", intelx?.url?.contains("%2B8801700000000") == true)
     }

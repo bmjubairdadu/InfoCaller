@@ -7,17 +7,13 @@ import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * DuckDuckGo OSINT Provider - 100% FREE, no key, no captcha.
- * Uses html.duckduckgo.com/html (lite) which is not blocked like google.com
- * Techniques: phoneinfoga + theHarvester + holehe inspired dorks
- */
+
 class DuckDuckGoSearchProviderImpl : LookupProvider {
     override val id = "duckduckgo_osint"
     override val name = "DuckDuckGo OSINT"
     override val version = "1.0.0"
     override val capabilities = setOf(Capability.PUBLIC_SEARCH, Capability.SOCIAL_MATCH, Capability.PUBLIC_PROFILE)
-    override val priority = 44 // above google (40) - DDG more reliable free
+    override val priority = 44
     override val costClass = CostClass.FREE
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? {
@@ -29,7 +25,6 @@ class DuckDuckGoSearchProviderImpl : LookupProvider {
             IdentifierType.DOMAIN -> "site:$identifier"
             else -> return null
         }
-        // For phone also add social dorks for deeper pivot
         val finalQ = if (type == IdentifierType.PHONE) "$query site:facebook.com OR site:instagram.com OR site:linkedin.com OR site:truecaller.com"
                      else query
         val url = "https://html.duckduckgo.com/html/?q=${URLEncoder.encode(finalQ, StandardCharsets.UTF_8.toString())}"
@@ -42,7 +37,6 @@ class DuckDuckGoSearchProviderImpl : LookupProvider {
             val titles = doc.select("h2.result__title a, a.result__a").map { it.text() to it.attr("href") }
             val snippets = doc.select(".result__snippet").map { it.text() }
 
-            // Try to extract name from first result title like "John Doe | Facebook"
             for ((title, href) in titles.take(5)) {
                 if (href.isBlank()) continue
                 val isSocial = href.contains("facebook.com") || href.contains("instagram.com") || href.contains("linkedin.com")
@@ -62,7 +56,6 @@ class DuckDuckGoSearchProviderImpl : LookupProvider {
                         )
                     }
                 }
-                // Name attempt
                 if (title.contains("|") || title.contains("-")) {
                     val potential = title.split("|","-","·",":").first().trim()
                     val notGeneric = !potential.contains("Facebook",true) && !potential.contains("Instagram",true)
@@ -73,7 +66,6 @@ class DuckDuckGoSearchProviderImpl : LookupProvider {
                     }
                 }
             }
-            // Fallback: if we got any results at all, return dork signal
             if (titles.isNotEmpty()) {
                 return PartialResult(about = "Public mentions: ${titles.take(2).joinToString(" | ") { it.first }.take(180)}", confidence = 0.4f, source = name, providerId = id, providerVersion = version)
             }

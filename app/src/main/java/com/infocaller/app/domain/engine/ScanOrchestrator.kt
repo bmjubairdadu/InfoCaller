@@ -12,8 +12,8 @@ import java.util.concurrent.ConcurrentHashMap
 
 enum class ScanPriority {
     BACKGROUND,
-    FOREGROUND, // manual list click
-    CRITICAL    // dialer / search box
+    FOREGROUND,
+    CRITICAL
 }
 
 sealed class ScanState {
@@ -24,10 +24,7 @@ sealed class ScanState {
     data class Error(val phoneNumber: String, val message: String) : ScanState()
 }
 
-/**
- * Centralized Orchestrator for all scanning operations.
- * Handles priority, cancellation, and persistent provider-level resumption.
- */
+
 class ScanOrchestrator(
     private val lookupEngine: IPublicLookupEngine,
     private val imageAnalysisService: IImageAnalysisService,
@@ -46,18 +43,19 @@ class ScanOrchestrator(
     private val _isPriorityScanActive = MutableStateFlow(false)
     val isPriorityScanActive = _isPriorityScanActive.asStateFlow()
 
-    private val pausedBackgroundScans = mutableSetOf<String>()
+    private val pausedBackgroundScans =
+        java.util.Collections.synchronizedSet(mutableSetOf<String>())
     
     data class ScanJobInfo(val job: Job, val priority: ScanPriority)
 
-    /**
-     * Starts a scan for a given identifier with a specific priority and type.
-     */
+    
     override fun startScan(identifier: String, priority: ScanPriority, type: String): Flow<ScanState> {
         val normalized = if (type == IdentifierType.PHONE) PhoneNumberUtils.normalize(identifier) else identifier
-        
-        val existing = activeScans[normalized]
-        if (existing?.job?.isActive == true) {
+
+        // Atomic check-and-reserve to prevent duplicate concurrent scans.
+        val placeholder = ScanJobInfo(Job(), priority)
+        val raced = activeScans.putIfAbsent(normalized, placeholder)
+        if (raced?.job?.isActive == true) {
             return scanStates.map { it[normalized] ?: ScanState.Idle }
                 .filter { it !is ScanState.Idle }
         }
@@ -75,7 +73,6 @@ class ScanOrchestrator(
                 
                 var currentResult = LookupResult(phoneNumber = normalized)
                 
-                // 1. Load persistent state (supports both JSON array and legacy CSV)
                 fun parseProviders(s: String?): MutableSet<String> {
                     if (s.isNullOrBlank()) return mutableSetOf()
                     return try {
@@ -95,30 +92,30 @@ class ScanOrchestrator(
                 val completedProviders = parseProviders(savedState?.completedProviders)
                 val satisfiedCaps = parseCaps(savedState?.satisfiedCapabilities)
 
-                // 2. Perform Lookup with independent capability tracking
                 lookupEngine.performLookup(
                     normalized, 
                     type = type,
                     alreadyCompletedProviders = completedProviders,
                     requiredCapabilities = Capability.entries.toSet() - satisfiedCaps
                 ) { partial ->
-                    // Mark provider as completed
                     partial.providerId?.let { id ->
                         completedProviders.add(id)
                     }
 
-                    // Analyze and keep ONLY clearly visible face photos
                     val analyzedPartials = if (partial.photoCandidates.isNotEmpty()) {
-                        val analyzed = partial.photoCandidates.map { imageAnalysisService.analyze(it) }
-                        // Face-only filter: face detected, confidence & coverage thresholds, min quality
+                        // Cap + timeout photo analysis: slow ML must never stall the whole scan.
+                        val analyzed = partial.photoCandidates.take(4).mapNotNull { candidate ->
+                            withTimeoutOrNull(8000) {
+                                ensureActive()
+                                imageAnalysisService.analyze(candidate)
+                            }
+                        }
                         val faceClear = analyzed.filter { c ->
                             c.faceCount > 0 && c.faceConfidence >= 0.7f && c.faceCoverage >= 0.02f && c.imageQuality >= 0.01f && c.width >= 80 && c.height >= 80
                         }
                         if (faceClear.isEmpty()) {
-                            // No clear face - drop all candidates, keep PartialResult but with empty photos (will not be saved/shown)
                             partial.copy(photoCandidates = emptyList(), imageUrl = null)
                         } else {
-                            // Keep only best clear-face, sorted by faceCoverage*quality
                             val bestFirst = faceClear.sortedByDescending { it.faceCoverage * (0.5f + it.imageQuality) }
                             partial.copy(photoCandidates = bestFirst, imageUrl = bestFirst.first().url)
                         }
@@ -128,13 +125,10 @@ class ScanOrchestrator(
 
                     currentResult = IntelligenceResultMerger.merge(currentResult, analyzedPartials)
                     
-                    // SAVE IMMEDIATELY to avoid losing data and for better UX
                     resultSaver?.invoke(currentResult)
 
-                    // Update satisfied capabilities locally for next providers in this run
                     updateLocalSatisfiedCaps(currentResult, satisfiedCaps)
 
-                    // Persist state after each provider to support resumption (JSON arrays, safe for commas)
                     val gson = com.google.gson.Gson()
                     scanJobDao.insertState(ScanJobStateEntity(
                         phoneNumber = normalized,
@@ -147,7 +141,6 @@ class ScanOrchestrator(
                     updateGlobalState(normalized, progress)
                 }
                 
-                // If we finished successfully, clear the state
                 scanJobDao.deleteState(normalized)
                 
                 val finalState = ScanState.Completed(normalized, currentResult)
@@ -164,10 +157,14 @@ class ScanOrchestrator(
                 scanFlow.value = errorState
                 updateGlobalState(normalized, errorState)
             } finally {
-                activeScans.remove(normalized)
+                // Remove only if our own job entry is still present (compare by Job instance
+                // since ScanJobInfo is a data class whose placeholder Job() never equals ours).
+                val thisJob = coroutineContext[Job]
+                val current = activeScans[normalized]
+                if (current?.job === thisJob) activeScans.remove(normalized)
                 if (priority == ScanPriority.CRITICAL || priority == ScanPriority.FOREGROUND) {
-                    val stillHasPriority = activeScans.values.any { 
-                        (it.priority == ScanPriority.CRITICAL || it.priority == ScanPriority.FOREGROUND) && it.job.isActive 
+                    val stillHasPriority = activeScans.values.any {
+                        (it.priority == ScanPriority.CRITICAL || it.priority == ScanPriority.FOREGROUND) && it.job.isActive
                     }
                     if (!stillHasPriority) {
                         _isPriorityScanActive.value = false
@@ -176,7 +173,8 @@ class ScanOrchestrator(
                 }
             }
         }
-        
+
+        // Replace the placeholder reservation with the real job.
         activeScans[normalized] = ScanJobInfo(job, priority)
         return scanFlow
     }
@@ -186,7 +184,6 @@ class ScanOrchestrator(
             satisfied.add(Capability.PUBLIC_SEARCH)
         }
         if (res.imageUrl != null) {
-            // Only mark photo satisfied if we have a high-confidence candidate
             if (res.photoCandidates.any { it.faceCount > 0 && it.faceConfidence > 0.8f }) {
                 satisfied.add(Capability.PROFILE_PHOTO)
             }
@@ -207,16 +204,21 @@ class ScanOrchestrator(
     }
 
     private fun resumeBackgroundScans() {
-        val hasActiveForeground = activeScans.values.any { 
-            (it.priority == ScanPriority.CRITICAL || it.priority == ScanPriority.FOREGROUND) && it.job.isActive 
+        val hasActiveForeground = activeScans.values.any {
+            (it.priority == ScanPriority.CRITICAL || it.priority == ScanPriority.FOREGROUND) && it.job.isActive
         }
-        
-        if (!hasActiveForeground && pausedBackgroundScans.isNotEmpty()) {
-            val toResume = pausedBackgroundScans.toList()
-            pausedBackgroundScans.clear()
+
+        if (!hasActiveForeground) {
+            // Atomic drain of the synchronized set — no lost or duplicate resumes.
+            val toResume: List<String> = synchronized(pausedBackgroundScans) {
+                if (pausedBackgroundScans.isEmpty()) return
+                val copy = pausedBackgroundScans.toList()
+                pausedBackgroundScans.clear()
+                copy
+            }
             toResume.forEach { number ->
                 scope.launch {
-                    startScan(number, ScanPriority.BACKGROUND).collect()
+                    try { startScan(number, ScanPriority.BACKGROUND).collect() } catch (_: Exception) { }
                 }
             }
         }
@@ -225,15 +227,33 @@ class ScanOrchestrator(
     private fun updateGlobalState(number: String, state: ScanState) {
         val currentMap = _scanStates.value.toMutableMap()
         currentMap[number] = state
+        // Bound map growth: terminal states for old numbers are dropped.
+        if (currentMap.size > MAX_TRACKED_STATES) {
+            val terminal = currentMap.entries
+                .filter { it.value is ScanState.Completed || it.value is ScanState.Error || it.value is ScanState.Idle }
+                .map { it.key }
+                .take(currentMap.size - MAX_TRACKED_STATES)
+            terminal.forEach { currentMap.remove(it) }
+        }
         _scanStates.value = currentMap
     }
 
+    companion object {
+        private const val MAX_TRACKED_STATES = 100
+    }
+
     override fun getScanState(identifier: String): ScanState {
-        return _scanStates.value[identifier] ?: ScanState.Idle
+        val normalized = try { PhoneNumberUtils.normalize(identifier) } catch (_: Exception) { identifier }
+        return _scanStates.value[normalized] ?: _scanStates.value[identifier] ?: ScanState.Idle
     }
 
     override fun cancelScan(identifier: String) {
-        activeScans[identifier]?.job?.cancel()
-        activeScans.remove(identifier)
+        val normalized = try { PhoneNumberUtils.normalize(identifier) } catch (_: Exception) { identifier }
+        activeScans[normalized]?.job?.cancel()
+        activeScans.remove(normalized)
+        if (normalized != identifier) {
+            activeScans[identifier]?.job?.cancel()
+            activeScans.remove(identifier)
+        }
     }
 }

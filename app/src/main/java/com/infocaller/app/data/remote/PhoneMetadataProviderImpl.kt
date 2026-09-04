@@ -15,7 +15,6 @@ class PhoneMetadataProviderImpl(private val context: Context) : PhoneMetadataPro
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? {
         if (type != IdentifierType.PHONE) return null
         val normalized = identifier
-        // Use libphonenumber geocoder/carrier properly - country from number, not hardcoded
         val regionCode = PhoneNumberUtils.getCountryCode(normalized)
         val country = when (regionCode) {
             "BD" -> "Bangladesh"; "IN" -> "India"; "PK" -> "Pakistan"; "US" -> "United States"

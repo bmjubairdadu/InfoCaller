@@ -18,24 +18,20 @@ class ProviderUpdateWorker(
         val providerManager = app.providerManager
         
         try {
-            val registryUrl = providerManager.registryUrl.value
-            if (registryUrl.isBlank()) {
-                Log.d("ProviderUpdate", "Registry URL not configured, skipping update check.")
-                return@withContext Result.success()
-            }
+            // Use GitHub raw URL for provider registry manifest
+            val registryUrl = "https://raw.githubusercontent.com/bmjubairdadu/InfoCaller-Provider-Registry/main/manifest.json"
             
             Log.d("ProviderUpdate", "Checking for provider updates at $registryUrl")
             
-            // Step 1: Fetch Registry from URL
             val response = app.registryService.fetchManifest(registryUrl)
             if (response.isSuccessful) {
                 val manifest = response.body()
                 Log.d("ProviderUpdate", "Successfully fetched manifest: $manifest")
                 
-                // Step 2: Update Backend URL if specified in manifest
+                // Backend URL is no longer used - all providers work without backend
                 manifest?.get("backend_url")?.asString?.let { url ->
                     if (url.isNotBlank()) {
-                        providerManager.setBackendUrl(url)
+                        Log.d("ProviderUpdate", "Backend URL found in manifest but not used: $url")
                     }
                 }
             } else {

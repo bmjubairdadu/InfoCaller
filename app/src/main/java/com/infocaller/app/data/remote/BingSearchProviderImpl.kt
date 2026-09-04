@@ -5,10 +5,7 @@ import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * Bing OSINT Provider - 100% FREE mirror for Google, often less blocked.
- * Uses bing.com/search
- */
+
 class BingSearchProviderImpl : LookupProvider {
     override val id = "bing_osint"
     override val name = "Bing OSINT"

@@ -8,7 +8,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,7 +20,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogProperties
 import com.infocaller.app.ui.theme.Background
 import com.infocaller.app.ui.theme.GradientEnd
 import com.infocaller.app.ui.theme.GradientStart
@@ -31,75 +29,6 @@ import com.infocaller.app.util.SimManager
 
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
-import androidx.compose.ui.graphics.vector.rememberVectorPainter
-
-@Composable
-fun SimSelectionDialog(
-    phoneNumber: String,
-    onSimSelected: (SimInfo) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val context = LocalContext.current
-    var simInfos by remember { mutableStateOf<List<SimInfo>>(emptyList()) }
-    LaunchedEffect(Unit) {
-        simInfos = SimManager.getSimInfos(context)
-    }
-    
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Select SIM to call",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
-                IconButton(onClick = onDismiss) {
-                    Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White.copy(alpha = 0.7f))
-                }
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier.padding(top = 8.dp, bottom = 8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                simInfos.forEach { sim ->
-                    SimRow(
-                        sim = sim,
-                        phoneNumber = phoneNumber,
-                        onClick = {
-                            onSimSelected(sim)
-                        }
-                    )
-                    if (sim != simInfos.last()) {
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.1f),
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
-                    }
-                }
-                
-                if (simInfos.isEmpty()) {
-                    Text(
-                        text = "No SIM cards found",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(16.dp)
-                    )
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {},
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    )
-}
 
 @Composable
 private fun SimRow(

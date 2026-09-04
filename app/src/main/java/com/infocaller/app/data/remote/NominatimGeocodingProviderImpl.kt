@@ -1,6 +1,5 @@
 package com.infocaller.app.data.remote
 
-import android.util.Log
 import com.infocaller.app.domain.engine.*
 import com.google.gson.Gson
 import com.google.gson.JsonObject
@@ -9,10 +8,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/**
- * Nominatim Geocoding Provider (OpenStreetMap).
- * Refines location names into structured addresses.
- */
+
 class NominatimGeocodingProviderImpl(
     private val httpClient: OkHttpClient,
     private val gson: Gson
@@ -21,19 +17,14 @@ class NominatimGeocodingProviderImpl(
     override val name: String = "OpenStreetMap Intel"
     override val version: String = "1.0.0"
     override val capabilities: Set<Capability> = setOf(Capability.CITY, Capability.COUNTRY)
-    override val priority: Int = 10 // Low priority, used for refinement
+    override val priority: Int = 10
     override val costClass: CostClass = CostClass.FREE
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
-        // This provider expects a LOCATION string, but the LookupEngine usually passes PHONE/EMAIL.
-        // We can pivot if we have a city/country from other results.
-        // For now, it won't be called directly by the engine unless we add a LOCATION identifier type.
         null
     }
 
-    /**
-     * Specialized method to refine an existing result.
-     */
+    
     suspend fun refineLocation(city: String?, country: String?): PartialResult? = withContext(Dispatchers.IO) {
         if (city.isNullOrBlank() && country.isNullOrBlank()) return@withContext null
         
@@ -64,8 +55,8 @@ class NominatimGeocodingProviderImpl(
                     )
                 }
             }
-        } catch (e: Exception) {
-            Log.e("Nominatim", "Geocoding failed for $q", e)
+        } catch (_: Exception) {
+            null
         }
         null
     }

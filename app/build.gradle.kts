@@ -11,10 +11,9 @@ val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
-val apifyToken1 = localProperties.getProperty("apify.token.1") ?: ""
-val apifyToken2 = localProperties.getProperty("apify.token.2") ?: ""
-val tcClientSecret = localProperties.getProperty("truecaller.client.secret") ?: ""
 val brandfetchClientId = localProperties.getProperty("brandfetch.client.id") ?: ""
+val supabaseUrl = localProperties.getProperty("supabase.url") ?: ""
+val supabaseAnonKey = localProperties.getProperty("supabase.anon.key") ?: ""
 
 android {
     namespace = "com.infocaller.app"
@@ -23,7 +22,7 @@ android {
     defaultConfig {
         applicationId = "com.infocaller.app"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 2
         versionName = "2.0.0"
 
@@ -36,16 +35,14 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "APIFY_TOKEN_1", "\"$apifyToken1\"")
-            buildConfigField("String", "APIFY_TOKEN_2", "\"$apifyToken2\"")
-            buildConfigField("String", "TRUECALLER_CLIENT_SECRET", "\"$tcClientSecret\"")
             buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"$brandfetchClientId\"")
+            buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+            buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
         }
         release {
-            buildConfigField("String", "APIFY_TOKEN_1", "\"\"")
-            buildConfigField("String", "APIFY_TOKEN_2", "\"\"")
-            buildConfigField("String", "TRUECALLER_CLIENT_SECRET", "\"$tcClientSecret\"")
-            buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"$brandfetchClientId\"")
+            buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"\"")
+            buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+            buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -68,7 +65,8 @@ android {
     }
     lint {
         abortOnError = false
-        checkReleaseBuilds = false
+        checkReleaseBuilds = true
+        warningsAsErrors = false
     }
 }
 
@@ -93,7 +91,6 @@ dependencies {
     implementation(libs.retrofit)
     implementation(libs.retrofit.gson)
     implementation(libs.okhttp)
-    implementation(libs.okhttp.logging)
     implementation(libs.jsoup)
     implementation(libs.libphonenumber)
     implementation("com.googlecode.libphonenumber:geocoder:2.248")
@@ -101,7 +98,6 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.androidx.savedstate.ktx)
     implementation(libs.androidx.work.runtime.ktx)
-    implementation(libs.androidx.runtime.livedata)
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.1")
 

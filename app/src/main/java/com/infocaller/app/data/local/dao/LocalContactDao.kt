@@ -13,14 +13,8 @@ interface LocalContactDao {
     @Query("SELECT * FROM local_contacts ORDER BY displayName ASC")
     fun getAllEnrichedContacts(): Flow<List<com.infocaller.app.data.local.model.EnrichedContact>>
 
-    @Query("SELECT * FROM local_contacts WHERE isSynced = 0")
-    suspend fun getUnsyncedContacts(): List<LocalContactEntity>
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertContacts(contacts: List<LocalContactEntity>)
-
-    @Update
-    suspend fun updateContact(contact: LocalContactEntity)
 
     @Query("SELECT * FROM local_contacts ORDER BY displayName ASC")
     suspend fun getAllContactsSync(): List<LocalContactEntity>

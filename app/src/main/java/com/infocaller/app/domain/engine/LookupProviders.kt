@@ -3,15 +3,13 @@ package com.infocaller.app.domain.engine
 import com.infocaller.app.domain.model.SocialProfile
 import com.infocaller.app.domain.model.PhotoCandidate
 
-/**
- * Interface for all intelligence providers in InfoCaller.
- */
+
 interface LookupProvider {
     val id: String
     val name: String
     val version: String
     val capabilities: Set<Capability>
-    val priority: Int // Higher means more preferred
+    val priority: Int
     val costClass: CostClass
     
     suspend fun lookup(
@@ -27,9 +25,7 @@ interface LookupProvider {
     ): Map<String, PartialResult> = emptyMap()
 }
 
-/**
- * Capabilities represent the types of data a provider can extract.
- */
+
 enum class Capability {
     PHONE_METADATA,
     WHATSAPP,
@@ -64,14 +60,12 @@ enum class Capability {
     DARK_WEB_MENTION
 }
 
-/**
- * CostClass allows the planner to prefer cheaper sources.
- */
+
 enum class CostClass {
-    FREE,   // Local data or built-in metadata
-    LOW,    // Authorized free API or public scraping
-    MEDIUM, // Paid API or heavily limited free tier
-    HIGH    // Expensive per-request credit usage (e.g. Apify)
+    FREE,
+    LOW,
+    MEDIUM,
+    HIGH
 }
 
 object IdentifierType {

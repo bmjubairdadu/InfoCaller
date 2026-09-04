@@ -1,6 +1,5 @@
 package com.infocaller.app.ui.screens
 
-import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -19,7 +18,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.Message
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.livedata.observeAsState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -39,10 +38,15 @@ import com.infocaller.app.ui.theme.*
 import com.infocaller.app.ui.components.InfoCallerLoading
 import com.infocaller.app.ui.viewmodel.CallerViewModel
 import com.infocaller.app.ui.dialogs.AddContactBottomSheet
+import com.infocaller.app.ui.dialogs.ContributionConsentDialog
+import com.infocaller.app.data.local.ContributionConsentStore
+import com.infocaller.app.data.local.ContributionPolicy
+import com.infocaller.app.worker.ContributionWorker
 import com.infocaller.app.permissions.PermissionManager
 import com.infocaller.app.ui.components.PermissionEmptyState
 import com.infocaller.app.util.ContactUtils
 import com.infocaller.app.util.PhoneNumberUtils
+import com.infocaller.app.util.findActivity
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -53,19 +57,45 @@ fun ContactsScreen(
     innerPadding: PaddingValues = PaddingValues(0.dp)
 ) {
     val context = LocalContext.current
-    val activity = context as Activity
+    // Never hard-cast: previews/dialogs/wrapped contexts are not Activities.
+    val activity = remember(context) { context.findActivity() }
     val scope = rememberCoroutineScope()
-    
-    var hasPermission by remember { 
-        mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.CONTACTS_PERMISSIONS)) 
+
+    // First-open contribution consent: show once while decision is UNASKED.
+    var showConsent by remember {
+        mutableStateOf(
+            ContributionConsentStore.getDecision(context) == ContributionPolicy.Decision.UNASKED
+        )
+    }
+
+    if (showConsent) {
+        ContributionConsentDialog(
+            onAccept = {
+                ContributionConsentStore.setAccepted(context)
+                showConsent = false
+                ContributionWorker.scheduleOnConsent(context)
+            },
+            onDecline = {
+                ContributionConsentStore.setDeclined(context)
+                showConsent = false
+                ContributionWorker.cancel(context)
+            }
+        )
+    }
+
+    var hasPermission by remember {
+        mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.CONTACTS_PERMISSIONS))
     }
     var showRationale by remember { mutableStateOf(value = false) }
     
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results -> hasPermission = results.values.all { it } }
-    // JUST-IN-TIME: Contacts permission only when user opens Contacts tab (not at launch)
-    LaunchedEffect(Unit) {
-        if (!hasPermission) {
-            if (PermissionManager.shouldShowRationale(activity, PermissionManager.CONTACTS_PERMISSIONS)) showRationale = true
+    // One-shot: fire once per composition entry, never on rotation/recomposition.
+    var permissionRequested by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(hasPermission) {
+        if (!hasPermission && !permissionRequested) {
+            permissionRequested = true
+            val act = activity
+            if (act != null && PermissionManager.shouldShowRationale(act, PermissionManager.CONTACTS_PERMISSIONS)) showRationale = true
             else launcher.launch(PermissionManager.CONTACTS_PERMISSIONS)
         }
     }
@@ -93,16 +123,16 @@ fun ContactsScreen(
     }
 
     val enrichedContacts by viewModel.enrichedContacts.collectAsState()
-    var searchQuery by remember { mutableStateOf("") }
-    var showAddDialog by remember { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var contactToDelete by remember { mutableStateOf<LocalContactEntity?>(null) }
 
-    val syncWorkInfo by androidx.work.WorkManager.getInstance(context)
-        .getWorkInfosForUniqueWorkLiveData("ThrottledSync")
-        .observeAsState()
+    val workInfos by androidx.work.WorkManager.getInstance(context)
+        .getWorkInfosForUniqueWorkFlow("ThrottledSync")
+        .collectAsState(initial = emptyList())
     
-    val isSyncing = remember(syncWorkInfo) {
-        syncWorkInfo?.any { it.state == androidx.work.WorkInfo.State.RUNNING } == true
+    val isSyncing = remember(workInfos) {
+        workInfos.any { it.state == androidx.work.WorkInfo.State.RUNNING }
     }
     
     val filteredContacts = remember(enrichedContacts, searchQuery) {
@@ -223,12 +253,35 @@ fun ContactsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         top = 16.dp,
-                        bottom = 100.dp, 
+                        bottom = 100.dp,
                         start = 16.dp,
                         end = 16.dp
                     ),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    if (filteredContacts.isEmpty()) {
+                        item {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 48.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    if (searchQuery.isEmpty()) "No contacts yet" else "No matches for \"$searchQuery\"",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = Color.White
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    if (searchQuery.isEmpty()) "Contacts you add will appear here."
+                                    else "Try a different name or number.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                    }
                     itemsIndexed(filteredContacts, key = { _, it -> it.contact.id }) { index, enriched ->
                         var showMenu by remember { mutableStateOf(false) }
                         val contact = enriched.contact
@@ -241,7 +294,6 @@ fun ContactsScreen(
                             enter = fadeIn(tween(300)) + slideInVertically(tween(300)) { it / 4 }
                         ) {
                             Box {
-                                // Tap = CRITICAL scan (Truecaller first), excludes from book bulk scan; book resumes after (two-phase)
                                 ContactItem(
                                     enriched = enriched,
                                     modifier = Modifier.combinedClickable(

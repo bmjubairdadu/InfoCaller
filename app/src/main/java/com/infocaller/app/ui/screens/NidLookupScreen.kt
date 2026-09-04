@@ -17,7 +17,7 @@ import com.infocaller.app.ui.viewmodel.SearchUiState
 @Composable
 fun NidLookupScreen(viewModel: CallerViewModel) {
     var nid by remember { mutableStateOf("") }
-    var dob by remember { mutableStateOf("") } // YYYY-MM-DD
+    var dob by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     val searchResult by viewModel.searchResult.collectAsState()
 
@@ -60,7 +60,8 @@ fun NidLookupScreen(viewModel: CallerViewModel) {
                 }
             }
             is SearchUiState.Error -> { Text(s.message, color = MaterialTheme.colorScheme.error) }
-            else -> {}
+            is SearchUiState.Idle -> { Text("Enter an NID above to search the offline database.", style = MaterialTheme.typography.bodySmall) }
+            is SearchUiState.NotFound -> { Text("No record found for this NID.", style = MaterialTheme.typography.bodySmall) }
         }
         HorizontalDivider()
         Text("Tip: Search by phone number also auto-resolves NID/DOB from the same database.", style = MaterialTheme.typography.bodySmall)

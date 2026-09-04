@@ -5,6 +5,6 @@ data class SmsMessage(
     val address: String,
     val body: String,
     val date: Long,
-    val type: Int, // Telephony.Sms.MESSAGE_TYPE_INBOX, etc.
+    val type: Int,
     val read: Int
 )

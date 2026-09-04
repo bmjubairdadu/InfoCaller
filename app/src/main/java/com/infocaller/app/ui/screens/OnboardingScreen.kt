@@ -1,6 +1,5 @@
 package com.infocaller.app.ui.screens
 
-import android.app.Activity
 import android.app.role.RoleManager
 import android.content.Intent
 import android.os.Build
@@ -11,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -24,25 +24,30 @@ import com.infocaller.app.ui.theme.Primary
 @Composable
 fun OnboardingScreen(onComplete: () -> Unit) {
     val context = LocalContext.current
-    val activity = context as Activity
-    var currentStage by remember { mutableIntStateOf(1) }
+    // Stages: 1 = dialer role, 3 = overlay, 5 = notifications, 6 = done.
+    // Unused numbers are never produced; -1 is the permanent-denial escape hatch.
+    var currentStage by rememberSaveable { mutableIntStateOf(1) }
+    var permanentlyDenied by rememberSaveable { mutableStateOf(false) }
 
-    // Only 2 prompts at onboarding: ROLE_DIALER + optional notifications.
-    // All other runtime permissions are JUST-IN-TIME at point of use
-    // (Contacts -> ContactsScreen, Recents -> RecentsScreen, CALL_PHONE -> Dialer call,
-    //  RECORD_AUDIO -> Settings toggle, SMS -> Login OTP).
 
-    // STAGE 1: ROLE_DIALER
     val roleLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { _ ->
         if (PermissionManager.isDefaultDialer(context)) {
-            currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 5 else 6
+            currentStage = 3
+        } else {
+            // User dismissed without choosing: stay on stage 1 with guidance
+            // instead of advancing or stalling silently.
+            permanentlyDenied = false
         }
     }
 
-    // STAGE 3: overlay - user can skip; will be asked again when caller ID actually needs it
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        // Re-evaluate on return from Settings: role granted -> overlay stage;
+        // overlay granted while on stage 3 -> notifications/done.
+        if (PermissionManager.isDefaultDialer(context) && currentStage == 1) {
+            currentStage = 3
+        }
         if (currentStage == 3 && PermissionManager.canDrawOverlays(context)) {
             currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 5 else 6
         }
@@ -50,7 +55,10 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     LaunchedEffect(currentStage) { if (currentStage == 6) onComplete() }
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { _ -> currentStage = 6 }
+    ) { granted ->
+        if (granted) currentStage = 6
+        else permanentlyDenied = true
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Background).padding(24.dp), contentAlignment = Alignment.Center) {
         when (currentStage) {
@@ -58,12 +66,13 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val roleManager = context.getSystemService(RoleManager::class.java)
                     val intent = roleManager?.createRequestRoleIntent(RoleManager.ROLE_DIALER)
-                    intent?.let { roleLauncher.launch(it) }
+                    if (intent != null) roleLauncher.launch(intent)
+                    else permanentlyDenied = true
                 } else {
                     val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
                         putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
                     }
-                    roleLauncher.launch(intent)
+                    try { roleLauncher.launch(intent) } catch (_: Exception) { permanentlyDenied = true }
                 }
             }
             3 -> OverlayPermissionRationale(
@@ -71,9 +80,15 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 onSkip = { currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 5 else 6 }
             )
             5 -> NotificationRationale(onGrant = {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) notificationLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS) else onComplete()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) notificationLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS) else currentStage = 6
             })
             -1 -> BlockingErrorScreen(onOpenSettings = { PermissionManager.openAppSettings(context) })
+        }
+        if (permanentlyDenied && currentStage != -1) {
+            Spacer(modifier = Modifier.height(16.dp))
+            TextButton(onClick = { permanentlyDenied = false; currentStage = -1 }) {
+                Text("Trouble continuing? Open app settings", color = Color.White.copy(alpha = 0.7f))
+            }
         }
     }
 }
@@ -95,20 +110,9 @@ fun RoleDialerExplanation(onGrant: () -> Unit) {
     }
 }
 
-@Composable
-fun CallLogRationale(onGrant: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Call History", style = MaterialTheme.typography.headlineLarge, color = Color.White)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("Accessing your call history allows us to identify previous unknown callers and missed calls.", textAlign = TextAlign.Center, color = Color.White.copy(alpha = 0.7f))
-        Spacer(modifier = Modifier.height(32.dp))
-        Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) { Text("Enable History") }
-    }
-}
 
 @Composable
-fun NotificationRationale(onGrant: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+fun NotificationRationale(onGrant: () -> Unit) {    Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Notifications", style = MaterialTheme.typography.headlineLarge, color = Color.White)
         Spacer(modifier = Modifier.height(16.dp))
         Text(

@@ -17,7 +17,14 @@ object OperatorBrandResolver {
         "47002" to OperatorBrand("Robi", "robi", 0xFFE8107C.toInt(), "robi.com.bd"),
         "47003" to OperatorBrand("Banglalink", "banglalink", 0xFFFF8200.toInt(), "banglalink.net"),
         "47004" to OperatorBrand("Teletalk", "teletalk", 0xFF00833E.toInt(), "teletalk.com.bd"),
-        "47007" to OperatorBrand("Airtel", "airtel", 0xFFE4002B.toInt(), "bd.airtel.com")
+        "47007" to OperatorBrand("Airtel", "airtel", 0xFFE4002B.toInt(), "bd.airtel.com"),
+        // India — Airtel (404 xx) and Jio (405 xx)
+        "40410" to OperatorBrand("Airtel India", "airtel_in", 0xFFE4002B.toInt(), "airtel.in"),
+        "40445" to OperatorBrand("Airtel India", "airtel_in", 0xFFE4002B.toInt(), "airtel.in"),
+        "405840" to OperatorBrand("Jio", "jio", 0xFF0F3CC9.toInt(), "jio.com"),
+        "405857" to OperatorBrand("Jio", "jio", 0xFF0F3CC9.toInt(), "jio.com"),
+        // USA — Verizon (311 480)
+        "311480" to OperatorBrand("Verizon", "verizon", 0xFFCD040B.toInt(), "verizon.com")
     )
 
     private val nameToBrandMap = mapOf(
@@ -26,7 +33,9 @@ object OperatorBrandResolver {
         "robi" to Pair("Robi", "robi.com.bd"),
         "banglalink" to Pair("Banglalink", "banglalink.net"),
         "teletalk" to Pair("Teletalk", "teletalk.com.bd"),
-        "airtel" to Pair("Airtel", "airtel.com")
+        "airtel" to Pair("Airtel", "airtel.com"),
+        "jio" to Pair("Jio", "jio.com"),
+        "verizon" to Pair("Verizon", "verizon.com")
     )
 
     fun resolveBrand(

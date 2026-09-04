@@ -28,9 +28,7 @@ object SocialUtils {
     fun getSocialIntent(context: Context, profile: SocialProfile): Intent? {
         val url = profile.profileUrl ?: return null
         if (profile.platform.lowercase() == "whatsapp") {
-            // WhatsApp direct chat with preset hello message
             val waUri = if (url.contains("wa.me") || url.contains("api.whatsapp.com")) {
-                // inject hello text if missing
                 if (url.contains("text=")) Uri.parse(url)
                 else Uri.parse("${url}${if (url.contains("?")) "&" else "?"}text=${Uri.encode("Hello")}")
             } else Uri.parse(url)
@@ -56,7 +54,6 @@ object SocialUtils {
         try {
             context.startActivity(intent)
         } catch (e: Exception) {
-            // Fallback to browser if app not installed
             val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(profile.profileUrl))
             context.startActivity(browserIntent)
         }
@@ -81,7 +78,7 @@ object SocialUtils {
         return "https://cdn.brandfetch.io/domain/$domain?c=$id"
     }
 
-    /** Only render logos where status is CONFIRMED or PUBLIC_MATCH - filter out failed/UNKNOWN */
+    
     fun filteredUsedProfiles(profiles: List<SocialProfile>): List<SocialProfile> {
         return profiles.filter { p ->
             !p.profileUrl.isNullOrBlank() &&

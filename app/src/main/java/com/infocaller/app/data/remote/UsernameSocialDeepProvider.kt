@@ -7,10 +7,7 @@ import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/**
- * Deep username -> extra surfaces (Snapchat, TikTok, Pinterest, Medium, Quora, Behance, Reddit alt)
- * Complements Sherlock/UsernameLookup with platforms those miss, using validation patterns Sherlock uses.
- */
+
 class UsernameSocialDeepProvider(private val client: OkHttpClient) : LookupProvider {
     override val id = "username_social_deep"
     override val name = "Username Deep Social"
@@ -46,26 +43,11 @@ class UsernameSocialDeepProvider(private val client: OkHttpClient) : LookupProvi
         if (type != IdentifierType.USERNAME && type != IdentifierType.EMAIL) return@withContext null
         val username = if (type == IdentifierType.EMAIL) identifier.substringBefore("@") else identifier.trim()
         if (username.length < 3 || username.length > 30 || username.contains(" ")) return@withContext null
-        val profiles = coroutineScope {
-            sites.map { (name, tmpl) -> async {
-                val url = tmpl.format(username)
-                if (exists(url)) SocialProfile(name, username, url, SocialLookupStatus.PUBLIC_MATCH) else null
-            } }.awaitAll().filterNotNull()
+        val profiles = UsernameExistenceChecker.mapBounded(sites.toList()) { (name, tmpl) ->
+            val url = tmpl.format(username)
+            if (UsernameExistenceChecker.exists(client, url)) SocialProfile(name, username, url, SocialLookupStatus.PUBLIC_MATCH) else null
         }
         if (profiles.isEmpty()) return@withContext null
         PartialResult(socialProfiles = profiles, confidence = 0.6f, source = "Username Deep Scan (20+)", providerId = id, providerVersion = version)
     }
-
-    private fun exists(url: String): Boolean = try {
-        val req = Request.Builder().url(url).header("User-Agent","Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36").build()
-        val r = client.newCall(req).execute()
-        if (r.code != 200) return false
-        val b = r.body?.string() ?: ""
-        if (b.length < 400) return false
-        val low = b.lowercase()
-        val nf = listOf("not found","user not found","page not found","doesn't exist","404")
-        if (nf.any{ low.contains(it) && b.length < 9000 }) return false
-        if (r.request.url.toString().contains("login", true)) return false
-        true
-    } catch(_:Exception){ false }
 }

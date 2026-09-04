@@ -7,11 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 
-/**
- * Telegram Intelligence Provider.
- * Inspired by Bellingcat Telegram Checker.
- * Verifies account existence via Telegram's public web links.
- */
+
 class TelegramLookupProvider : SocialProvider {
     override val id: String = "telegram_intel"
     override val name: String = "Telegram Intelligence"
@@ -25,12 +21,16 @@ class TelegramLookupProvider : SocialProvider {
         val normalizedPhoneNumber = identifier
         val cleanNumber = normalizedPhoneNumber.filter { it.isDigit() }
         
+        // Never mark CONFIRMED from a generic page shell: t.me renders title
+        // containers for missing numbers too. Require a username/extra block.
         try {
-            // Logic: Telegram allows checking number presence via t.me links for some regions
-            // or by analyzing the "Add Contact" response in a controlled environment.
-            // Here we use the public web preview check.
             val url = "https://t.me/+$cleanNumber"
-            val doc = Jsoup.connect(url).get()
+            val doc = Jsoup.connect(url)
+                .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
+                .timeout(7000)
+                .ignoreHttpErrors(true)
+                .followRedirects(true)
+                .get()
             
             val hasProfile = doc.select("div.tgme_page_extra").isNotEmpty() || 
                              doc.select("div.tgme_page_title").isNotEmpty()

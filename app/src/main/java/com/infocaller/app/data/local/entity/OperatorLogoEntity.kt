@@ -5,7 +5,7 @@ import androidx.room.PrimaryKey
 
 @Entity(tableName = "operator_logos")
 data class OperatorLogoEntity(
-    @PrimaryKey val operatorKey: String, // MCC+MNC or NormalizedName+Country
+    @PrimaryKey val operatorKey: String,
     val operatorName: String,
     val country: String,
     val mcc: String?,

@@ -35,7 +35,6 @@ class EmailLookupProviderImpl(
         if (type != IdentifierType.EMAIL) return@withContext null
         
         val gravatarResult = fetchGravatar(identifier)
-        // Add more email providers here
         
         gravatarResult
     }
@@ -63,7 +62,6 @@ class EmailLookupProviderImpl(
                 )
             }
         } catch (_: Exception) {
-            // Silently fail
         }
         return null
     }

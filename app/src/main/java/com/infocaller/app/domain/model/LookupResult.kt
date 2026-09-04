@@ -8,7 +8,7 @@ data class LookupResult(
     val name: String? = null,
     val nameSource: String? = null,
     val alternateName: String? = null,
-    val alternateNames: Map<String, List<String>> = emptyMap(), // name -> list of providers
+    val alternateNames: Map<String, List<String>> = emptyMap(),
     val imageUrl: String? = null,
     val imageSource: String? = null,
     val photoCandidates: List<PhotoCandidate> = emptyList(),
@@ -22,7 +22,6 @@ data class LookupResult(
     val carrier: String? = null,
     val lineType: String? = null,
     
-    // Forensic Identifiers
     val plateNumber: String? = null,
     val iban: String? = null,
     val vatId: String? = null,
@@ -45,7 +44,7 @@ data class PhotoCandidate(
     val width: Int = 0,
     val height: Int = 0,
     val fileSize: Long = 0,
-    val faceCount: Int = -1, // -1 means not analyzed
+    val faceCount: Int = -1,
     val faceConfidence: Float = 0f,
     val faceCoverage: Float = 0f,
     val imageQuality: Float = 0f,

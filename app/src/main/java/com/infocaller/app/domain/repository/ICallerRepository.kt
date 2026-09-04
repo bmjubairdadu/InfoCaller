@@ -15,12 +15,10 @@ interface ICallerRepository {
     suspend fun saveLookupResult(result: LookupResult)
     suspend fun contributeCallerInfo(caller: Caller)
     
-    // Scan Orchestration
     fun getScanStates(): StateFlow<Map<String, ScanState>>
     fun startScan(identifier: String, priority: ScanPriority, type: String = IdentifierType.PHONE): Flow<ScanState>
     fun cancelScan(identifier: String)
 
-    // Blocklist
     fun getBlocklist(): Flow<List<String>>
     suspend fun blockNumber(phoneNumber: String)
     suspend fun unblockNumber(phoneNumber: String)

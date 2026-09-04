@@ -2,15 +2,18 @@ package com.infocaller.app.data.local.entity
 
 import androidx.annotation.Keep
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 @Keep
-@Entity(tableName = "contact_enrichment")
+@Entity(
+    tableName = "contact_enrichment",
+    indices = [Index(value = ["contactId"]), Index(value = ["expiresAt"])]
+)
 data class ContactEnrichmentEntity(
     @PrimaryKey val normalizedPhoneNumber: String,
     val contactId: Long? = null,
     
-    // Core Fields with Metadata
     val publicName: String? = null,
     val publicNameSource: String? = null,
     val publicNameConfidence: Float? = null,
@@ -36,7 +39,6 @@ data class ContactEnrichmentEntity(
     val whatsappStatus: String? = null,
     val telegramStatus: String? = null,
     
-    // Forensic Identifiers
     val plateNumber: String? = null,
     val plateNumberSource: String? = null,
     val iban: String? = null,

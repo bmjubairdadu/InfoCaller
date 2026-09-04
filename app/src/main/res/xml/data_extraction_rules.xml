@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup>
-        <include domain="database" />
+        <!-- Device-only caller data (plain numbers, NID records) must never leave
+             the device via cloud backup. Exclude ALL databases (present and future)
+             and every prefs file holding tokens, numbers, call state or consent. -->
+        <exclude domain="database" />
         <exclude domain="sharedpref" path="app_prefs.xml" />
+        <exclude domain="sharedpref" path="app_settings.xml" />
+        <exclude domain="sharedpref" path="owner_claim_prefs.xml" />
+        <exclude domain="sharedpref" path="community_prefs.xml" />
+        <exclude domain="sharedpref" path="contribution_consent_prefs.xml" />
+        <exclude domain="sharedpref" path="community_sync_prefs.xml" />
+        <exclude domain="sharedpref" path="call_state_prefs.xml" />
+        <exclude domain="sharedpref" path="pending_call.xml" />
+        <exclude domain="sharedpref" path="enrichment_limits.xml" />
     </cloud-backup>
 </data-extraction-rules>

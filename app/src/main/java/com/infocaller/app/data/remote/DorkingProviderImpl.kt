@@ -8,17 +8,14 @@ import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * OSINT provider using targeted dorks.
- * Strictly filters out platform home pages.
- */
+
 class DorkingProviderImpl : SearchProvider {
     override val id: String = "google_dorks_authorized"
     override val name: String = "Search Engine Intelligence"
     override val version: String = "2.0.0"
     override val capabilities: Set<Capability> = setOf(Capability.PUBLIC_SEARCH, Capability.PUBLIC_PROFILE)
     override val priority: Int = 33
-    override val costClass: CostClass = CostClass.FREE // now uses DDG free, not Google paid
+    override val costClass: CostClass = CostClass.FREE
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? {
         val dorks = when (type) {
@@ -40,7 +37,6 @@ class DorkingProviderImpl : SearchProvider {
         val foundName: String? = null
 
         val query = URLEncoder.encode(dorks.joinToString(" OR "), StandardCharsets.UTF_8.toString())
-        // DuckDuckGo HTML is free and not captcha-blocked (Google was 429)
         val url = "https://html.duckduckgo.com/html/?q=$query"
 
         try {
@@ -49,7 +45,6 @@ class DorkingProviderImpl : SearchProvider {
                 val link = res.select("a").attr("href")
                 if (link.isBlank()) return@forEach
 
-                // VALID PROFILE CHECK: Must contain a handle/id after the slash
                 if (isValidProfileLink(link)) {
                     val platform = when {
                         link.contains("facebook.com") -> "Facebook"

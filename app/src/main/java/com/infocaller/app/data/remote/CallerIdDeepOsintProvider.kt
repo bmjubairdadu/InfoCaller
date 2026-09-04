@@ -10,14 +10,7 @@ import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * Deep OSINT Caller ID - 100% FREE, no key.
- * Aggregates ideas from caller-id topic repos:
- * - Benojir/Caller-ID: search5-noneu is primary (Truecaller already handles), here we add spam + address deep pivot
- * - BioHazard786/Alternate: local privacy-first enrichment
- * - Combines truecaller web + OSINT dorks + spam reputation (like truecallerjs getSpamInfo)
- * This provider does HTTP-only OSINT that truecallerjs can't: truecaller web page scrape + spam reputation + alternate dorks
- */
+
 class CallerIdDeepOsintProvider(
     private val httpClient: OkHttpClient
 ) : LookupProvider {
@@ -34,7 +27,6 @@ class CallerIdDeepOsintProvider(
         if (digits.length < 7) return@withContext null
         val e164 = if (identifier.trim().startsWith("+")) identifier.trim() else "+$digits"
 
-        // 1) Truecaller web page scrape (public, no auth) - name fallback
         var webName: String? = null
         var webImage: String? = null
         try {
@@ -44,14 +36,12 @@ class CallerIdDeepOsintProvider(
                 .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
                 .timeout(5000).ignoreHttpErrors(true).followRedirects(true).get()
             val title = doc.select("title").text()
-            // Truecaller web title is like "John Doe - Truecaller"
             if (title.contains("- Truecaller", true)) {
                 webName = title.substringBefore("- Truecaller").trim().takeIf { it.length in 3..40 && !it.contains("Truecaller", true) }
             }
             webImage = doc.select("meta[property=og:image]").attr("content").takeIf { it.startsWith("http") }
         } catch (_: Exception) {}
 
-        // 2) Spam reputation via free dork (sumithemmadi spamInfo equivalent via web)
         var spamAbout: String? = null
         try {
             val q = "\"$e164\" spam OR scam OR fraud site:truecaller.com OR site:whocallsme.com OR site:shouldianswer"

@@ -2,14 +2,13 @@ package com.infocaller.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// InfoCaller Brand Colors - Derived from logo asset (Amber/Gold theme)
-val Primary = Color(0xFFFBBF24) // Dominant logo color
+val Primary = Color(0xFFFBBF24)
 val PrimaryVariant = Color(0xFFD97706)
 val TruecallerBlue = Color(0xFF0087FF)
-val Secondary = Color(0xFF10B981) // Emerald for contrast
-val Tertiary = Color(0xFF6366F1) // Keeping a hint of indigo for tertiary
+val Secondary = Color(0xFF10B981)
+val Tertiary = Color(0xFF6366F1)
 
-val Background = Color(0xFF000000) // True black for OLED
+val Background = Color(0xFF000000)
 val Surface = Color(0xFF121212)
 val CardBackground = Color(0xFF1E1E1E)
 

@@ -8,11 +8,7 @@ import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 
-/**
- * PHONE -> deep social via truecaller page name -> username pivot -> validated social exists
- * This bridges Phone -> Name (Truecaller web) -> Username -> Social profiles (validated)
- * Free, no key. Uses DuckDuckGo filtered search for username handles.
- */
+
 class PhoneSocialBridgeProvider(private val client: okhttp3.OkHttpClient) : LookupProvider {
     override val id = "phone_social_bridge"
     override val name = "Phone → Social Bridge"
@@ -24,7 +20,6 @@ class PhoneSocialBridgeProvider(private val client: okhttp3.OkHttpClient) : Look
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         if (type != IdentifierType.PHONE) return@withContext null
         val digits = identifier.filter{it.isDigit()}
-        // Step 1: try public name from TC web / caller deep osint already may have, but here do lightweight dork for name->username
         try {
             val q = "\"$digits\" site:facebook.com OR site:instagram.com OR site:linkedin.com OR site:tiktok.com"
             val url = "https://html.duckduckgo.com/html/?q=${URLEncoder.encode(q, Charsets.UTF_8.toString())}"

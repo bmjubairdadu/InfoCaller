@@ -11,5 +11,5 @@ interface RegistryApiService {
     @GET("api/v1/registry/lookup/{number}")
     suspend fun lookupInRegistry(
         @retrofit2.http.Path("number") number: String
-    ): Response<com.infocaller.app.data.remote.model.InfoCallerLookupResponse>
+    ): Response<com.infocaller.app.data.remote.model.RegistryLookupResponse>
 }

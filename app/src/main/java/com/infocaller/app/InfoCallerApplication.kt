@@ -18,42 +18,42 @@ class InfoCallerApplication : Application() {
     lateinit var orchestrator: IScanOrchestrator
     lateinit var enrichmentEngine: ContinuousEnrichmentEngine
     lateinit var providerManager: ProviderManager
-    lateinit var keyManager: ProviderKeyManager
     lateinit var registryService: RegistryApiService
     lateinit var operatorLogoManager: com.infocaller.app.util.OperatorLogoManager
     lateinit var truecallerAuthManager: TruecallerAuthManager
-    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
-        
+
         database = AppDatabase.getDatabase(this)
         deviceDataRepository = DeviceDataRepositoryImpl(contentResolver)
         authRepository = AuthRepositoryImpl()
-        
+
         providerManager = ProviderManager(this)
-        keyManager = ProviderKeyManager(this)
         operatorLogoManager = com.infocaller.app.util.OperatorLogoManager(this, database)
 
-        // Optional backends removed - only Apify direct + free OSINT remain. Keep stub for relay fallback if user later adds backend.
-        val currentBackendUrl = "https://api.infocaller.app/"
+        // Registry manifest is fetched with @Url — base URL must end with '/'.
         val retrofit = retrofit2.Retrofit.Builder()
-            .baseUrl(currentBackendUrl)
+            .baseUrl("https://raw.githubusercontent.com/")
             .addConverterFactory(retrofit2.converter.gson.GsonConverterFactory.create())
             .build()
 
-        val backendService: BackendApiService? = try { retrofit.create(BackendApiService::class.java) } catch(_:Exception){ null }
-        registryService = try { retrofit.create(RegistryApiService::class.java) } catch(_:Exception){ retrofit.create(RegistryApiService::class.java) }
-        truecallerAuthManager = TruecallerAuthManager(this, backendService)
+        registryService = retrofit.create(RegistryApiService::class.java)
+        truecallerAuthManager = TruecallerAuthManager(this)
         
         val commonHttpClient = okhttp3.OkHttpClient.Builder()
             .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .build()
 
         val sharedGson = com.google.gson.Gson()
         providerManager.registerProviders(listOf(
             LocalEnrichmentProvider(database.enrichmentDao()),
+            OwnerVerifiedLookupProvider(this, commonHttpClient),
             RegistryLookupProvider(registryService),
+            SupabaseCommunityProvider(this, commonHttpClient),
             LocalRegionalMetadataProvider(),
             PhoneMetadataProviderImpl(this),
             GoogleSearchProviderImpl(),
@@ -62,8 +62,6 @@ class InfoCallerApplication : Application() {
             InstagramProviderImpl(this),
             UsernameLookupProviderImpl(commonHttpClient),
             TruecallerProviderImpl(this),
-            WhatsappApifyProvider(this, backendService),
-            ApifyLookupProviderImpl(backendService),
             LeakLookupProviderImpl(),
             TelegramLookupProvider(),
             EyeconProviderImpl(this),
@@ -78,19 +76,23 @@ class InfoCallerApplication : Application() {
             HoleheEmailProviderImpl(commonHttpClient),
             WhatsMyNameProviderImpl(commonHttpClient, sharedGson),
             PhoneInfogaProviderImpl(),
-            // Free search + OSINT expanders (no keys, no captcha)
             DuckDuckGoSearchProviderImpl(),
             BingSearchProviderImpl(),
             GitHubSearchProviderImpl(commonHttpClient),
             SherlockProviderImpl(commonHttpClient),
             FreePhoneValidationProviderImpl(commonHttpClient),
             CallerIdDeepOsintProvider(commonHttpClient),
+            GrepAppCodeSearchProviderImpl(commonHttpClient),
+            SpamReputationScraperProviderImpl(),
+            XposedOrNotBreachProviderImpl(commonHttpClient),
+            AlternativeSearchScraperProviderImpl(),
+            DisifyEmailValidationProviderImpl(commonHttpClient),
+            HackerTargetDomainReconProviderImpl(commonHttpClient),
             EmailSocialBridgeProvider(commonHttpClient),
             UsernameSocialDeepProvider(commonHttpClient),
             PhoneSocialBridgeProvider(commonHttpClient),
             NameSocialVerifierProvider(),
             ImageSocialVerifierProvider(),
-            // Rich profile extractors (Osintgram / facebook-scraper / tiktok-scraper patterns - public web, no login)
             FacebookProfileProvider(),
             InstagramDeepProvider(this),
             TikTokProfileProvider()
@@ -98,7 +100,6 @@ class InfoCallerApplication : Application() {
 
         lookupEngine = PublicLookupEngine(providerManager)
         imageAnalysisService = ImageAnalysisService(this)
-        // Import 115k NID database into Room on first launch (non-blocking)
         applicationScope.launch(Dispatchers.IO) {
             com.infocaller.app.data.local.NidDatabaseImporter.importIfNeeded(this@InfoCallerApplication, database)
         }
@@ -127,8 +128,7 @@ class InfoCallerApplication : Application() {
             lookupEngine,
             orchestrator,
             repository,
-            enrichmentService,
-            backendService
+            enrichmentService
         )
 
         com.infocaller.app.service.ScanningService.start(this)

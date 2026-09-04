@@ -179,7 +179,37 @@ fun DetailsScreen(
             }
         ) { innerPadding ->
             if (phoneNumber.isBlank() && caller == null) {
-                InfoCallerLoading(isFullScreen = true, text = "Identifying...")
+                // Stale/empty navigation (deep link, process death, lost race) must not
+                // spin forever — time out with a retry path after 20s.
+                var timedOut by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(20000)
+                    timedOut = true
+                }
+                if (!timedOut) {
+                    InfoCallerLoading(isFullScreen = true, text = "Identifying...")
+                } else {
+                    Column(
+                        modifier = Modifier.padding(innerPadding).fillMaxSize().padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text("Couldn't identify this number", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "The lookup timed out or no number was provided.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = 0.6f)
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Button(onClick = {
+                            timedOut = false
+                            if (phoneNumber.isNotBlank()) viewModel.searchNumber(phoneNumber)
+                        }) { Text("Retry") }
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = onBack) { Text("Go back", color = Primary) }
+                    }
+                }
             } else {
                 Column(
                     modifier = Modifier.padding(innerPadding).fillMaxSize().verticalScroll(scrollState),
@@ -306,7 +336,6 @@ fun DetailsScreen(
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                     socialProfiles.forEach { profile -> SocialIcon(profile) }
                                 }
-                                // WhatsApp hello with fixed greeting
                                 val wa = socialProfiles.find { it.platform.lowercase()=="whatsapp" }
                                     ?: enrichment?.let { SocialUtils.filteredUsedProfiles(listOf(com.infocaller.app.domain.model.SocialProfile("WhatsApp", phoneNumber, "https://wa.me/${phoneNumber.filter{it.isDigit()}}", com.infocaller.app.domain.model.SocialLookupStatus.CONFIRMED))).firstOrNull() }
                                 Button(onClick = {
@@ -318,7 +347,6 @@ fun DetailsScreen(
                             }
                         }
                     } else {
-                        // No social yet but still offer WhatsApp hello
                         DetailSection("Connect") {
                             Button(onClick = {
                                 val intent = try { SocialUtils.whatsappHelloIntent(context, phoneNumber, "Hello") } catch(_:Exception){ android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://wa.me/${phoneNumber.filter{it.isDigit()}}?text=Hello")) }

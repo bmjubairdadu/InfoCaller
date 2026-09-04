@@ -1,4 +1,4 @@
-﻿package com.infocaller.app.util
+package com.infocaller.app.util
 
 import android.content.Context
 import android.os.Build
@@ -58,7 +58,6 @@ object SimManager {
             
             val brand = OperatorBrandResolver.resolveBrand(carrierName, displayName, mcc, mnc)
             
-            // Try to get icon from system if possible
             val iconBitmap = try {
                 subInfo.createIconBitmap(context)
             } catch (_: Exception) {
@@ -93,7 +92,6 @@ object SimManager {
 
         val action = if (hasPermission) android.content.Intent.ACTION_CALL else android.content.Intent.ACTION_DIAL
         
-        // For USSD codes, the '#' character must be encoded as '%23' to be parsed correctly in the URI
         val encodedNumber = if (phoneNumber.contains("#")) {
             phoneNumber.replace("#", android.net.Uri.encode("#"))
         } else {

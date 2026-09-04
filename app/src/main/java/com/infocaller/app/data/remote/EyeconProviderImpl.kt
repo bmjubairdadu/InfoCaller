@@ -9,10 +9,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
-/**
- * Eyecon Provider refactored according to API Reference.
- * Implements authorized name and photo lookup.
- */
+
 class EyeconProviderImpl(private val context: Context) : LookupProvider {
     override val id: String = "eyecon_authorized"
     override val name: String = "Eyecon Visual ID"
@@ -23,6 +20,8 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
@@ -30,7 +29,6 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
         val cleanNumber = identifier.replace("+", "")
         
         try {
-            // 1. Name Lookup: /app/getnames.jsp
             val nameUrl = "https://api.eyecon-app.com/app/getnames.jsp?" +
                     "cli=$cleanNumber&" +
                     "lang=en&" +
@@ -47,41 +45,30 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .build()
 
-            val nameResponse = client.newCall(nameRequest).execute()
-            val nameBody = nameResponse.body?.string() ?: ""
-            
-            // Validate HTTP status before parsing - Eyecon returns 404/403 for not-found, not JSON
-            if (!nameResponse.isSuccessful) {
-                android.util.Log.d("Eyecon", "getnames non-200: ${nameResponse.code} for $cleanNumber")
-                return@withContext null
+            val (ok, code, nameBody) = client.newCall(nameRequest).execute().use { r ->
+                Triple(r.isSuccessful, r.code, r.body?.string() ?: "")
             }
+            if (!ok) return@withContext null
             val nameBodyTrim = nameBody.trim()
             val foundName = try {
                 when {
                     nameBodyTrim.startsWith("[") -> {
                         val arr = com.google.gson.JsonParser.parseString(nameBodyTrim).asJsonArray
-                        // Eyecon returns [] for not found - check empty
                         if (arr.size() == 0) null
                         else arr.firstOrNull()?.asJsonObject?.get("name")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() && it.lowercase() != "unknown" && it.lowercase() != "null" }
                     }
                     nameBodyTrim.startsWith("{") -> {
                         val obj = com.google.gson.JsonParser.parseString(nameBodyTrim).asJsonObject
-                        // Eyecon sometimes returns {"status":"not found"} or {"name":null}
                         if (obj.has("status") && obj.get("status").asString.contains("not", true)) null
                         else obj.get("name")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() && it.lowercase() != "unknown" }
                     }
                     nameBodyTrim.isEmpty() || nameBodyTrim.equals("null", true) -> null
                     else -> null
                 }
-            } catch (e: Exception) { android.util.Log.w("Eyecon", "Parse error: ${e.message} body=${nameBodyTrim.take(200)}"); null }
+            } catch (e: Exception) { null }
 
-            // If no name found, Eyecon has no data for this number - return null instead of fake photo
-            if (foundName.isNullOrBlank()) {
-                android.util.Log.d("Eyecon", "No name for $cleanNumber - not found")
-                return@withContext null
-            }
+            if (foundName.isNullOrBlank()) return@withContext null
 
-            // 2. Photo Lookup: only construct pic URL if name exists (verified hit)
             val picUrl = "https://api.eyecon-app.com/app/pic?" +
                     "cli=$cleanNumber&" +
                     "is_callerid=true&" +
@@ -91,7 +78,6 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                     "cancelfresh=0&" +
                     "cv=3.0.0"
 
-            // Verify photo actually exists (HEAD check) - Eyecon returns placeholder otherwise
             val photoCandidates = mutableListOf<com.infocaller.app.domain.model.PhotoCandidate>()
             try {
                 val headReq = Request.Builder().url(picUrl).head().header("User-Agent","Mozilla/5.0").build()
@@ -102,7 +88,6 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                     photoCandidates.add(com.infocaller.app.domain.model.PhotoCandidate(provider = "Eyecon", url = picUrl, sourcePriority = 80, timestamp = System.currentTimeMillis()))
                 }
             } catch (_: Exception) {
-                // If HEAD fails, still add candidate but with lower confidence - DetailsScreen will validate image load
                 photoCandidates.add(com.infocaller.app.domain.model.PhotoCandidate(provider = "Eyecon", url = picUrl, sourcePriority = 40, timestamp = System.currentTimeMillis()))
             }
 
@@ -115,10 +100,7 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                 providerId = id,
                 providerVersion = version
             )
-        } catch (e: Exception) {
-            Log.e("Eyecon", "Authorized lookup failed for $identifier: ${e.message}")
-            null
-        }
+        } catch (e: Exception) { null }
     }
 
     override suspend fun bulkLookup(identifiers: List<String>, type: String, context: LookupContext): Map<String, PartialResult> = withContext(Dispatchers.IO) {

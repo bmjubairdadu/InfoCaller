@@ -74,11 +74,9 @@ object ContactUtils {
         val accounts = mutableListOf<ContactAccount>()
         val accountManager = AccountManager.get(context)
         
-        // Add default Phone account
         accounts.add(ContactAccount("Phone", "Local Device", null, null))
         
         try {
-            // Priority 1: Get from AccountManager
             val amAccounts = accountManager.accounts
             for (account in amAccounts) {
                 val type = account.type.lowercase()
@@ -92,13 +90,11 @@ object ContactUtils {
                     else -> name
                 }
                 
-                // Only add if it's likely a writable contacts account
                 if (type == "com.google" || type.contains("sim") || type.contains("telecom") || type.contains("android.contacts")) {
                     accounts.add(ContactAccount(name, label, name, account.type))
                 }
             }
             
-            // Priority 2: Query Contacts Provider for Raw SIM accounts if not found
             if (accounts.none { it.typeLabel.contains("SIM") }) {
                 val cursor = context.contentResolver.query(
                     ContactsContract.RawContacts.CONTENT_URI,

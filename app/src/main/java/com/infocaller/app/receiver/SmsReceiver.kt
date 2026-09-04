@@ -21,7 +21,7 @@ class SmsReceiver : BroadcastReceiver() {
                 val sender = message.displayOriginatingAddress ?: ""
                 val otp = extractOtp(body)
                 if (otp != null) {
-                    OtpManager.onOtpReceived(otp)
+                    OtpManager.onOtpReceivedSync(otp)
                 }
                 identifySmsSender(context, sender)
             }
@@ -29,14 +29,16 @@ class SmsReceiver : BroadcastReceiver() {
     }
 
     private fun identifySmsSender(context: Context, phoneNumber: String) {
-        val app = context.applicationContext as InfoCallerApplication
-        val normalized = PhoneNumberUtils.normalize(phoneNumber)
-        if (PhoneNumberUtils.getContactName(context, phoneNumber) == null) {
-            val pendingResult = goAsync()
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    app.enrichmentEngine.enqueue(normalized, priority = QueuePriority.HIGH)
-                    withTimeoutOrNull(15000) {
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                withTimeoutOrNull(9000) {
+                    val app = context.applicationContext as InfoCallerApplication
+                    val normalized = PhoneNumberUtils.normalize(phoneNumber)
+                    // ContentResolver on IO, not onReceive's main thread (ANR fix).
+                    val known = PhoneNumberUtils.getContactName(context, phoneNumber) != null
+                    if (!known) {
+                        app.enrichmentEngine.enqueue(normalized, priority = QueuePriority.HIGH)
                         app.enrichmentEngine.getEnrichment(normalized).collect { enrichment ->
                             if (enrichment != null && !enrichment.publicName.isNullOrBlank()) {
                                 showSmsNotification(context, phoneNumber, enrichment)
@@ -44,17 +46,19 @@ class SmsReceiver : BroadcastReceiver() {
                             }
                         }
                     }
-                } catch (e: Exception) {
-                } finally {
-                    pendingResult.finish()
                 }
+            } catch (_: Exception) {
+            } finally {
+                try { pendingResult.finish() } catch (_: Exception) { }
             }
         }
     }
 
     private fun showSmsNotification(context: Context, number: String, enrichment: com.infocaller.app.data.local.entity.ContactEnrichmentEntity) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
         val channelId = "sms_identification"
-        val manager = context.getSystemService(android.app.NotificationManager::class.java)
+        val manager = context.getSystemService(android.app.NotificationManager::class.java) ?: return
         val channel = android.app.NotificationChannel(channelId, "SMS Identification", android.app.NotificationManager.IMPORTANCE_DEFAULT)
         manager.createNotificationChannel(channel)
         val displayName = enrichment.publicName ?: number

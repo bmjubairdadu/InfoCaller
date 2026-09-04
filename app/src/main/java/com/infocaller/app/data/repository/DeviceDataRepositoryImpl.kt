@@ -84,7 +84,6 @@ class DeviceDataRepositoryImpl(
                 }
             }
         } catch (e: Exception) {
-            // Handle error
         }
         return calls
     }
@@ -155,7 +154,6 @@ class DeviceDataRepositoryImpl(
                 }
             }
         } catch (e: Exception) {
-            // Handle error
         }
         return contacts
     }
@@ -235,7 +233,6 @@ class DeviceDataRepositoryImpl(
                 }
             }
         } catch (e: Exception) {
-            // Handle error
         }
         return messages
     }

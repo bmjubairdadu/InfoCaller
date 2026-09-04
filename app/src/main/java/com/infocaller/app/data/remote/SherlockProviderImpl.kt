@@ -8,22 +8,15 @@ import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/**
- * Sherlock/Maigret-inspired provider - 100% FREE
- * Uses WhatsMyName + Sherlock logic but expanded to 30 top sites locally without python.
- * Expands the old 5-site UsernameLookup to 40+ sites using Sherlock's site list:
- * checks presence via HTTP 200 + content heuristics (replaces sherlock's data.json)
- * Free, no API key. Inspired by sherlock-project/sherlock + soxoj/maigret
- */
+
 class SherlockProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "sherlock_osint"
     override val name = "Sherlock Username Scan"
     override val version = "2.0.0"
     override val capabilities = setOf(Capability.SOCIAL_MATCH, Capability.SERVICE_PRESENCE, Capability.PUBLIC_PROFILE)
-    override val priority = 72 // above UsernameLookup (75? keep slightly lower to let faster one run first, but we expand sites)
+    override val priority = 72
     override val costClass = CostClass.FREE
 
-    // Top 40 Sherlock/maigret sites that are fast and allow unauth GET
     private val sites = mapOf(
         "GitHub" to "https://github.com/%s",
         "Reddit" to "https://www.reddit.com/user/%s",
@@ -72,28 +65,11 @@ class SherlockProviderImpl(private val httpClient: OkHttpClient) : LookupProvide
         val username = if (type == IdentifierType.EMAIL) identifier.substringBefore("@") else identifier.trim()
         if (username.length < 3 || username.length > 30 || username.contains(" ")) return@withContext null
 
-        val profiles = coroutineScope {
-            sites.map { (name, tmpl) ->
-                async {
-                    val url = tmpl.format(username)
-                    if (checkSite(url)) SocialProfile(name, username, url, SocialLookupStatus.PUBLIC_MATCH) else null
-                }
-            }.awaitAll().filterNotNull()
+        val profiles = UsernameExistenceChecker.mapBounded(sites.toList()) { (name, tmpl) ->
+            val url = tmpl.format(username)
+            if (UsernameExistenceChecker.exists(httpClient, url)) SocialProfile(name, username, url, SocialLookupStatus.PUBLIC_MATCH) else null
         }
         if (profiles.isEmpty()) return@withContext null
         return@withContext PartialResult(socialProfiles = profiles, confidence = 0.72f, source = "Sherlock Scan (40 sites)", providerId = id, providerVersion = version)
     }
-
-    private fun checkSite(url: String): Boolean = try {
-        val req = Request.Builder().url(url).header("User-Agent","Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36").build()
-        val resp = httpClient.newCall(req).execute()
-        if (resp.code != 200) return false
-        val body = resp.body?.string() ?: ""
-        if (body.length < 400) return false
-        val lower = body.lowercase()
-        val nf = listOf("page not found","not found","doesn't exist","user not found","profile not found","404", "this account doesn")
-        if (nf.any { lower.contains(it) && body.length < 8000 }) return false
-        if (resp.request.url.toString().contains("login", true)) return false
-        true
-    } catch (_: Exception){ false }
 }

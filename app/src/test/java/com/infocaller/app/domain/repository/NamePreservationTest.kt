@@ -25,9 +25,9 @@ class NamePreservationTest {
     
     private class SimpleMockOrchestrator : IScanOrchestrator {
         override val scanStates: StateFlow<Map<String, ScanState>> = MutableStateFlow(emptyMap())
-        override fun startScan(phoneNumber: String, priority: ScanPriority): Flow<ScanState> = kotlinx.coroutines.flow.emptyFlow()
-        override fun getScanState(phoneNumber: String): ScanState = ScanState.Idle
-        override fun cancelScan(phoneNumber: String) {}
+        override fun startScan(identifier: String, priority: ScanPriority, type: String): Flow<ScanState> = kotlinx.coroutines.flow.emptyFlow()
+        override fun getScanState(identifier: String): ScanState = ScanState.Idle
+        override fun cancelScan(identifier: String) {}
     }
     
     private class MockContextResolver : IContextResolver {

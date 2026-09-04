@@ -48,8 +48,7 @@ class PriorityOrchestratorTest {
 
     @Before
     fun setup() {
-        // Use a real scope for simplicity in this final test pass
-        orchestrator = ScanOrchestrator(lookupEngine, imageAnalysisService, scanJobDao, CoroutineScope(Dispatchers.Unconfined))
+        orchestrator = ScanOrchestrator(lookupEngine, imageAnalysisService, scanJobDao, null, CoroutineScope(Dispatchers.Unconfined))
     }
 
     @Test

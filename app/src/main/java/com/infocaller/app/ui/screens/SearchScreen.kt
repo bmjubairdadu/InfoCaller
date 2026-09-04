@@ -21,7 +21,7 @@ import com.infocaller.app.ui.viewmodel.SearchUiState
 @Composable
 fun SearchScreen(
     viewModel: CallerViewModel,
-    onNavigateToDetails: () -> Unit,
+    onNavigateToDetails: (String) -> Unit,
     onBack: () -> Unit,
 ) {
     val uiState by viewModel.searchResult.collectAsState()
@@ -56,7 +56,10 @@ fun SearchScreen(
                             .padding(24.dp)
                             .fillMaxWidth()
                             .glassy(radius = 24.dp)
-                            .clickable { onNavigateToDetails() },
+                            .clickable {
+                                val number = caller.phoneNumber
+                                if (number.isNotBlank()) onNavigateToDetails(number)
+                            },
                         colors = CardDefaults.cardColors(containerColor = Color.Transparent)
                     ) {
                         Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {

@@ -36,10 +36,7 @@ class TikTokProfileProvider : LookupProvider {
             val ogImage = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf{ it.startsWith("http") }
             val name = ogTitle?.substringBefore("(")?.trim()?.takeIf{ it.length in 2..50 && !it.contains("TikTok", true) }
             val bio = ogDesc?.take(400)
-            if (ogTitle.isNullOrBlank() && !doc.html().contains("@$username", true)) {
-                Log.d("TikTokProfile","no profile $username")
-                return@withContext null
-            }
+            if (ogTitle.isNullOrBlank() && !doc.html().contains("@$username", true)) return@withContext null
             if (doc.text().contains("Couldn't find this account", true)) return@withContext null
             val social = listOf(com.infocaller.app.domain.model.SocialProfile("TikTok", username, url, com.infocaller.app.domain.model.SocialLookupStatus.PUBLIC_MATCH))
             return@withContext PartialResult(
@@ -50,6 +47,6 @@ class TikTokProfileProvider : LookupProvider {
                 socialProfiles = social,
                 confidence = 0.6f, source = name, providerId = id, providerVersion = version
             )
-        } catch(e: Exception){ Log.w("TikTokProfile","fail $username: ${e.message}"); null }
+        } catch (_: Exception) { null }
     }
 }

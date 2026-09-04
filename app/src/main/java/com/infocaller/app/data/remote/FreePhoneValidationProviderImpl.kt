@@ -33,7 +33,6 @@ class FreePhoneValidationProviderImpl(private val httpClient: OkHttpClient) : Lo
         val digits = normalized.filter { it.isDigit() }
         // Try free spamcalls / callerid community via DuckDuckGo dork fallback is already covered - here add free carrier via https://phone-validator.visa.com free pattern is not real
         // Use open API: https://api.numlookupapi.com free requires key, so we use https://apilayer alternative free via libphonenumber already.
-        // Keep provider as spam-score via html.duckduckgo spam dork (free)
         try {
             val q = "\"$digits\" spam OR scam OR fraud"
             val url = "https://html.duckduckgo.com/html/?q=${java.net.URLEncoder.encode(q, "UTF-8")}"

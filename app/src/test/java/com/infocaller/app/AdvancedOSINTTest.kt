@@ -12,10 +12,8 @@ class AdvancedOSINTTest {
         val phoneNumber = "+8801700000000"
         val dorks = OSINTManager.generateExtendedDorkLinks(phoneNumber)
         
-        // Verify burner check exists
         assertTrue(dorks.any { it.title == "Burner Check (SMS Online)" })
         
-        // Verify format variations in URLs
         val burnerDork = dorks.find { it.title == "Burner Check (SMS Online)" }
         assertTrue(burnerDork?.url?.contains("8801700000000") == true)
     }

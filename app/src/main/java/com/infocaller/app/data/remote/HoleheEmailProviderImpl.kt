@@ -8,12 +8,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 
-/**
- * Holehe-inspired email OSINT provider.
- * Checks if email is registered on 30+ public services via password-reset / existence endpoints.
- * Aggregates: Gravatar + GitHub + Twitter recovery signals, Pinterest, Spotify, etc.
- * Free tier - no API key needed. Inspired by megadose/holehe (120+ sites).
- */
+
 class HoleheEmailProviderImpl(
     private val httpClient: OkHttpClient
 ) : LookupProvider {
@@ -24,7 +19,6 @@ class HoleheEmailProviderImpl(
     override val priority = 60
     override val costClass = CostClass.FREE
 
-    // lightweight presence checks that don't require POST tokens - GET 200 + content filter
     private val checks = listOf(
         Site("Gravatar", "https://en.gravatar.com/%s", "profile"),
         Site("GitHub", "https://github.com/%s", null), // username derived from email prefix
@@ -39,18 +33,17 @@ class HoleheEmailProviderImpl(
         val email = identifier.trim().lowercase()
         val prefix = email.substringBefore("@")
 
-        val profiles = coroutineScope {
-            checks.map { site ->
-                async {
-                    val target = if (site.urlTemplate.contains("%s.wordpress.com")) site.urlTemplate.format(prefix)
-                    else if (site.keyword == null) site.urlTemplate.format(prefix)
-                    else site.urlTemplate.format(email)
-                    if (exists(target, site.keyword)) SocialProfile(site.name, prefix, target, SocialLookupStatus.POSSIBLE_MATCH) else null
-                }
-            }.awaitAll().filterNotNull()
+        val profiles = UsernameExistenceChecker.mapBounded(checks) { site ->
+            val target = if (site.urlTemplate.contains("%s.wordpress.com")) site.urlTemplate.format(prefix)
+            else if (site.keyword == null) site.urlTemplate.format(prefix)
+            else site.urlTemplate.format(email)
+            // Keyword sites (Gravatar/Pinterest) need page-specific presence text;
+            // plain profile probes use the shared heuristic.
+            val found = if (site.keyword != null) keywordExists(site, target)
+            else UsernameExistenceChecker.exists(httpClient, target)
+            if (found) SocialProfile(site.name, prefix, target, SocialLookupStatus.POSSIBLE_MATCH) else null
         }
 
-        // Also try HaveIBeenPwned-style leak hint via Dehashed free dork is covered by LeakLookup, keep here as pwn hint
         if (profiles.isEmpty()) return@withContext null
         PartialResult(
             socialProfiles = profiles,
@@ -60,21 +53,14 @@ class HoleheEmailProviderImpl(
         )
     }
 
-    private fun exists(url: String, keyword: String?): Boolean {
+    private fun keywordExists(site: Site, url: String): Boolean {
         return try {
             val req = Request.Builder().url(url).header("User-Agent","Mozilla/5.0 (Linux; Android 14)").build()
-            val resp = httpClient.newCall(req).execute()
-            if (resp.code != 200) return false
-            val body = resp.body?.string() ?: ""
-            if (body.length < 300) return false
-            val lower = body.lowercase()
-            val notFound = listOf("not found","page not found","doesn't exist","no longer available","sign up","create account","login")
-            if (keyword == null) {
-                // username check: must NOT contain notFound heavily, and must have username in title/url
-                !notFound.take(2).any { lower.contains(it) && body.length < 5000 }
-            } else {
-                // email check: look for email or profile marker
-                !lower.contains("404") && body.length > 500
+            httpClient.newCall(req).execute().use { resp ->
+                if (resp.code != 200) return false
+                val body = resp.body?.string() ?: return false
+                if (body.length < 500) return false
+                !body.lowercase().contains("404")
             }
         } catch (_: Exception) { false }
     }

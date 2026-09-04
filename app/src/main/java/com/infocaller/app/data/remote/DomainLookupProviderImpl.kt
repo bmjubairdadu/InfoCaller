@@ -31,14 +31,12 @@ class DomainLookupProviderImpl(
         if (type != IdentifierType.DOMAIN) return@withContext null
         
         try {
-            // Using a public RDAP API for basic WHOIS-like data
             val url = "https://rdap.org/domain/$identifier"
             val request = Request.Builder().url(url).build()
             val response = httpClient.newCall(request).execute()
             
             if (response.isSuccessful) {
                 val json = gson.fromJson(response.body?.string(), JsonObject::class.java)
-                // RDAP JSON parsing is complex, let's extract some basic info
                 val entityNames = json.getAsJsonArray("entities")?.mapNotNull { 
                     it.asJsonObject.getAsJsonArray("vcardArray")?.get(1)?.asJsonArray?.find { field ->
                         field.asJsonArray.get(0).asString == "fn"

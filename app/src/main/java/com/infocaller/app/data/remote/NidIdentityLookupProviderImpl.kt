@@ -1,6 +1,5 @@
 package com.infocaller.app.data.remote
 
-import android.util.Log
 import com.infocaller.app.domain.engine.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -8,10 +7,7 @@ import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * NID Identity Lookup Provider.
- * Pivots from NID to full identity using public GitHub leaks and government document indices.
- */
+
 class NidIdentityLookupProviderImpl : LookupProvider {
     override val id: String = "nid_identity_pivot"
     override val name: String = "NID Intelligence"
@@ -24,7 +20,6 @@ class NidIdentityLookupProviderImpl : LookupProvider {
         if (type != IdentifierType.NID) return@withContext null
         
         try {
-            // Search for NID number in public leaks, government results, cloud drives and paste sites
             val query = "site:github.com OR site:gov.bd OR site:drive.google.com OR site:pastebin.com OR site:trello.com \"$identifier\""
             val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
             val url = "https://www.google.com/search?q=$encoded"
@@ -50,19 +45,17 @@ class NidIdentityLookupProviderImpl : LookupProvider {
                     providerVersion = version
                 )
             }
-        } catch (e: Exception) {
-            Log.e("NidLookup", "Pivot failed for $identifier", e)
+        } catch (_: Exception) {
+            null
         }
         
         return@withContext null
     }
 
     private fun extractNameFromSnippet(snippet: String, nid: String): String? {
-        // Look for common patterns: "NAME, NID", "NAME: NID", "NID - NAME"
         val words = snippet.split(" ", ",", ":", "-").map { it.trim() }
         val nidIndex = words.indexOf(nid)
         if (nidIndex != -1) {
-            // Try previous 2-3 words as name
             val nameParts = mutableListOf<String>()
             for (i in (nidIndex - 3) until nidIndex) {
                 if (i >= 0 && words[i].getOrNull(0)?.isUpperCase() == true) {
@@ -75,7 +68,6 @@ class NidIdentityLookupProviderImpl : LookupProvider {
     }
 
     private fun extractPhotoCandidate(doc: org.jsoup.nodes.Document, nid: String): String? {
-        // Look for profile-like images in results that mention the NID
         doc.select("div.g").forEach { result ->
             if (result.text().contains(nid)) {
                 val img = result.select("img").attr("src")

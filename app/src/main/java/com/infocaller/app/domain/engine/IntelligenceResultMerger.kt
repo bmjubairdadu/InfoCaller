@@ -3,33 +3,21 @@ package com.infocaller.app.domain.engine
 import com.infocaller.app.domain.model.*
 import com.infocaller.app.util.ContactUtils
 
-/**
- * IntelligenceResultMerger is responsible for progressive merging of intelligence data,
- * deduplication, photo candidate selection, and name arbitration.
- */
+
 object IntelligenceResultMerger {
 
-    /**
-     * Merges a new [PartialResult] into an existing [LookupResult].
-     * Implements progressive information merging and deduplication.
-     */
+    
     fun merge(current: LookupResult, next: PartialResult): LookupResult {
-        // 1. Merge Names (Independent)
         val (bestName, nameSource, alternateNames) = mergeNames(current, next)
 
-        // 2. Merge Photo Candidates (Independent)
         val (bestPhoto, photoSource, candidates) = mergePhotos(current, next)
 
-        // 3. Merge Social Profiles (Filtering false positives)
         val socialProfiles = mergeSocialProfiles(current.socialProfiles, next.socialProfiles)
 
-        // 4. Track Sources
         val newSources = (current.sources + (next.source ?: next.providerId ?: "unknown")).distinct()
 
-        // 5. Update Confidence (Weighted by consensus)
         var newConfidence = maxOf(current.confidence, next.confidence)
         
-        // Consensus boost if multiple providers return same name
         val nameMatchCount = alternateNames[bestName]?.size ?: 0
         if (nameMatchCount >= 2 && newConfidence < 0.95f) {
             newConfidence = minOf(1.0f, newConfidence + 0.15f)
@@ -98,26 +86,18 @@ object IntelligenceResultMerger {
             return Triple(current.imageUrl, current.imageSource, emptyList())
         }
 
-        // PHOTO SELECTION: Score and select best
         val bestCandidate = newCandidates.maxByOrNull { calculatePhotoScore(it) }
         
         return Triple(bestCandidate?.url, bestCandidate?.provider, newCandidates)
     }
 
-    /**
-     * Photo Scoring Algorithm (Revised with Real Metrics):
-     * 1. Face present (+500)
-     * 2. Face coverage (0-100)
-     * 3. Image resolution (0-100)
-     * 4. Sharpness/Laplacian Variance (0-100)
-     * 5. Trusted Provider Bonus (+50)
-     */
+    
     private fun calculatePhotoScore(c: PhotoCandidate): Float {
         var score = 0f
         
         if (c.faceCount > 0) score += 500f
         score += c.faceCoverage * 100f
-        score += c.imageQuality * 100f // Quality is sharpness
+        score += c.imageQuality * 100f
         
         val resolution = c.width * c.height
         val resolutionScore = if (resolution > 250000) 100f else (resolution / 2500f)
@@ -141,24 +121,26 @@ object IntelligenceResultMerger {
         )
 
         next.forEach { n ->
-            // 1. Evidence Check: Must have a handle or specific path
             val profileUrl = n.profileUrl?.lowercase()
             if (profileUrl == null || genericUrls.contains(profileUrl)) {
                 return@forEach
             }
             
-            // Filter out generic domain endings if they don't have a path
             if (profileUrl.endsWith(".com") || profileUrl.endsWith(".me") || profileUrl.endsWith(".org") || profileUrl.endsWith(".net")) {
                 val path = profileUrl.substringAfter(".com").substringAfter(".me").substringAfter(".org").substringAfter(".net")
                 if (path.isEmpty() || path == "/") return@forEach
             }
 
-            val existing = result.find { it.platform.lowercase() == n.platform.lowercase() }
+            // Dedup by platform + normalized URL so two distinct accounts on the
+            // same platform are both kept instead of dropping the second one.
+            val dedupKey = (n.platform.lowercase() + "|" + profileUrl).take(300)
+            val existing = result.find {
+                (it.platform.lowercase() + "|" + (it.profileUrl?.lowercase() ?: "")).take(300) == dedupKey
+            }
             if (existing == null) {
                 result.add(n)
             } else {
                 val index = result.indexOf(existing)
-                // Merge details within the same platform
                 result[index] = existing.copy(
                     username = n.username ?: existing.username,
                     displayName = n.displayName ?: existing.displayName,

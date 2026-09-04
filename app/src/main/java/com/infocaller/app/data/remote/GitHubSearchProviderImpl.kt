@@ -11,11 +11,7 @@ import okhttp3.Request
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * GitHub OSINT Provider - 100% FREE (no token for public search, rate 10/min IP).
- * Inspired by theHarvester + GHunt: search github users/commits for phone/email/username
- * Uses api.github.com/search/users?q= and search/code
- */
+
 class GitHubSearchProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "github_osint"
     override val name = "GitHub Intelligence"
@@ -46,7 +42,6 @@ class GitHubSearchProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                         SocialProfile("GitHub", login, html, SocialLookupStatus.PUBLIC_MATCH)
                     }
                     if (profiles.isEmpty()) return@withContext null
-                    // also try to fetch display name from first user
                     var displayName: String? = null
                     try {
                         val first = items[0].asJsonObject
@@ -71,11 +66,8 @@ class GitHubSearchProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                     return@withContext PartialResult(name = displayName, socialProfiles = profiles, confidence = 0.6f, source = name, providerId = id, providerVersion = version)
                 }
                 IdentifierType.PHONE -> {
-                    // Search commits/code mentioning phone digits (free but rate limited)
-                    // Lightweight: search users with phone suffix as q
                     val digits = identifier.filter { it.isDigit() }.takeLast(7)
                     if (digits.length < 7) return@withContext null
-                    // Do same user search fallback to avoid code-search abuse
                     return@withContext null
                 }
                 else -> return@withContext null

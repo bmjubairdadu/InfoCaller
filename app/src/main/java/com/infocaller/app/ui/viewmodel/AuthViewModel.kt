@@ -57,21 +57,9 @@ class AuthViewModel(
 
     val currentUser = repository.currentUser
 
-    fun login(email: String, password: String) {
-        viewModelScope.launch {
-            _authState.value = AuthUiState.Loading
-            repository.signIn(email, password).onSuccess {
-                _authState.value = AuthUiState.Authenticated(it)
-            }.onFailure {
-                _authState.value = AuthUiState.Error(it.message ?: "Login failed")
-            }
-        }
-    }
-
     fun loginWithTruecaller(displayName: String?) {
         viewModelScope.launch {
             _authState.value = AuthUiState.Loading
-            // Simulate successful authentication via Truecaller
             val user = User(
                 id = "tc-${System.currentTimeMillis()}",
                 email = null,
@@ -79,17 +67,6 @@ class AuthViewModel(
                 photoUrl = null
             )
             _authState.value = AuthUiState.Authenticated(user)
-        }
-    }
-
-    fun register(email: String, password: String) {
-        viewModelScope.launch {
-            _authState.value = AuthUiState.Loading
-            repository.signUp(email, password).onSuccess {
-                _authState.value = AuthUiState.Authenticated(it)
-            }.onFailure {
-                _authState.value = AuthUiState.Error(it.message ?: "Registration failed")
-            }
         }
     }
 

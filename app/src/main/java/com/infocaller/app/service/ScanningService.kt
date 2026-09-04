@@ -10,16 +10,19 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.infocaller.app.R
 import com.infocaller.app.InfoCallerApplication
 import com.infocaller.app.domain.engine.ScanOrchestrator
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 
 class ScanningService : Service() {
     private val serviceJob = SupervisorJob()
-    private val serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
-    
+    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
+
     private var isRunning = false
+    @Volatile private var queueJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -31,35 +34,37 @@ class ScanningService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!isRunning) {
             isRunning = true
-            // Silent foreground - no visible notification except incoming call
+            // Keep the service in foreground while the queue drains; do NOT detach after 500ms —
+            // detaching a specialUse FGS immediately violates foreground-service policy on A12+.
             startForeground(NOTIFICATION_ID, createNotification())
-            // Immediately hide - this keeps process alive without tray spam
-            serviceScope.launch {
-                delay(500)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_DETACH) else @Suppress("DEPRECATION") stopForeground(false)
-            }
             startContinuousScanning()
         }
         return START_STICKY
     }
 
     private fun startContinuousScanning() {
-        serviceScope.launch {
+        // Cancel any previous collector before starting a new one (e.g. sticky restart).
+        queueJob?.cancel()
+        queueJob = serviceScope.launch {
             val app = applicationContext as InfoCallerApplication
             val orchestrator = app.orchestrator as ScanOrchestrator
-            
+
             app.enrichmentEngine.isOnline.combine(orchestrator.isPriorityScanActive) { online, priorityActive ->
                 online && !priorityActive
             }.collect { active ->
-                if (active) {
-                    processQueueOneByOne(app, orchestrator)
-                }
+                // processQueueOneByOne loops while active; run it in a child that we cancel
+                // as soon as the condition flips so priority scans can pre-empt.
+                if (!active) return@collect
+                val child = launch { processQueueOneByOne(app, orchestrator) }
+                // Wait until inactive, then stop the child promptly.
+                app.enrichmentEngine.isOnline.combine(orchestrator.isPriorityScanActive) { o, p -> o && !p }
+                    .first { !it }
+                child.cancelAndJoin()
             }
         }
     }
 
     private suspend fun processQueueOneByOne(app: InfoCallerApplication, orchestrator: ScanOrchestrator) {
-        // Professional: respects 3.5s throttle inside processNextOneByOne; this loop is cancellation-aware
         while (app.enrichmentEngine.isOnline.value && !orchestrator.isPriorityScanActive.value) {
             try {
                 app.enrichmentEngine.processNextOneByOne()
@@ -67,7 +72,6 @@ class ScanningService : Service() {
                 Log.e("ScanningService", "Processing failed", e)
                 delay(5000)
             }
-            // Small cooperative yield; actual pacing is in engine's MIN_INTERVAL_MS
             delay(1000)
         }
     }
@@ -84,17 +88,21 @@ class ScanningService : Service() {
     }
     private fun createNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("")
-            .setContentText("")
-            .setSmallIcon(android.R.drawable.ic_menu_call)
+            .setContentTitle("Caller ID active")
+            .setContentText("Identifying incoming calls in background")
+            .setSmallIcon(R.drawable.app_logo)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setOngoing(false)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(true)
             .build()
     }
 
     override fun onDestroy() {
         isRunning = false
+        queueJob?.cancel()
+        queueJob = null
         serviceJob.cancel()
         super.onDestroy()
     }

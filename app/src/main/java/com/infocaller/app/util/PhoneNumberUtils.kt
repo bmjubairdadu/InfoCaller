@@ -3,7 +3,6 @@ package com.infocaller.app.util
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.util.Log
 import com.google.i18n.phonenumbers.PhoneNumberUtil
 import com.google.i18n.phonenumbers.Phonenumber.PhoneNumber
 import java.util.Locale
@@ -50,8 +49,8 @@ object PhoneNumberUtils {
             if (phoneUtil.isPossibleNumber(parsed)) {
                 return phoneUtil.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
             }
-        } catch (e: Exception) {
-            Log.w("PhoneNumberUtils", "Normalization failed for $trimmed")
+        } catch (_: Exception) {
+            null
         }
         
         val digitsOnly = filtered.filter { it.isDigit() }

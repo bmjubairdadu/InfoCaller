@@ -21,6 +21,8 @@ import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,8 +73,8 @@ fun DialerScreen(
     val commonUssdCodes = remember { com.infocaller.app.util.OSINTManager.getCommonUssdCodes() }
     val haptic = LocalHapticFeedback.current
     val context = androidx.compose.ui.platform.LocalContext.current
-    var showAddContactDialog by remember { mutableStateOf(false) }
-    var clipboardNumber by remember { mutableStateOf<String?>(null) }
+    var showAddContactDialog by rememberSaveable { mutableStateOf(false) }
+    var clipboardNumber by rememberSaveable { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -84,13 +86,19 @@ fun DialerScreen(
         }
     }
 
-    // Two-phase: quick Truecaller->Eyecon first, then rest + Apify last (via engine ordering)
-    // CRITICAL priority so background book scan pauses (ScanOrchestrator)
+    // Cancellable debounce: each keystroke cancels the previous pending lookup
+    // so fast typing fires exactly one search instead of one per keystroke.
+    val scope = rememberCoroutineScope()
+    var debounceJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     LaunchedEffect(textFieldValue.text) {
         val currentText = textFieldValue.text
+        debounceJob?.cancel()
         if (currentText.length >= 7 && !currentText.contains("*") && !currentText.contains("#")) {
-            kotlinx.coroutines.delay(350.milliseconds)
-            viewModel.searchNumber(currentText)
+            val job = scope.launch {
+                kotlinx.coroutines.delay(350)
+                viewModel.searchNumber(currentText)
+            }
+            debounceJob = job
         } else if (currentText.isEmpty()) {
             viewModel.clearSearch()
         }

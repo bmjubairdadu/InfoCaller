@@ -15,12 +15,9 @@ interface EnrichmentDao {
     @Query("SELECT * FROM contact_enrichment WHERE normalizedPhoneNumber = :number")
     suspend fun getEnrichmentSync(number: String): ContactEnrichmentEntity?
 
-    @Query("SELECT * FROM contact_enrichment WHERE contactId = :cid")
-    suspend fun getEnrichmentsByContactId(cid: Long): List<ContactEnrichmentEntity>
+    @Query("SELECT * FROM contact_enrichment WHERE normalizedPhoneNumber IN (:numbers)")
+    suspend fun getEnrichmentsSync(numbers: List<String>): List<ContactEnrichmentEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEnrichment(enrichment: ContactEnrichmentEntity)
-
-    @Query("SELECT * FROM contact_enrichment WHERE expiresAt < :currentTime")
-    suspend fun getExpiredEnrichments(currentTime: Long): List<ContactEnrichmentEntity>
 }

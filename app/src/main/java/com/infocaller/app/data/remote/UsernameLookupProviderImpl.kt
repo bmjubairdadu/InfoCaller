@@ -17,7 +17,6 @@ class UsernameLookupProviderImpl(
     override val priority: Int = 75
     override val costClass: CostClass = CostClass.FREE
 
-    // Expanded from 5 to include TikTok/YouTube/Telegram for free OSINT (Sherlock-style core)
     private val sites = mapOf(
         "GitHub" to "https://github.com/%s",
         "Reddit" to "https://www.reddit.com/user/%s",
@@ -40,24 +39,17 @@ class UsernameLookupProviderImpl(
     ): PartialResult? = withContext(Dispatchers.IO) {
         if (type != IdentifierType.USERNAME) return@withContext null
 
-        val profiles = mutableListOf<SocialProfile>()
-        
-        // Check sites in parallel
-        val jobs = sites.map { (name, urlTemplate) ->
-            async {
-                val url = urlTemplate.format(identifier)
-                if (checkSite(url)) {
-                    SocialProfile(
-                        platform = name,
-                        username = identifier,
-                        profileUrl = url,
-                        status = SocialLookupStatus.PUBLIC_MATCH
-                    )
-                } else null
-            }
+        val profiles = UsernameExistenceChecker.mapBounded(sites.toList()) { (name, urlTemplate) ->
+            val url = urlTemplate.format(identifier)
+            if (UsernameExistenceChecker.exists(httpClient, url)) {
+                SocialProfile(
+                    platform = name,
+                    username = identifier,
+                    profileUrl = url,
+                    status = SocialLookupStatus.PUBLIC_MATCH
+                )
+            } else null
         }
-
-        profiles.addAll(jobs.awaitAll().filterNotNull())
 
         if (profiles.isNotEmpty()) {
             PartialResult(
@@ -68,37 +60,5 @@ class UsernameLookupProviderImpl(
                 providerVersion = version
             )
         } else null
-    }
-
-    private fun checkSite(url: String): Boolean {
-        return try {
-            val request = Request.Builder().url(url).build()
-            val response = httpClient.newCall(request).execute()
-            
-            if (response.code == 200) {
-                val body = response.body?.string() ?: ""
-                val lowerBody = body.lowercase()
-                
-                // Platforms often return 200 for "Not Found" but with specific keywords
-                val notFoundIndicators = listOf(
-                    "page not found", "doesn't exist", "not a user", 
-                    "login to see", "create an account"
-                )
-                
-                if (notFoundIndicators.any { lowerBody.contains(it) }) {
-                    return false
-                }
-                
-                // Check for login redirects
-                if (response.request.url.toString().contains("login")) {
-                    return false
-                }
-                
-                return true
-            }
-            false
-        } catch (_: Exception) {
-            false
-        }
     }
 }

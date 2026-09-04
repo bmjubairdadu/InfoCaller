@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.infocaller.app.data.remote.CommunityConsent
 import com.infocaller.app.permissions.PermissionManager
 import com.infocaller.app.ui.theme.Primary
 
@@ -33,7 +34,8 @@ fun SettingsScreen(
     onBack: () -> Unit,
     viewModel: com.infocaller.app.ui.viewmodel.CallerViewModel,
     onNavigateToPrivacy: () -> Unit = {},
-    onNavigateToDetails: (String) -> Unit = {}
+    onNavigateToDetails: (String) -> Unit = {},
+    onNavigateToOwnerProfile: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
@@ -87,12 +89,10 @@ fun SettingsScreen(
                     
                     Spacer(modifier = Modifier.height(12.dp))
                     
-                    // Two-phase: CRITICAL scan (Truecaller first) -> contacts excluded, then full book re-scan
                     Button(
                         onClick = {
                             if (searchNumber.isNotBlank()) {
-                                viewModel.searchNumber(searchNumber) // CRITICAL: pauses background ScanningService
-                                // After details extracted, book scan resumes (ScanOrchestrator resumeBackgroundScans) + continue enriching book
+                                viewModel.searchNumber(searchNumber)
                                 viewModel.triggerThrottledSync(context)
                                 onNavigateToDetails(searchNumber)
                             }
@@ -173,6 +173,46 @@ fun SettingsScreen(
                         }
                     },
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                )
+            }
+
+            SettingsSection("My Caller ID") {
+                SettingsClickRow(
+                    title = "My Caller Profile",
+                    subtitle = "Verify your number, publish only your own info",
+                    icon = Icons.Default.VerifiedUser,
+                    onClick = onNavigateToOwnerProfile
+                )
+            }
+
+            SettingsSection("Community Contribution") {
+                val consentDecision = remember {
+                    mutableStateOf(
+                        com.infocaller.app.data.local.ContributionConsentStore.getDecision(context)
+                    )
+                }
+                SettingsToggleRow(
+                    title = "Contribute caller-ID info",
+                    subtitle = when (consentDecision.value) {
+                        com.infocaller.app.data.local.ContributionPolicy.Decision.ACCEPTED ->
+                            "On — one-by-one background uploads of permitted fields only"
+                        com.infocaller.app.data.local.ContributionPolicy.Decision.DECLINED ->
+                            "Off — no uploads, no background contribution"
+                        else -> "Not asked yet — open Contacts to choose"
+                    },
+                    icon = Icons.Default.GroupAdd,
+                    checked = consentDecision.value == com.infocaller.app.data.local.ContributionPolicy.Decision.ACCEPTED,
+                    onCheckedChange = { enabled ->
+                        if (enabled) {
+                            com.infocaller.app.data.local.ContributionConsentStore.setAccepted(context)
+                            consentDecision.value = com.infocaller.app.data.local.ContributionPolicy.Decision.ACCEPTED
+                            com.infocaller.app.worker.ContributionWorker.scheduleOnConsent(context)
+                        } else {
+                            com.infocaller.app.data.local.ContributionConsentStore.setDeclined(context)
+                            consentDecision.value = com.infocaller.app.data.local.ContributionPolicy.Decision.DECLINED
+                            com.infocaller.app.worker.ContributionWorker.cancel(context)
+                        }
+                    }
                 )
             }
 

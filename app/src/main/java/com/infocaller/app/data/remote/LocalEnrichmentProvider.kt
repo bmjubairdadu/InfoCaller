@@ -15,7 +15,7 @@ class LocalEnrichmentProvider(
     override val name: String = "Local Intelligence Cache"
     override val version: String = "1.0.0"
     override val capabilities: Set<Capability> = Capability.entries.toSet()
-    override val priority: Int = 1000 // Highest priority
+    override val priority: Int = 1000
     override val costClass: CostClass = CostClass.FREE
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
@@ -26,8 +26,6 @@ class LocalEnrichmentProvider(
         val isStale = entity.expiresAt < System.currentTimeMillis()
         val baseConfidence = entity.confidence?.toFloatOrNull() ?: 0.5f
         
-        // If stale, we report lower confidence so the planner continues to other providers.
-        // If fresh and high confidence, it will satisfy the capabilities.
         val finalConfidence = if (isStale) minOf(0.4f, baseConfidence) else baseConfidence
         
         PartialResult(

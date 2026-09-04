@@ -20,17 +20,13 @@ import com.infocaller.app.ui.theme.Primary
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.milliseconds
 
-/**
- * The Launcher screen is the primary entry point of the InfoCaller application.
- * It provides a branded experience with logo and app name animations.
- */
+
 @Composable
 fun InfoCallerLauncherScreen(
     onLauncherComplete: () -> Unit
 ) {
     var startAnimation by remember { mutableStateOf(false) }
     
-    // Logo entrance: Small/Transparent -> Normal/Opaque
     val logoAlpha by animateFloatAsState(
         targetValue = if (startAnimation) 1f else 0f,
         animationSpec = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
@@ -46,7 +42,6 @@ fun InfoCallerLauncherScreen(
         label = "LogoScale"
     )
 
-    // App Name: Fades in and slides up
     val textAlpha by animateFloatAsState(
         targetValue = if (startAnimation) 1f else 0f,
         animationSpec = tween(durationMillis = 1000, delayMillis = 700),
@@ -61,7 +56,6 @@ fun InfoCallerLauncherScreen(
 
     LaunchedEffect(Unit) {
         startAnimation = true
-        // Visual duration strictly adhered to approximately 2000ms
         delay(2200.milliseconds) 
         onLauncherComplete()
     }

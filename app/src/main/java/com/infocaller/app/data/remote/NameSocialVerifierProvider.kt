@@ -8,12 +8,7 @@ import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 
-/**
- * For social APIs without direct phone lookup (Facebook, Instagram, etc.):
- * 1) Take discovered name (from Truecaller/NID/WhatsApp) and search DDG/bing for that name + phone
- * 2) For each social hit, verify detail match (name words overlap or image URL present)
- * 3) If match, copy profile link as verified result.
- */
+
 class NameSocialVerifierProvider : LookupProvider {
     override val id = "name_social_verifier"
     override val name = "Name→Social Match"
@@ -49,7 +44,6 @@ class NameSocialVerifierProvider : LookupProvider {
                     platform.contains("github") -> "GitHub"
                     else -> platform
                 }
-                // profile path must exist
                 if (href.length < platform.length + 5) continue
                 if (!href.contains(platform)) continue
                 profiles.add(SocialProfile(label, name, href, SocialLookupStatus.PUBLIC_MATCH))

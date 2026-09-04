@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationCompat
+import com.infocaller.app.R
 import androidx.lifecycle.*
 import androidx.savedstate.*
 import coil.compose.AsyncImage
@@ -58,7 +59,7 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
 
     private lateinit var windowManager: WindowManager
     private var overlayView: ComposeView? = null
-    
+
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val store = ViewModelStore()
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
@@ -67,7 +68,7 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
     override val viewModelStore: ViewModelStore = store
     override val savedStateRegistry: SavedStateRegistry = savedStateRegistryController.savedStateRegistry
 
-    private val serviceJob = Job()
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
@@ -78,17 +79,16 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val phoneNumber = intent?.getStringExtra("EXTRA_PHONE_NUMBER")
-        
-        showForegroundNotification()
-        
-        if (phoneNumber != null) {
-            showOverlay(phoneNumber)
+        if (phoneNumber.isNullOrBlank()) {
+            // Sticky restart with no number: nothing to show — do not leak a foreground service.
+            stopSelf()
+            return START_NOT_STICKY
         }
-        
-        return START_STICKY
+        showForegroundNotification()
+        showOverlay(phoneNumber)
+        return START_NOT_STICKY
     }
 
-    // Silent: CallOverlayService should not add a second notification - incoming call is handled by InfoInCallService only.
     private fun showForegroundNotification() {
         val channelId = "call_overlay_channel"
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -98,13 +98,15 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
             getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
         }
         val n = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("").setContentText("")
-            .setSmallIcon(android.R.drawable.ic_menu_call)
+            .setContentTitle("Caller info")
+            .setContentText("Showing caller identification")
+            .setSmallIcon(R.drawable.app_logo)
             .setPriority(NotificationCompat.PRIORITY_MIN)
-            .setOngoing(false)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(true)
             .build()
         startForeground(1, n)
-        // Hide immediately - overlay itself is the UI, not the notification
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             try { if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_DETACH) else @Suppress("DEPRECATION") stopForeground(false) } catch(_:Exception){}
         }, 400)
@@ -158,27 +160,39 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
 
     @Composable
     private fun OverlayUI(phoneNumber: String) {
-        val repository = getRepository() 
-            ?: error("CallerRepository not initialized. Call CallOverlayService.setRepository() in Application.onCreate()")
         val context = LocalContext.current
         val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
-        val enrichmentEngine = app.enrichmentEngine
+        // Prefer the application repository; fall back to the static instance for
+        // legacy callers. Never crash composition — show a degraded card instead.
+        val repository = try { app.repository } catch (_: Exception) { getRepository() }
+        val enrichmentEngine = try { app.enrichmentEngine } catch (_: Exception) { null }
         val enrichmentService = remember { ContactEnrichmentService(context) }
-        
+
         val normalizedNumber = remember(phoneNumber) { PhoneNumberUtils.normalize(phoneNumber) }
-        val enrichment by enrichmentEngine.getEnrichment(normalizedNumber).collectAsState(initial = null)
-        
+        val enrichment by enrichmentEngine?.getEnrichment(normalizedNumber)
+            ?.collectAsState(initial = null) ?: remember { mutableStateOf(null) }.let { it as androidx.compose.runtime.State<com.infocaller.app.data.local.entity.ContactEnrichmentEntity?> }
+
         var contactName by remember { mutableStateOf<String?>(null) }
         var contactPhotoUri by remember { mutableStateOf<String?>(null) }
         var isBlocked by remember { mutableStateOf(value = false) }
 
         LaunchedEffect(normalizedNumber) {
-            contactName = PhoneNumberUtils.getContactName(context, phoneNumber)
-            contactPhotoUri = PhoneNumberUtils.getContactPhotoUri(context, phoneNumber)
-            isBlocked = repository.isBlocked(normalizedNumber)
-            
-            // Trigger enrichment
-            enrichmentEngine.enqueue(normalizedNumber, priority = com.infocaller.app.data.local.entity.QueuePriority.HIGH)
+            // ContentResolver + Room must stay off the main thread (ANR fix).
+            val (name, photo) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                PhoneNumberUtils.getContactName(context, phoneNumber) to
+                    PhoneNumberUtils.getContactPhotoUri(context, phoneNumber)
+            }
+            contactName = name
+            contactPhotoUri = photo
+            isBlocked = try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    repository?.isBlocked(normalizedNumber) == true
+                }
+            } catch (_: Exception) { false }
+
+            try {
+                enrichmentEngine?.enqueue(normalizedNumber, priority = com.infocaller.app.data.local.entity.QueuePriority.HIGH)
+            } catch (_: Exception) { }
         }
 
         val displayName = contactName ?: enrichment?.publicName ?: "Unknown Caller"
@@ -258,7 +272,6 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                                 color = Color.White.copy(alpha = 0.8f)
                             )
 
-                            // Confidence
                             if (!enrichment?.confidence.isNullOrBlank() && contactName == null) {
                                 val confidence = enrichment?.confidence?.toFloatOrNull() ?: 0f
                                 if (confidence > 0f) {
@@ -270,7 +283,6 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                                 }
                             }
 
-                            // Location
                             if (location.isNotBlank()) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Default.Place, contentDescription = null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
@@ -283,7 +295,6 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                                 }
                             }
 
-                            // Social Media Icons
                             val socialProfiles = SocialUtils.fromJson(enrichment?.socialProfilesJson)
                             if (socialProfiles.isNotEmpty()) {
                                 Row(
@@ -326,13 +337,14 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-        
+
         overlayView?.let {
             try {
                 windowManager.removeView(it)
             } catch (_: Exception) {}
         }
-        serviceJob.cancel()
+        overlayView = null
+        serviceScope.cancel()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

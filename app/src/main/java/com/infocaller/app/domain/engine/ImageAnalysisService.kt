@@ -2,7 +2,6 @@ package com.infocaller.app.domain.engine
 
 import android.content.Context
 import android.graphics.*
-import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
@@ -14,9 +13,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.InputStream
 
-/**
- * ImageAnalysisService performs face detection and computes real quality metrics.
- */
+
 class ImageAnalysisService(private val context: Context) : IImageAnalysisService {
 
     private val httpClient = OkHttpClient.Builder()
@@ -68,8 +65,7 @@ class ImageAnalysisService(private val context: Context) : IImageAnalysisService
                 imageQuality = sharpness,
                 timestamp = System.currentTimeMillis()
             )
-        } catch (e: Exception) {
-            Log.e("ImageAnalysis", "Analysis failed for ${candidate.url}: ${e.message}")
+        } catch (_: Exception) {
             candidate
         }
     }
@@ -77,10 +73,14 @@ class ImageAnalysisService(private val context: Context) : IImageAnalysisService
     private fun downloadBitmap(url: String): Bitmap? {
         return try {
             val request = Request.Builder().url(url).build()
-            val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) return null
-            val inputStream: InputStream = response.body?.byteStream() ?: return null
-            BitmapFactory.decodeStream(inputStream)
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                // Byte-stream path must close the response (string()/bytes() self-close,
+                // but byteStream() does not) or connections leak.
+                response.body?.byteStream()?.use { inputStream ->
+                    BitmapFactory.decodeStream(inputStream)
+                }
+            }
         } catch (e: Exception) {
             null
         }

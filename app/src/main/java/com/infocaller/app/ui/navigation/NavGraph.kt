@@ -6,8 +6,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
 import com.infocaller.app.ui.screens.*
 import com.infocaller.app.ui.viewmodel.AuthViewModel
 import com.infocaller.app.ui.viewmodel.CallerViewModel
@@ -75,14 +77,34 @@ fun NavGraph(
             composable("search") {
                 SearchScreen(
                     viewModel = viewModel,
-                    onNavigateToDetails = {
-                        navController.navigate("details")
+                    onNavigateToDetails = { number ->
+                        viewModel.searchNumber(number)
+                        navController.navigate("details/" + android.net.Uri.encode(number))
                     },
                     onBack = {
                         navController.popBackStack()
                     }
                 )
             }
+            composable(
+                route = "details/{number}",
+                arguments = listOf(navArgument("number") { type = NavType.StringType; nullable = true })
+            ) { backStackEntry ->
+                val argNumber = backStackEntry.arguments?.getString("number")?.let {
+                    try { android.net.Uri.decode(it) } catch (_: Exception) { it }
+                }.orEmpty()
+                androidx.compose.runtime.LaunchedEffect(argNumber) {
+                    if (argNumber.isNotBlank()) viewModel.searchNumber(argNumber)
+                }
+                DetailsScreen(
+                    viewModel = viewModel,
+                    onBack = {
+                        navController.popBackStack()
+                    },
+                    onMakeCall = onMakeCall
+                )
+            }
+            // Legacy no-arg route: kept so older in-app links do not crash.
             composable("details") {
                 DetailsScreen(
                     viewModel = viewModel,
@@ -95,20 +117,12 @@ fun NavGraph(
             composable("login") {
                 LoginScreen(
                     viewModel = authViewModel,
-                    onNavigateToRegister = { navController.navigate("register") },
-                    onLoginSuccess = { 
+                    onLoginSuccess = {
                         val nextDest = if (!isCoreOk || !isOverlayOk || !isNotificationsOk) "onboarding" else "main"
                         navController.navigate(nextDest) {
                             popUpTo("login") { inclusive = true }
                         }
                     }
-                )
-            }
-            composable("register") {
-                RegisterScreen(
-                    viewModel = authViewModel,
-                    onNavigateToLogin = { navController.navigate("login") },
-                    onRegisterSuccess = { navController.popBackStack("main", inclusive = false) }
                 )
             }
             composable("settings") {
@@ -117,9 +131,14 @@ fun NavGraph(
                     viewModel = viewModel,
                     onNavigateToPrivacy = { navController.navigate("privacy") },
                     onNavigateToDetails = { number ->
-                        navController.navigate("details")
-                    }
+                        viewModel.searchNumber(number)
+                        navController.navigate("details/" + android.net.Uri.encode(number))
+                    },
+                    onNavigateToOwnerProfile = { navController.navigate("owner_profile") }
                 )
+            }
+            composable("owner_profile") {
+                OwnerProfileScreen(onBack = { navController.popBackStack() })
             }
             composable("privacy") {
                 PrivacyPolicyScreen(onBack = { navController.popBackStack() })

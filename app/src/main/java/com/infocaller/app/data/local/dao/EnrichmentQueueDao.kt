@@ -2,7 +2,6 @@ package com.infocaller.app.data.local.dao
 
 import androidx.room.*
 import com.infocaller.app.data.local.entity.EnrichmentQueueEntity
-import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface EnrichmentQueueDao {
@@ -20,7 +19,4 @@ interface EnrichmentQueueDao {
 
     @Query("UPDATE enrichment_queue SET status = :status, lastAttemptAt = :time WHERE identifier = :id")
     suspend fun updateStatus(id: String, status: String, time: Long)
-
-    @Query("SELECT COUNT(*) FROM enrichment_queue WHERE status != 'COMPLETED'")
-    fun getPendingCount(): Flow<Int>
 }

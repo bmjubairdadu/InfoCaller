@@ -8,18 +8,14 @@ import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * Leak Intelligence Provider.
- * Inspired by SearchPhone and Hudson Rock techniques.
- * Checks for phone number presence in data breaches and infostealer logs.
- */
+
 class LeakLookupProviderImpl : LookupProvider {
     override val id: String = "leak_intel"
     override val name: String = "Leak Intelligence"
     override val version: String = "1.0.0"
     override val capabilities: Set<Capability> = setOf(Capability.INFOSTEALER_LEAK)
     override val priority: Int = 40
-    override val costClass: CostClass = CostClass.FREE // 100% free via DuckDuckGo HTML (no Google captcha)
+    override val costClass: CostClass = CostClass.FREE
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         if (type != IdentifierType.PHONE && type != IdentifierType.EMAIL && type != IdentifierType.USERNAME) return@withContext null
@@ -27,7 +23,6 @@ class LeakLookupProviderImpl : LookupProvider {
         try {
             val query = "\"$qPhone\" site:intelx.io OR site:dehashed.com OR site:breachdirectory.org OR site:pastebin.com OR site:github.com"
             val encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
-            // Use DuckDuckGo HTML to avoid Google 429/CAPTCHA (free)
             val searchUrl = "https://html.duckduckgo.com/html/?q=$encodedQuery"
 
             val doc = Jsoup.connect(searchUrl)

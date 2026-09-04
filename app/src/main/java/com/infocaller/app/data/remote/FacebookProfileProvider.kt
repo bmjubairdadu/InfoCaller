@@ -23,7 +23,6 @@ class FacebookProfileProvider : LookupProvider {
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         if (type != IdentifierType.USERNAME && type != IdentifierType.FULL_NAME) return@withContext null
-        // identifier is username or name-derived slug
         val username = identifier.trim().lowercase().replace(Regex("[^a-z0-9._-]"), "")
         if (username.length < 3 || username.length > 40) return@withContext null
         try {
@@ -37,12 +36,9 @@ class FacebookProfileProvider : LookupProvider {
             val bio = doc.selectFirst("meta[property=og:description]")?.attr("content")?.takeIf { it.isNotBlank() }
                 ?: doc.selectFirst("meta[name=description]")?.attr("content")
             var photo = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
-            // Photo may be fbcdn.net
-            if (photo != null && photo.contains("rsrc.php")) photo = null // placeholder
+            if (photo != null && photo.contains("rsrc.php")) photo = null
 
-            // Require at least title to be considered a real profile (avoid 404/locked)
             if (title.isNullOrBlank() || title.contains("not found", true) || doc.text().lowercase().contains("page not found")) return@withContext null
-            // Check blocked/private indicator
             if (doc.text().contains("content isn’t available", true) || doc.text().contains("this page isn't available", true)) return@withContext null
 
             val name = title.takeIf { it.length in 3..50 && !it.startsWith("Facebook") } ?: username
@@ -57,6 +53,6 @@ class FacebookProfileProvider : LookupProvider {
                 socialProfiles = social,
                 confidence = 0.65f, source = name, providerId = id, providerVersion = version
             )
-        } catch (e: Exception) { Log.w("FacebookProfile", "fail $username: ${e.message}"); null }
+        } catch (_: Exception) { null }
     }
 }

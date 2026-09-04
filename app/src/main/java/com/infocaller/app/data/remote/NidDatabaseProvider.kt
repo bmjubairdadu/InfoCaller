@@ -6,11 +6,7 @@ import com.infocaller.app.util.PhoneNumberUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * Local NID Database provider - backed by Room nid_records (115k BD NID+DOB).
- * Prioritized highest so incoming call resolves instantly offline.
- * Supports: PHONE -> nid/dob, NID -> phone/dob, NID+DOB combined, DOB search.
- */
+
 class NidDatabaseProvider(
     private val db: AppDatabase
 ) : LookupProvider {
@@ -18,7 +14,7 @@ class NidDatabaseProvider(
     override val name = "BD NID Database (115k)"
     override val version = "2.0.0"
     override val capabilities = setOf(Capability.DEEP_PII, Capability.PUBLIC_SEARCH, Capability.PHONE_METADATA, Capability.PUBLIC_PROFILE)
-    override val priority = 960 // highest, above local_json_db (950), so offline hit wins
+    override val priority = 960
     override val costClass = CostClass.FREE
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
@@ -27,7 +23,6 @@ class NidDatabaseProvider(
             when (type) {
                 IdentifierType.PHONE -> {
                     val digits = identifier.filter { it.isDigit() }
-                    // try exact suffix 11 digits BD number
                     val suffix = if (digits.startsWith("880")) digits.substring(3) else if (digits.length == 11) digits else digits.takeLast(11)
                     val rec = dao.findByPhone(suffix) ?: dao.findByPhone(digits.takeLast(10)) ?: return@withContext null
                     return@withContext toPartial(rec)
@@ -39,12 +34,10 @@ class NidDatabaseProvider(
                 IdentifierType.DOB -> {
                     val list = dao.findByDob(identifier.trim())
                     if (list.isEmpty()) return@withContext null
-                    // return first with NID context; also expose count via about
                     val rec = list.first()
                     return@withContext toPartial(rec).copy(about = "${toPartial(rec).about} | DOB matches ${list.size} records")
                 }
                 else -> {
-                    // Support "NID|DOB" combined identifier e.g. "19912345678901234|1992-10-11"
                     if (identifier.contains("|")) {
                         val parts = identifier.split("|")
                         val nid = parts[0].trim()
@@ -52,7 +45,6 @@ class NidDatabaseProvider(
                         val rec = dao.findByNidAndDob(nid, dob) ?: dao.findByNid(nid)
                         if (rec != null) return@withContext toPartial(rec, exactDobMatch = rec.dob == dob)
                     }
-                    // fallback: try nid
                     val rec = dao.findByNid(identifier.trim())
                     if (rec != null) return@withContext toPartial(rec)
                     return@withContext null

@@ -1,11 +1,15 @@
 package com.infocaller.app.data.local.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "local_contacts")
+@Entity(
+    tableName = "local_contacts",
+    indices = [Index(value = ["phoneNumber"]), Index(value = ["isSynced"])]
+)
 data class LocalContactEntity(
-    @PrimaryKey val id: Long, // Native System Contact ID
+    @PrimaryKey val id: Long,
     val lookupKey: String,
     val displayName: String,
     val phoneNumber: String,

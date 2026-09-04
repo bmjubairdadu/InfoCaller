@@ -15,7 +15,9 @@ import kotlinx.coroutines.flow.collectLatest
 
 class InfoInCallService : InCallService() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private var enrichmentJob: Job? = null
+    // Track one enrichment collector per call so call-waiting (2nd onCallAdded)
+    // no longer cancels the first call's observation.
+    private val enrichmentJobs = java.util.concurrent.ConcurrentHashMap<Call, Job>()
 
     @Deprecated("Use onCallEndpointChanged instead", ReplaceWith("onCallEndpointChanged"))
     override fun onCallAudioStateChanged(audioState: CallAudioState) {
@@ -26,8 +28,7 @@ class InfoInCallService : InCallService() {
 
     override fun onCallAdded(call: Call) {
         super.onCallAdded(call)
-        Log.d("InfoInCallService", "Call Added: ${call.details?.handle}")
-        
+
         CallManager.updateCall(call)
         CallManager.setInCallService(this)
         
@@ -53,41 +54,48 @@ class InfoInCallService : InCallService() {
         val number = call.details?.handle?.schemeSpecificPart ?: return
         val normalizedNumber = com.infocaller.app.util.PhoneNumberUtils.normalize(number)
         val app = application as InfoCallerApplication
-        
-        enrichmentJob?.cancel()
-        enrichmentJob = serviceScope.launch {
-            app.enrichmentEngine.getEnrichment(normalizedNumber).collectLatest { enrichment ->
-                showIncomingCallNotification(call, enrichment)
-            }
+
+        enrichmentJobs[call]?.cancel()
+        enrichmentJobs[call] = serviceScope.launch {
+            try {
+                app.enrichmentEngine.getEnrichment(normalizedNumber).collectLatest { enrichment ->
+                    // Skip if this call is gone (prevents notifying for a stale call).
+                    if (enrichmentJobs.containsKey(call)) showIncomingCallNotification(call, enrichment)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Exception) { }
         }
     }
 
     private fun showIncomingCallNotification(call: Call, enrichment: com.infocaller.app.data.local.entity.ContactEnrichmentEntity? = null) {
         val number = call.details?.handle?.schemeSpecificPart ?: "Unknown"
         val channelId = "incoming_calls"
-        val notificationManager = getSystemService(android.app.NotificationManager::class.java)
+        val notificationManager = getSystemService(android.app.NotificationManager::class.java) ?: return
 
         val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
-        val customRingtoneUri = prefs.getString("custom_ringtone_uri", null)
+        val customRingtoneUri = prefs.getString("custom_ringtone_uri", null)?.takeIf { it.startsWith("content://") }
 
+        // Channel sound is immutable after first creation — only set a validated content URI.
         val channel = android.app.NotificationChannel(
-            channelId, 
-            "Incoming Calls", 
+            channelId,
+            "Incoming Calls",
             android.app.NotificationManager.IMPORTANCE_HIGH,
         ).apply {
             lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
-            if (customRingtoneUri != null) {
-                setSound(customRingtoneUri.toUri(), android.media.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .build())
-            } else {
-                setSound(null, null) 
-            }
+            try {
+                if (customRingtoneUri != null) {
+                    setSound(customRingtoneUri.toUri(), android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build())
+                } else {
+                    setSound(null, null)
+                }
+            } catch (_: Exception) { try { setSound(null, null) } catch (_: Exception) { } }
             enableVibration(true)
             enableLights(true)
         }
-        notificationManager.createNotificationChannel(channel)
+        try { notificationManager.createNotificationChannel(channel) } catch (_: Exception) { return }
 
         val intent = Intent(this, InCallActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -99,7 +107,6 @@ class InfoInCallService : InCallService() {
             android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // Answer Action
         val answerIntent = Intent(this, com.infocaller.app.receiver.CallBroadcastReceiver::class.java).apply {
             action = CallManager.ACTION_ANSWER_CALL
         }
@@ -107,7 +114,6 @@ class InfoInCallService : InCallService() {
             this, 101, answerIntent, android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // Decline Action
         val declineIntent = Intent(this, com.infocaller.app.receiver.CallBroadcastReceiver::class.java).apply {
             action = CallManager.ACTION_DECLINE_CALL
         }
@@ -119,7 +125,6 @@ class InfoInCallService : InCallService() {
         val location = com.infocaller.app.util.LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
         val subText = if (enrichment == null && displayName == number) "Identifying..." else location
 
-        // When screen is on: heads-up with Answer/Decline. When off: full-screen InCallActivity.
         val isScreenOn = (getSystemService(Context.POWER_SERVICE) as android.os.PowerManager).isInteractive
         val notification = androidx.core.app.NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_menu_call)
@@ -128,7 +133,7 @@ class InfoInCallService : InCallService() {
             .setSubText(if (displayName != number) subText else null)
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_MAX)
             .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(pendingIntent, isScreenOn.not()) // heads-up when screen on, full-screen when off
+            .setFullScreenIntent(pendingIntent, isScreenOn.not())
             .setOngoing(true)
             .setAutoCancel(false)
             .setOnlyAlertOnce(true)
@@ -138,18 +143,23 @@ class InfoInCallService : InCallService() {
             .addAction(android.R.drawable.ic_menu_call, "Answer", answerPendingIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", declinePendingIntent)
             
-        // Add Large Icon if photo exists
         val photoUrl = enrichment?.profileImageUrl ?: com.infocaller.app.util.PhoneNumberUtils.getContactPhotoUri(this, number)
         if (photoUrl != null) {
             try {
                 val loader = coil.ImageLoader(this)
                 val request = coil.request.ImageRequest.Builder(this)
                     .data(photoUrl)
-                    .target { result ->
-                        val bitmap = (result as android.graphics.drawable.BitmapDrawable).bitmap
-                        notification.setLargeIcon(bitmap)
-                        notificationManager.notify(1, notification.build())
-                    }
+                    .target(
+                        onSuccess = { result ->
+                            // Coil may return non-bitmap drawables (placeholders/errors) —
+                            // only set the icon when we actually got a bitmap.
+                            val bitmap = (result as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                            if (bitmap != null) {
+                                notification.setLargeIcon(bitmap)
+                                try { notificationManager.notify(1, notification.build()) } catch (_: Exception) { }
+                            }
+                        }
+                    )
                     .build()
                 loader.enqueue(request)
             } catch (e: Exception) {
@@ -157,14 +167,13 @@ class InfoInCallService : InCallService() {
             }
         }
 
-        notificationManager.notify(1, notification.build())
+        try { notificationManager.notify(1, notification.build()) } catch (_: Exception) { }
     }
 
     override fun onCallRemoved(call: Call) {
         super.onCallRemoved(call)
-        Log.d("InfoInCallService", "Call Removed")
-        enrichmentJob?.cancel()
-        getSystemService(android.app.NotificationManager::class.java).cancel(1)
+        enrichmentJobs.remove(call)?.cancel()
+        try { getSystemService(android.app.NotificationManager::class.java)?.cancel(1) } catch (_: Exception) { }
         if (CallManager.activeCall.value == call) {
             CallManager.updateCall(null)
             CallManager.setInCallService(null)

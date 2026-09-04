@@ -2,10 +2,7 @@ package com.infocaller.app.util
 
 import com.infocaller.app.data.local.entity.ContactEnrichmentEntity
 
-/**
- * Determines which fields are still missing for a contact.
- * If everything essential is present, enrichment is skipped to save API calls.
- */
+
 object EnrichmentGapChecker {
 
     data class Gaps(
@@ -27,7 +24,6 @@ object EnrichmentGapChecker {
         val missingLocation = entity.city.isNullOrBlank() && entity.country.isNullOrBlank()
         val missingCarrier = entity.carrier.isNullOrBlank()
         val missingEmail = entity.email.isNullOrBlank()
-        // Name + Photo are essential; others are nice-to-have but still gaps
         val hasAnyGap = missingName || missingPhoto || missingLocation
         val isComplete = !missingName && !missingPhoto
         return Gaps(missingName, missingPhoto, missingLocation, missingCarrier, missingEmail, hasAnyGap, isComplete)

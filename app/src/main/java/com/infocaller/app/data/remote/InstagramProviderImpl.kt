@@ -10,11 +10,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-/**
- * Advanced Instagram Metadata provider.
- * Requires an Instagram sessionid provided by the user in Settings.
- * Derived from toutatis and yesitsme logic.
- */
+
 class InstagramProviderImpl(private val context: Context) : LookupProvider {
     override val id: String = "instagram_osint"
     override val name: String = "Instagram Advanced"
@@ -34,8 +30,6 @@ class InstagramProviderImpl(private val context: Context) : LookupProvider {
         val cleanNumber = normalizedPhoneNumber.filter { it.isDigit() }
 
         try {
-            // Reimplementation of Instagram USERS_LOOKUP logic from yesitsme/toutatis
-            // This attempts to find an IG account linked to the phone number.
             val requestBody = "q=$cleanNumber&device_id=android-${java.util.UUID.randomUUID()}&skip_recovery=1"
             val mediaType = "application/x-www-form-urlencoded".toMediaTypeOrNull()
             

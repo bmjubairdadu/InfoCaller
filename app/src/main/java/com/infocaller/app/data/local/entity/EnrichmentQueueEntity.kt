@@ -2,22 +2,26 @@ package com.infocaller.app.data.local.entity
 
 import androidx.annotation.Keep
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 @Keep
-@Entity(tableName = "enrichment_queue")
+@Entity(
+    tableName = "enrichment_queue",
+    indices = [Index(value = ["status", "nextAttemptAt"])]
+)
 data class EnrichmentQueueEntity(
-    @PrimaryKey val identifier: String, // Normalized phone, email, or username
-    val type: String, // PHONE, EMAIL, USERNAME
+    @PrimaryKey val identifier: String,
+    val type: String,
     val contactId: Long? = null,
-    val priority: Int, // 0: LOW, 1: MEDIUM, 2: HIGH
+    val priority: Int,
     val requestedAt: Long = System.currentTimeMillis(),
     val lastAttemptAt: Long? = null,
     val nextAttemptAt: Long = 0,
     val attemptCount: Int = 0,
-    val status: String, // PENDING, PROCESSING, PARTIAL, COMPLETED, FAILED, RETRY_WAIT
+    val status: String,
     val reason: String? = null,
-    val providerMask: Int = 0 // Bitmask for required capabilities
+    val providerMask: Int = 0
 )
 
 object QueuePriority {

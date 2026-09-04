@@ -19,18 +19,6 @@ cd InfoCaller
 # APK: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Configuration
-
-All keys go in `local.properties` (never committed):
-
-```
-apify.token.1=apify_api_xxx
-apify.token.2=apify_api_xxx
-brandfetch.client.id=xxx
-truecaller.client.secret=lvc22mp3l1sfv6ujg83rd17btt
-sdk.dir=/path/to/Android/Sdk
-```
-
 Keys are optional; free providers work without them.
 
 ## Download

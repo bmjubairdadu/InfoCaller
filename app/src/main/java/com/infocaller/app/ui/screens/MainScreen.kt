@@ -51,13 +51,11 @@ fun MainScreen(
         }
     }
 
-    // Continuous Monitoring of Recent Calls
     val recentCalls by viewModel.recentCalls.collectAsState()
     LaunchedEffect(recentCalls) {
         if (recentCalls.isNotEmpty()) {
             val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
             recentCalls.take(10).forEach { entry ->
-                // Check if already enriched in background
                 app.enrichmentEngine.enqueue(entry.number, priority = com.infocaller.app.data.local.entity.QueuePriority.MEDIUM)
             }
         }
@@ -75,14 +73,14 @@ fun MainScreen(
 
     Scaffold(
         containerColor = Background,
-        contentWindowInsets = WindowInsets(0, 0, 0, 0), // Use 0 to allow full screen behind glassy bars
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = navBackStackEntry?.destination?.route
 
             Box(
                 modifier = Modifier
-                    .navigationBarsPadding() // Ensure bar stays above system nav
+                    .navigationBarsPadding()
                     .padding(horizontal = 24.dp)
                     .padding(bottom = 12.dp)
             ) {
@@ -165,7 +163,7 @@ fun MainScreen(
                     innerPadding = innerPadding,
                     onNavigateToDetails = { number ->
                         viewModel.searchNumber(number)
-                        parentNavController.navigate("details")
+                        parentNavController.navigate("details/" + android.net.Uri.encode(number))
                     }
                 )
             }
@@ -175,7 +173,7 @@ fun MainScreen(
                     innerPadding = innerPadding,
                     onNavigateToDetails = { number ->
                         viewModel.searchNumber(number)
-                        parentNavController.navigate("details")
+                        parentNavController.navigate("details/" + android.net.Uri.encode(number))
                     }
                 )
             }

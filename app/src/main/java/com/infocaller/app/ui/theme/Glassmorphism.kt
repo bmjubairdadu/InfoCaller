@@ -53,7 +53,6 @@ fun GlassyBackground(
             .fillMaxSize()
             .background(Background)
     ) {
-        // Decorative background elements
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawCircle(
                 brush = Brush.radialGradient(

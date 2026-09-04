@@ -25,49 +25,49 @@ class EnrichmentWorker(
         val deviceRepo = app.deviceDataRepository
         
         if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(applicationContext, com.infocaller.app.permissions.PermissionManager.CONTACTS_PERMISSIONS)) {
-            Log.w("EnrichmentWorker", "Missing contacts permissions, skipping sync.")
-            return@withContext Result.failure()
+            // Missing permission is not a failure — retrying would just spin. Succeed quietly.
+            return@withContext Result.success()
         }
         
         try {
             val prefs = applicationContext.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             val lastFullScan = prefs.getLong("last_full_contact_scan", 0L)
-            val isFullScanNeeded = System.currentTimeMillis() - lastFullScan > 12 * 3600000 // Every 12 hours
+            val isFullScanNeeded = System.currentTimeMillis() - lastFullScan > 12 * 3600000
 
-            // 1. Refresh local contacts from system (Import)
             importSystemContacts(localContactDao)
 
-            // 2. Scan Recent Calls for intelligence gathering
-            val recentNumbers = deviceRepo.fetchRecentCallsSync().map { it.number }
+            val callerLogNumbers = try { deviceRepo.fetchRecentCallsSync().map { it.number } } catch (_: Exception) { emptyList() }
+            val recentNumbers = callerLogNumbers
             
-            // 3. Get all contacts for enrichment
             val contactNumbers = if (isFullScanNeeded) {
                 deviceRepo.fetchContactsSync().mapNotNull { it.phoneNumber }
             } else emptyList()
             
-            // 4. Combine, Normalize and Enqueue
             val numbersToProcess: List<String> = (recentNumbers + contactNumbers)
                 .map { com.infocaller.app.util.PhoneNumberUtils.normalize(it) }
                 .filter { it.isNotBlank() }
                 .distinct()
             
             val currentTime = System.currentTimeMillis()
+            // Batch the cache reads (one query instead of N) and skip complete-but-
+            // expired rows: gap logic treats them as stale-forever otherwise.
+            val cachedByNumber: Map<String, com.infocaller.app.data.local.entity.ContactEnrichmentEntity> = try {
+                if (numbersToProcess.isEmpty()) emptyMap()
+                else enrichmentDao.getEnrichmentsSync(numbersToProcess).associateBy { it.normalizedPhoneNumber }
+            } catch (_: Exception) { emptyMap() }
             for (number in numbersToProcess) {
-                val cached = enrichmentDao.getEnrichmentSync(number)
+                val cached = cachedByNumber[number]
                 val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(cached)
-                // Native gap-aware: skip complete (name+photo), else re-enqueue if expired or has gaps
+                val expired = cached != null && cached.expiresAt < currentTime
                 val shouldEnqueue = when {
                     cached == null -> true
-                    gaps.isComplete && cached.expiresAt > currentTime -> false // skip - already complete & fresh
-                    gaps.isComplete -> false // complete, even if slightly stale - don't churn
-                    cached.expiresAt < currentTime -> true // expired with gaps -> refresh
-                    else -> gaps.hasAnyGap // missing critical gap
+                    expired -> gaps.hasAnyGap
+                    gaps.isComplete -> false
+                    else -> gaps.hasAnyGap
                 }
                 if (shouldEnqueue) app.enrichmentEngine.enqueue(number, priority = QueuePriority.LOW)
             }
 
-            // 5. Process a single item immediately while we are running (Main work is done by ScanningService)
-            // Professional: only one dequeue per Work run; ScanningService continues one-by-one with throttle
             app.enrichmentEngine.processNextOneByOne()
 
             if (isFullScanNeeded) {

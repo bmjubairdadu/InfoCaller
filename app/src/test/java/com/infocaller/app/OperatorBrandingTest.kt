@@ -14,15 +14,12 @@ class OperatorBrandingTest {
         val url = SimManager.buildBrandfetchLogoUrl(domain)
         
         // Expected: https://cdn.brandfetch.io/domain/grameenphone.com?c=1idt4fOOzudt9xCz11q
-        // Note: The Client ID comes from BuildConfig which might be empty in unit tests 
-        // depending on how Gradle is configured to run tests.
         assertTrue(url.contains("cdn.brandfetch.io/domain/grameenphone.com"))
         assertTrue(url.contains("?c="))
     }
 
     @Test
     fun testOperatorNormalization() {
-        // Test Grameenphone normalization
         val res1 = OperatorBrandResolver.resolveBrand("Grameen Phone", null, null, null)
         val res2 = OperatorBrandResolver.resolveBrand("GP", null, null, null)
         val res3 = OperatorBrandResolver.resolveBrand("Grameenphone", null, "470", "01")
@@ -35,12 +32,10 @@ class OperatorBrandingTest {
 
     @Test
     fun testCountryAwareResolution() {
-        // Airtel Bangladesh
         val bd = OperatorBrandResolver.resolveBrand("Airtel", null, "470", "07")
         assertEquals("Airtel", bd.operatorName)
         assertEquals("bd.airtel.com", bd.officialDomain)
 
-        // Airtel India
         val india = OperatorBrandResolver.resolveBrand("Airtel", null, "404", "10")
         assertEquals("Airtel India", india.operatorName)
         assertEquals("airtel.in", india.officialDomain)

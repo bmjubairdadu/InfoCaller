@@ -32,27 +32,29 @@ class IpLookupProviderImpl(
     ): PartialResult? = withContext(Dispatchers.IO) {
         if (type != IdentifierType.IP_ADDRESS) return@withContext null
         
+        // Validate input: only literal IPv4/IPv6 reach the network.
+        if (!identifier.matches(Regex("^[0-9a-fA-F:.]{3,45}$"))) return@withContext null
         try {
-            val url = "http://ip-api.com/json/$identifier?fields=status,message,country,countryCode,regionName,city,zip,timezone,isp,org,as,mobile,proxy,hosting"
+            val url = "https://ip-api.com/json/$identifier?fields=status,message,country,countryCode,regionName,city,zip,timezone,isp,org,as,mobile,proxy,hosting"
             val request = Request.Builder().url(url).build()
-            val response = httpClient.newCall(request).execute()
-            
-            if (response.isSuccessful) {
-                val json = gson.fromJson(response.body?.string(), JsonObject::class.java)
-                if (json.get("status").asString == "success") {
-                    return@withContext PartialResult(
-                        city = json.get("city")?.asString,
-                        country = json.get("country")?.asString,
-                        region = json.get("regionName")?.asString,
-                        timezone = json.get("timezone")?.asString,
-                        carrier = json.get("isp")?.asString,
-                        about = "ORG: ${json.get("org")?.asString}, AS: ${json.get("as")?.asString}",
-                        isBusiness = json.get("hosting")?.asBoolean,
-                        confidence = 1.0f,
-                        source = "IP-API",
-                        providerId = id,
-                        providerVersion = version
-                    )
+            httpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val json = gson.fromJson(response.body?.string(), JsonObject::class.java)
+                    if (json.get("status").asString == "success") {
+                        return@withContext PartialResult(
+                            city = json.get("city")?.asString,
+                            country = json.get("country")?.asString,
+                            region = json.get("regionName")?.asString,
+                            timezone = json.get("timezone")?.asString,
+                            carrier = json.get("isp")?.asString,
+                            about = "ORG: ${json.get("org")?.asString}, AS: ${json.get("as")?.asString}",
+                            isBusiness = json.get("hosting")?.asBoolean,
+                            confidence = 1.0f,
+                            source = "IP-API",
+                            providerId = id,
+                            providerVersion = version
+                        )
+                    }
                 }
             }
         } catch (_: Exception) {}

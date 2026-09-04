@@ -19,10 +19,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.infocaller.app.R
 
-/**
- * Centered branded loading animation for InfoCaller.
- * Uses the official logo and ensures it's always in the middle of the provided area.
- */
+
 @Composable
 fun InfoCallerLoading(
     modifier: Modifier = Modifier,
@@ -67,7 +64,6 @@ fun InfoCallerLoading(
             LoadingContent(size, scale, alpha, text)
         }
     } else {
-        // Center within the area provided by the modifier
         Box(
             modifier = modifier,
             contentAlignment = Alignment.Center
