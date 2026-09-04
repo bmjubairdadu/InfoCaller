@@ -88,7 +88,12 @@ fun ContactsScreen(
     }
     var showRationale by remember { mutableStateOf(value = false) }
     
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results -> hasPermission = results.values.all { it } }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        hasPermission = results.values.all { it }
+        // The contacts flow closes itself when permission is missing; restart it
+        // now so the list populates immediately instead of staying empty.
+        if (hasPermission) viewModel.refreshDeviceData()
+    }
     // One-shot: fire once per composition entry, never on rotation/recomposition.
     var permissionRequested by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(hasPermission) {

@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import com.infocaller.app.data.remote.CommunityConsent
 import com.infocaller.app.permissions.PermissionManager
 import com.infocaller.app.ui.theme.Primary
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,6 +45,7 @@ fun SettingsScreen(
     val recordingLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
         recordingEnabled = results.values.all { it }
     }
+    val contactsPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ -> }
 
     Scaffold(
         topBar = {
@@ -109,6 +111,133 @@ fun SettingsScreen(
             }
 
             SettingsSection("Calls") {
+                val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
+                val screeningDao = remember(app) { app.database.screeningDao() }
+                var blockAnonymous by remember {
+                    mutableStateOf(com.infocaller.app.data.local.CallScreeningRules.isBlockAnonymousEnabled(context))
+                }
+                var blockUnknown by remember {
+                    mutableStateOf(com.infocaller.app.data.local.CallScreeningRules.isBlockUnknownEnabled(context))
+                }
+                val blockedPrefixes by com.infocaller.app.data.local.CallScreeningRules
+                    .getPrefixes(screeningDao).collectAsState(initial = emptyList())
+                val blockedEvents by com.infocaller.app.data.local.CallScreeningRules
+                    .getRecentEvents(screeningDao, 20).collectAsState(initial = emptyList())
+                var newPrefix by remember { mutableStateOf("") }
+                var prefixError by remember { mutableStateOf<String?>(null) }
+                val scope = rememberCoroutineScope()
+
+                SettingsToggleRow(
+                    title = "Block anonymous callers",
+                    subtitle = "Block hidden/withheld/private numbers",
+                    icon = Icons.Default.VisibilityOff,
+                    checked = blockAnonymous,
+                    onCheckedChange = {
+                        blockAnonymous = it
+                        com.infocaller.app.data.local.CallScreeningRules.setBlockAnonymousEnabled(context, it)
+                    }
+                )
+                SettingsToggleRow(
+                    title = "Block unknown numbers",
+                    subtitle = "Block callers not in your contacts (needs contacts permission)",
+                    icon = Icons.Default.PersonOff,
+                    checked = blockUnknown,
+                    onCheckedChange = {
+                        if (it && !PermissionManager.hasPermissions(context, PermissionManager.CONTACTS_PERMISSIONS)) {
+                            try {
+                                contactsPermissionLauncher.launch(PermissionManager.CONTACTS_PERMISSIONS)
+                            } catch (_: Exception) { }
+                        }
+                        blockUnknown = it
+                        com.infocaller.app.data.local.CallScreeningRules.setBlockUnknownEnabled(context, it)
+                    }
+                )
+
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Blocked prefixes", style = MaterialTheme.typography.titleSmall)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = newPrefix,
+                            onValueChange = { newPrefix = it; prefixError = null },
+                            label = { Text("Prefix, e.g. +1800") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(onClick = {
+                            scope.launch {
+                                val ok = com.infocaller.app.data.local.CallScreeningRules.addPrefix(screeningDao, newPrefix)
+                                if (ok) { newPrefix = ""; prefixError = null }
+                                else prefixError = "Enter 2–15 digits, optional leading +"
+                            }
+                        }) { Text("Add") }
+                    }
+                    prefixError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                    blockedPrefixes.forEach { row ->
+                        ListItem(
+                            headlineContent = { Text(row.prefix) },
+                            trailingContent = {
+                                IconButton(onClick = {
+                                    scope.launch {
+                                        com.infocaller.app.data.local.CallScreeningRules.removePrefix(screeningDao, row.prefix)
+                                    }
+                                }) { Icon(Icons.Default.Delete, null) }
+                            },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                        )
+                    }
+                    if (blockedPrefixes.isEmpty()) {
+                        Text(
+                            "No prefixes blocked. Add one to reject whole ranges.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Blocked calls",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = {
+                            scope.launch {
+                                try { screeningDao.clearEvents() } catch (_: Exception) { }
+                            }
+                        }) { Text("Clear") }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    if (blockedEvents.isEmpty()) {
+                        Text(
+                            "Nothing blocked yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        blockedEvents.take(20).forEach { ev ->
+                            ListItem(
+                                headlineContent = { Text(ev.phoneNumber) },
+                                supportingContent = {
+                                    Text(
+                                        "${ev.reason} • ${
+                                            java.text.SimpleDateFormat("MMM dd, HH:mm", java.util.Locale.getDefault())
+                                                .format(java.util.Date(ev.timestamp))
+                                        }"
+                                    )
+                                },
+                                leadingContent = { Icon(Icons.Default.Block, null, tint = Primary) },
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                            )
+                        }
+                    }
+                }
+
                 val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
                 var currentRingtoneUri by remember { mutableStateOf(prefs.getString("custom_ringtone_uri", null)) }
                 

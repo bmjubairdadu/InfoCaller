@@ -74,10 +74,10 @@ fun LoginScreen(
     LaunchedEffect(tcAuthResult) {
         if (tcAuthResult == null) return@LaunchedEffect
         val method = tcAuthResult!!.method.lowercase()
-        if (method == "call" || method == "flashcall" || method == "missedcall") {
-            val perms = PermissionManager.CORE_PERMISSIONS + PermissionManager.CALL_LOG_PERMISSIONS
-            if (!PermissionManager.hasPermissions(context, perms)) smsPermissionLauncher.launch(perms)
-        }
+        // NOTE: no permission requests here. Call/flashcall auto-detection needs
+        // call permissions, but popping a system dialog the instant the OTP box
+        // should appear reads as "skipped OTP, went to permissions". Those grants
+        // happen in onboarding stage 2; the manual 6-digit entry below always works.
         if (method == "already_logged_in") {
             viewModel.loginWithTruecaller(null)
             snackbarHostState.showSnackbar("Already verified ✓")

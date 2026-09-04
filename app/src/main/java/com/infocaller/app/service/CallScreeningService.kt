@@ -29,10 +29,28 @@ class CallScreeningService : CallScreeningService() {
 
         serviceScope.launch {
             try {
-                val isBlocked = kotlinx.coroutines.withTimeoutOrNull(3500) {
-                    val db = AppDatabase.getDatabase(applicationContext)
-                    db.blocklistDao().isBlocked(phoneNumber)
-                } ?: false
+                // Ordered on-device decision engine (anonymous -> exact blocklist ->
+                // prefix -> unknown-not-in-contacts). Pattern source: humanjuan/iOG26.
+                // Fails open: any error allows the call. Bounded so we always answer
+                // the framework promptly.
+                val decision = kotlinx.coroutines.withTimeoutOrNull(3500) {
+                    val app = applicationContext
+                    val db = AppDatabase.getDatabase(app)
+                    val rules = com.infocaller.app.data.local.CallScreeningRules
+                    val verdict = rules.decide(
+                        app,
+                        db.screeningDao(),
+                        isExactBlocked = { normalized ->
+                            try { db.blocklistDao().isBlocked(normalized) } catch (_: Exception) { false }
+                        },
+                        phoneNumber
+                    )
+                    if (verdict is com.infocaller.app.data.local.CallScreeningRules.Decision.Block) {
+                        try { rules.logBlocked(db.screeningDao(), phoneNumber, verdict.reason) } catch (_: Exception) { }
+                    }
+                    verdict
+                } ?: com.infocaller.app.data.local.CallScreeningRules.Decision.Allow
+                val isBlocked = decision is com.infocaller.app.data.local.CallScreeningRules.Decision.Block
                 val response = CallResponse.Builder()
                     .setDisallowCall(isBlocked)
                     .setRejectCall(isBlocked)

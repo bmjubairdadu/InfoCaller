@@ -64,6 +64,8 @@ class InfoCallerApplication : Application() {
             OwnerVerifiedLookupProvider(this, commonHttpClient),
             RegistryLookupProvider(registryService),
             SupabaseCommunityProvider(this, commonHttpClient),
+            OfflineOperatorTablesProviderImpl(),
+            CommunitySpamCsvProviderImpl(commonHttpClient),
             LocalRegionalMetadataProvider(),
             PhoneMetadataProviderImpl(this),
             GoogleSearchProviderImpl(),

@@ -45,13 +45,25 @@ class CallerViewModel(
     private val _showSimSelection = MutableStateFlow<String?>(null)
     val showSimSelection: StateFlow<String?> = _showSimSelection.asStateFlow()
 
-    val recentCalls: StateFlow<List<CallLogEntry>> = deviceDataRepository.getRecentCalls()
-        .map { list -> 
+    // Tick that restarts the device-data flows (call log / contacts) after a
+    // permission grant. Without this, a flow that closed itself for lack of
+    // permission would stay empty forever even after the user grants access.
+    private val _deviceDataTick = MutableStateFlow(0)
+    fun refreshDeviceData() { _deviceDataTick.value += 1 }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val recentCalls: StateFlow<List<CallLogEntry>> = _deviceDataTick.flatMapLatest {
+        deviceDataRepository.getRecentCalls()
+    }
+        .map { list ->
             list.map { it.copy(number = PhoneNumberUtils.normalize(it.number)) }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val contacts: StateFlow<List<Contact>> = deviceDataRepository.getContacts()
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val contacts: StateFlow<List<Contact>> = _deviceDataTick.flatMapLatest {
+        deviceDataRepository.getContacts()
+    }
         .map { list ->
             list.map { it.copy(phoneNumber = PhoneNumberUtils.normalize(it.phoneNumber ?: "")) }
         }

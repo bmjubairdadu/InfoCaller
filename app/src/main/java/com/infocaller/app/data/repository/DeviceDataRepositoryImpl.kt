@@ -23,20 +23,34 @@ class DeviceDataRepositoryImpl(
     override fun getRecentCalls(): Flow<List<CallLogEntry>> = callbackFlow {
         val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
-                trySend(fetchRecentCallsSync())
+                try { trySend(fetchRecentCallsSync()) } catch (_: Exception) { }
             }
         }
 
-        contentResolver.registerContentObserver(
-            CallLog.Calls.CONTENT_URI,
-            true,
-            observer
-        )
+        // registerContentObserver throws SecurityException when READ_CALL_LOG is not
+        // granted (fresh install, revoked, or dialer role without runtime grants).
+        // Uncaught it kills the collector's scope -> "keeps stopping" on main screen.
+        // Emit empty and close instead; the flow restarts on resubscribe after grant.
+        val registered = try {
+            contentResolver.registerContentObserver(
+                CallLog.Calls.CONTENT_URI,
+                true,
+                observer
+            )
+            true
+        } catch (_: Exception) {
+            false
+        }
+        if (!registered) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
 
         trySend(fetchRecentCallsSync())
 
         awaitClose {
-            contentResolver.unregisterContentObserver(observer)
+            try { contentResolver.unregisterContentObserver(observer) } catch (_: Exception) { }
         }
     }
     .debounce(300L)
@@ -92,20 +106,31 @@ class DeviceDataRepositoryImpl(
     override fun getContacts(): Flow<List<Contact>> = callbackFlow {
         val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
-                trySend(fetchContactsSync())
+                try { trySend(fetchContactsSync()) } catch (_: Exception) { }
             }
         }
 
-        contentResolver.registerContentObserver(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            true,
-            observer
-        )
+        // Same guard as getRecentCalls: no READ_CONTACTS -> empty + close, no crash.
+        val registered = try {
+            contentResolver.registerContentObserver(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                true,
+                observer
+            )
+            true
+        } catch (_: Exception) {
+            false
+        }
+        if (!registered) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
 
         trySend(fetchContactsSync())
 
         awaitClose {
-            contentResolver.unregisterContentObserver(observer)
+            try { contentResolver.unregisterContentObserver(observer) } catch (_: Exception) { }
         }
     }
     .debounce(500L)
@@ -159,33 +184,49 @@ class DeviceDataRepositoryImpl(
     }
 
     override suspend fun deleteCallLogEntry(number: String, date: Long) {
-        val selection = "${CallLog.Calls.NUMBER} = ? AND ${CallLog.Calls.DATE} = ?"
-        val selectionArgs = arrayOf(number, date.toString())
-        contentResolver.delete(CallLog.Calls.CONTENT_URI, selection, selectionArgs)
+        // Revoked permission must fail quietly, never crash the caller's scope.
+        try {
+            val selection = "${CallLog.Calls.NUMBER} = ? AND ${CallLog.Calls.DATE} = ?"
+            val selectionArgs = arrayOf(number, date.toString())
+            contentResolver.delete(CallLog.Calls.CONTENT_URI, selection, selectionArgs)
+        } catch (_: Exception) { }
     }
 
     override suspend fun clearCallLog() {
-        contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
+        try {
+            contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
+        } catch (_: Exception) { }
     }
 
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     override fun getMessages(): Flow<List<SmsMessage>> = callbackFlow {
         val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
-                trySend(fetchMessagesSync())
+                try { trySend(fetchMessagesSync()) } catch (_: Exception) { }
             }
         }
 
-        contentResolver.registerContentObserver(
-            Telephony.Sms.CONTENT_URI,
-            true,
-            observer
-        )
+        // Same guard as getRecentCalls: no READ_SMS -> empty + close, no crash.
+        val registered = try {
+            contentResolver.registerContentObserver(
+                Telephony.Sms.CONTENT_URI,
+                true,
+                observer
+            )
+            true
+        } catch (_: Exception) {
+            false
+        }
+        if (!registered) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
 
         trySend(fetchMessagesSync())
 
         awaitClose {
-            contentResolver.unregisterContentObserver(observer)
+            try { contentResolver.unregisterContentObserver(observer) } catch (_: Exception) { }
         }
     }
     .debounce(500L)
@@ -238,8 +279,10 @@ class DeviceDataRepositoryImpl(
     }
 
     override suspend fun deleteSms(id: Long) {
-        val selection = "${Telephony.Sms._ID} = ?"
-        val selectionArgs = arrayOf(id.toString())
-        contentResolver.delete(Telephony.Sms.CONTENT_URI, selection, selectionArgs)
+        try {
+            val selection = "${Telephony.Sms._ID} = ?"
+            val selectionArgs = arrayOf(id.toString())
+            contentResolver.delete(Telephony.Sms.CONTENT_URI, selection, selectionArgs)
+        } catch (_: Exception) { }
     }
 }

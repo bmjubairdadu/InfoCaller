@@ -55,7 +55,12 @@ fun RecentsScreen(
         mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.CALL_LOG_PERMISSIONS)) 
     }
     
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results -> hasPermission = results.values.all { it } }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        hasPermission = results.values.all { it }
+        // The call-log flow closes itself when permission is missing; restart it
+        // now so the list populates immediately instead of staying empty.
+        if (hasPermission) viewModel.refreshDeviceData()
+    }
     // One-shot: never re-fire on rotation/recomposition.
     var permissionRequested by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(hasPermission) {

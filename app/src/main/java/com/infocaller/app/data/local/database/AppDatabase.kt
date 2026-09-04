@@ -16,7 +16,9 @@ import com.infocaller.app.data.local.entity.LocalContactEntity
 @Database(
     entities = [
         CallerEntity::class, 
-        BlocklistEntity::class, 
+        BlocklistEntity::class,
+        com.infocaller.app.data.local.entity.BlockedPrefixEntity::class,
+        com.infocaller.app.data.local.entity.BlockedEventEntity::class,
         LocalContactEntity::class, 
         com.infocaller.app.data.local.entity.ContactEnrichmentEntity::class,
         com.infocaller.app.data.local.entity.EnrichmentQueueEntity::class,
@@ -25,12 +27,13 @@ import com.infocaller.app.data.local.entity.LocalContactEntity
         com.infocaller.app.data.local.entity.NidEntity::class,
         com.infocaller.app.data.local.entity.ContributionEntity::class
     ], 
-    version = 23, 
+    version = 24, 
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun callerDao(): CallerDao
     abstract fun blocklistDao(): BlocklistDao
+    abstract fun screeningDao(): com.infocaller.app.data.local.dao.ScreeningDao
     abstract fun localContactDao(): LocalContactDao
     abstract fun enrichmentDao(): com.infocaller.app.data.local.dao.EnrichmentDao
     abstract fun queueDao(): com.infocaller.app.data.local.dao.EnrichmentQueueDao
@@ -120,6 +123,15 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("DROP TABLE IF EXISTS contact_backups")
             }
         }
+        // v24: on-device screening rules (blocked prefixes + blocked-event log),
+        // pattern source: humanjuan/iOG26 (call-filter). Local-only, no server.
+        val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("CREATE TABLE IF NOT EXISTS blocked_prefixes (prefix TEXT NOT NULL, addedAt INTEGER NOT NULL, PRIMARY KEY(prefix))")
+                database.execSQL("CREATE TABLE IF NOT EXISTS blocked_events (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, phoneNumber TEXT NOT NULL, reason TEXT NOT NULL, timestamp INTEGER NOT NULL)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_blocked_events_timestamp ON blocked_events(timestamp)")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -128,7 +140,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "infocaller_database"
                 )
-                .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
+                .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24)
                 .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance

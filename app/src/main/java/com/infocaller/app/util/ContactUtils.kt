@@ -57,16 +57,45 @@ object ContactUtils {
     }
 
     fun getLastIncomingCallNumber(context: Context): String? {
-        val resolver = context.contentResolver
-        val cursor = resolver.query(
-            android.provider.CallLog.Calls.CONTENT_URI,
-            arrayOf(android.provider.CallLog.Calls.NUMBER),
-            "${android.provider.CallLog.Calls.TYPE} = ? OR ${android.provider.CallLog.Calls.TYPE} = ?",
-            arrayOf(android.provider.CallLog.Calls.INCOMING_TYPE.toString(), android.provider.CallLog.Calls.MISSED_TYPE.toString()),
-            "${android.provider.CallLog.Calls.DATE} DESC"
-        )
-        return cursor?.use {
-            if (it.moveToFirst()) it.getString(0) else null
+        // Call-log query without READ_CALL_LOG throws SecurityException (this exact
+        // crash killed the main screen on fresh installs). Fail quiet, never escape.
+        return try {
+            val resolver = context.contentResolver
+            val cursor = resolver.query(
+                android.provider.CallLog.Calls.CONTENT_URI,
+                arrayOf(android.provider.CallLog.Calls.NUMBER),
+                "${android.provider.CallLog.Calls.TYPE} = ? OR ${android.provider.CallLog.Calls.TYPE} = ?",
+                arrayOf(android.provider.CallLog.Calls.INCOMING_TYPE.toString(), android.provider.CallLog.Calls.MISSED_TYPE.toString()),
+                "${android.provider.CallLog.Calls.DATE} DESC"
+            )
+            cursor?.use {
+                if (it.moveToFirst()) it.getString(0) else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * True when the normalized number exists in the user's contacts.
+     * Used by the on-device screening engine ("block unknown numbers").
+     * Callers must hold READ_CONTACTS; throws are contained here regardless.
+     */
+    fun isKnownContact(context: Context, normalizedNumber: String): Boolean {
+        if (normalizedNumber.isBlank()) return false
+        return try {
+            val uri = Uri.withAppendedPath(
+                ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                Uri.encode(normalizedNumber)
+            )
+            context.contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.PhoneLookup._ID),
+                null, null, null
+            )?.use { it.moveToFirst() } ?: false
+        } catch (_: Exception) {
+            // Fail open: a lookup error must never block a legitimate call.
+            true
         }
     }
 
