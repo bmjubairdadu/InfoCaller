@@ -26,6 +26,14 @@ object PermissionManager {
 
     val CORE_PERMISSIONS get() = CALLER_ID_PERMISSIONS
 
+    /** Dangerous runtime permissions every dialer user needs (MANAGE_OWN_CALLS is install-time). */
+    val REQUIRED_RUNTIME_CALL_PERMISSIONS = arrayOf(
+        Manifest.permission.CALL_PHONE,
+        Manifest.permission.READ_PHONE_STATE,
+        Manifest.permission.READ_PHONE_NUMBERS,
+        Manifest.permission.ANSWER_PHONE_CALLS
+    )
+
     val CONTACTS_PERMISSIONS = arrayOf(
         Manifest.permission.READ_CONTACTS,
         Manifest.permission.WRITE_CONTACTS

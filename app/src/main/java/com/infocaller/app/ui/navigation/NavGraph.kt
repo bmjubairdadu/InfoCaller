@@ -36,6 +36,12 @@ fun NavGraph(
 
     val authState by authViewModel.authState.collectAsState()
     val isAuthorized = authState is com.infocaller.app.ui.viewmodel.AuthUiState.Authenticated
+    // One-time gate: once onboarding completes it never loops, permissions are
+    // re-asked lazily per screen (Recents/Contacts/Dialer) if revoked later.
+    val onboardingDone = try {
+        context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+            .getBoolean("onboarding_completed", false)
+    } catch (_: Exception) { false }
 
     val startDest = "launcher"
 
@@ -52,7 +58,7 @@ fun NavGraph(
                 InfoCallerLauncherScreen(onLauncherComplete = {
                     val nextDest = when {
                         !isAuthorized -> "login"
-                        !isCoreOk || !isOverlayOk || !isNotificationsOk -> "onboarding"
+                        !onboardingDone && (!isCoreOk || !isOverlayOk || !isNotificationsOk) -> "onboarding"
                         else -> "main"
                     }
                     navController.navigate(nextDest) {
@@ -118,7 +124,7 @@ fun NavGraph(
                 LoginScreen(
                     viewModel = authViewModel,
                     onLoginSuccess = {
-                        val nextDest = if (!isCoreOk || !isOverlayOk || !isNotificationsOk) "onboarding" else "main"
+                        val nextDest = if (!onboardingDone && (!isCoreOk || !isOverlayOk || !isNotificationsOk)) "onboarding" else "main"
                         navController.navigate(nextDest) {
                             popUpTo("login") { inclusive = true }
                         }

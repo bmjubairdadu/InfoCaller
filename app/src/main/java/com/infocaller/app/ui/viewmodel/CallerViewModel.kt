@@ -66,7 +66,11 @@ class CallerViewModel(
 
     fun loadSimInfos(context: Context) {
         viewModelScope.launch {
-            _simInfos.value = SimManager.getSimInfos(context)
+            _simInfos.value = try {
+                SimManager.getSimInfos(context)
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
     }
 

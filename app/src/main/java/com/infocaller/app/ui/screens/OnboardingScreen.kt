@@ -24,57 +24,107 @@ import com.infocaller.app.ui.theme.Primary
 @Composable
 fun OnboardingScreen(onComplete: () -> Unit) {
     val context = LocalContext.current
-    // Stages: 1 = dialer role, 3 = overlay, 5 = notifications, 6 = done.
-    // Unused numbers are never produced; -1 is the permanent-denial escape hatch.
+    // Stages: 1 = dialer role, 2 = essential call permissions, 3 = overlay,
+    // 5 = notifications, 6 = done. -1 is the settings escape hatch.
     var currentStage by rememberSaveable { mutableIntStateOf(1) }
     var permanentlyDenied by rememberSaveable { mutableStateOf(false) }
+    var roleAttempted by rememberSaveable { mutableStateOf(false) }
+    var roleError by rememberSaveable { mutableStateOf<String?>(null) }
+    var callPermsError by rememberSaveable { mutableStateOf(false) }
 
 
     val roleLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { _ ->
         if (PermissionManager.isDefaultDialer(context)) {
+            roleError = null
+            currentStage = 2
+        } else if (roleAttempted) {
+            // User dismissed or picked another app: say so instead of stalling silently.
+            roleError = "Still not set — pick InfoCaller in the system list, or skip for now."
+        }
+    }
+
+    val callPermsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        if (results.values.all { it }) {
+            callPermsError = false
             currentStage = 3
         } else {
-            // User dismissed without choosing: stay on stage 1 with guidance
-            // instead of advancing or stalling silently.
-            permanentlyDenied = false
+            callPermsError = true
         }
     }
 
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-        // Re-evaluate on return from Settings: role granted -> overlay stage;
+        // Re-evaluate on return from system Settings: role granted -> permissions stage;
         // overlay granted while on stage 3 -> notifications/done.
         if (PermissionManager.isDefaultDialer(context) && currentStage == 1) {
-            currentStage = 3
+            roleError = null
+            currentStage = 2
         }
         if (currentStage == 3 && PermissionManager.canDrawOverlays(context)) {
             currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 5 else 6
         }
     }
-    LaunchedEffect(currentStage) { if (currentStage == 6) onComplete() }
+    LaunchedEffect(currentStage) {
+        if (currentStage == 6) {
+            try {
+                context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                    .edit().putBoolean("onboarding_completed", true).apply()
+            } catch (_: Exception) { }
+            onComplete()
+        }
+    }
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) currentStage = 6
-        else permanentlyDenied = true
+    ) { _ ->
+        // Notifications are optional: denial still completes onboarding.
+        currentStage = 6
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Background).padding(24.dp), contentAlignment = Alignment.Center) {
         when (currentStage) {
-            1 -> RoleDialerExplanation {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val roleManager = context.getSystemService(RoleManager::class.java)
-                    val intent = roleManager?.createRequestRoleIntent(RoleManager.ROLE_DIALER)
-                    if (intent != null) roleLauncher.launch(intent)
-                    else permanentlyDenied = true
-                } else {
-                    val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
-                        putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
+            1 -> RoleDialerExplanation(
+                error = roleError,
+                onGrant = {
+                    roleAttempted = true
+                    roleError = null
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        try {
+                            val roleManager = context.getSystemService(RoleManager::class.java)
+                            val intent = roleManager?.createRequestRoleIntent(RoleManager.ROLE_DIALER)
+                            if (intent != null) roleLauncher.launch(intent)
+                            else roleError = "Your system didn't return a request screen. Use system settings instead."
+                        } catch (_: Exception) {
+                            roleError = "The system blocked the request. Use system settings instead."
+                        }
+                    } else {
+                        val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
+                            putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
+                        }
+                        try { roleLauncher.launch(intent) } catch (_: Exception) {
+                            roleError = "The system blocked the request. Use system settings instead."
+                        }
                     }
-                    try { roleLauncher.launch(intent) } catch (_: Exception) { permanentlyDenied = true }
-                }
-            }
+                },
+                onOpenDefaultApps = {
+                    try {
+                        context.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        })
+                    } catch (_: Exception) { PermissionManager.openAppSettings(context) }
+                },
+                onSkip = { currentStage = 2 }
+            )
+            2 -> CallPermissionsExplanation(
+                showError = callPermsError,
+                onGrant = {
+                    callPermsError = false
+                    callPermsLauncher.launch(PermissionManager.REQUIRED_RUNTIME_CALL_PERMISSIONS)
+                },
+                onSkip = { currentStage = 3 }
+            )
             3 -> OverlayPermissionRationale(
                 onGrant = { PermissionManager.openOverlaySettings(context) },
                 onSkip = { currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 5 else 6 }
@@ -94,7 +144,12 @@ fun OnboardingScreen(onComplete: () -> Unit) {
 }
 
 @Composable
-fun RoleDialerExplanation(onGrant: () -> Unit) {
+fun RoleDialerExplanation(
+    error: String?,
+    onGrant: () -> Unit,
+    onOpenDefaultApps: () -> Unit,
+    onSkip: () -> Unit
+) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Default Phone App", style = MaterialTheme.typography.headlineLarge, color = Color.White)
         Spacer(modifier = Modifier.height(16.dp))
@@ -103,10 +158,51 @@ fun RoleDialerExplanation(onGrant: () -> Unit) {
             textAlign = TextAlign.Center,
             color = Color.White.copy(alpha = 0.7f)
         )
+        if (error != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(error, textAlign = TextAlign.Center, color = Color(0xFFFFB4A9))
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(onClick = onOpenDefaultApps) {
+                Text("Open system settings", color = Color.White)
+            }
+        }
         Spacer(modifier = Modifier.height(32.dp))
         Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) {
             Text("Set as Default")
         }
+        Spacer(modifier = Modifier.height(12.dp))
+        TextButton(onClick = onSkip) { Text("Skip for now", color = Color.White.copy(alpha = 0.7f)) }
+    }
+}
+
+@Composable
+fun CallPermissionsExplanation(
+    showError: Boolean,
+    onGrant: () -> Unit,
+    onSkip: () -> Unit
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Call Permissions", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            "Allow InfoCaller to place and answer calls and detect incoming numbers. Without this, caller ID and dialing can't work.",
+            textAlign = TextAlign.Center,
+            color = Color.White.copy(alpha = 0.7f)
+        )
+        if (showError) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Some permissions were denied. Caller ID needs them — try again, or skip and grant later when asked.",
+                textAlign = TextAlign.Center,
+                color = Color(0xFFFFB4A9)
+            )
+        }
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) {
+            Text("Grant Permissions")
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        TextButton(onClick = onSkip) { Text("Skip for now", color = Color.White.copy(alpha = 0.7f)) }
     }
 }
 

@@ -36,14 +36,20 @@ fun MainScreen(
     
     LaunchedEffect(Unit) {
         val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
-        viewModel.loadSimInfos(context)
-        
-        val sims = com.infocaller.app.util.SimManager.getSimInfos(context)
-        app.operatorLogoManager.initialize(sims)
+        try {
+            viewModel.loadSimInfos(context)
+            val sims = com.infocaller.app.util.SimManager.getSimInfos(context)
+            app.operatorLogoManager.initialize(sims)
+        } catch (_: Exception) { }
 
+        // Heavy first sync only makes sense once contacts permission exists;
+        // otherwise Contacts/Recents screens ask lazily when actually opened.
         val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
         val isFirstSyncDone = prefs.getBoolean("is_first_sync_done", false)
-        if (!isFirstSyncDone) {
+        if (!isFirstSyncDone && com.infocaller.app.permissions.PermissionManager.hasPermissions(
+                context, com.infocaller.app.permissions.PermissionManager.CONTACTS_PERMISSIONS
+            )
+        ) {
             viewModel.performMasterSync()
             viewModel.triggerThrottledSync(context)
             viewModel.syncWhatsAppPhotos()
@@ -63,9 +69,9 @@ fun MainScreen(
 
     val tabs = remember {
         listOf(
+            BottomNavItem("dialer", "Dialer", Icons.Default.Call),
             BottomNavItem("recents", "Recents", Icons.Default.History),
             BottomNavItem("contacts", "Contacts", Icons.Default.ContactPhone),
-            BottomNavItem("dialer", "Dialer", Icons.Default.Call),
             BottomNavItem("nid", "NID", Icons.Default.Fingerprint),
             BottomNavItem("settings", "Settings", Icons.Default.Settings)
         )
@@ -152,7 +158,7 @@ fun MainScreen(
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = "recents",
+            startDestination = "dialer",
             modifier = Modifier.fillMaxSize(),
             enterTransition = { fadeIn(animationSpec = tween(150)) },
             exitTransition = { fadeOut(animationSpec = tween(150)) }

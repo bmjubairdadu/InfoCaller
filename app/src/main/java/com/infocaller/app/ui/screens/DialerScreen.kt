@@ -161,7 +161,7 @@ fun DialerScreen(
                     }
                     SelectionContainer {
                         BasicTextField(value = textFieldValue, onValueChange = { textFieldValue = it; viewModel.updateDialerInput(it.text) }, textStyle = TextStyle(fontSize = if (textFieldValue.text.length > 12) 32.sp else 44.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground, textAlign = androidx.compose.ui.text.style.TextAlign.Center), modifier = Modifier.wrapContentWidth().focusRequester(focusRequester), cursorBrush = SolidColor(Primary), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), singleLine = true, decorationBox = { innerTextField ->
-                            if (textFieldValue.text.isEmpty()) Text(" ", style = MaterialTheme.typography.displayLarge, modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                            if (textFieldValue.text.isEmpty()) Text("Enter number", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.35f), modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                             innerTextField()
                         })
                     }

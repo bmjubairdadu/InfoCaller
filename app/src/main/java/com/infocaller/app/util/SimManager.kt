@@ -40,7 +40,14 @@ object SimManager {
         } catch (_: SecurityException) {
             emptyList<PhoneAccountHandle>()
         }
-        val subInfos = subscriptionManager.activeSubscriptionInfoList ?: emptyList()
+        val subInfos = try {
+            subscriptionManager.activeSubscriptionInfoList ?: emptyList()
+        } catch (_: SecurityException) {
+            // READ_PHONE_STATE not granted yet (e.g. first launch before onboarding) — no SIMs to show.
+            emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
         
         val simInfos = mutableListOf<SimInfo>()
         
