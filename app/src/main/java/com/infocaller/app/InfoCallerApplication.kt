@@ -68,41 +68,38 @@ class InfoCallerApplication : Application() {
             CommunitySpamCsvProviderImpl(commonHttpClient),
             LocalRegionalMetadataProvider(),
             PhoneMetadataProviderImpl(this),
-            GoogleSearchProviderImpl(),
-            DorkingProviderImpl(),
+            // NOTE (live-test prune for BD mobiles): Google/Bing/DDG/Alt/Dorking/PhoneBridge
+            // scrapers either CAPTCHA or hallucinate names from titles + filler About text;
+            // PhoneInfoga always returns dork-link filler and its OVH branch is FR/BE/GB/ES/CH-only;
+            // UPI is +91-gated; Instagram needs a login session; Telegram t.me heuristic
+            // false-CONFIRMs (SocialEnum covers WA/TG presence); NidIdentity scrapes Google;
+            // UsernameLookup/SocialDeep are strict subsets of Sherlock. All unregistered below.
             SocialEnumProviderImpl(),
-            InstagramProviderImpl(this),
-            UsernameLookupProviderImpl(commonHttpClient),
             TruecallerProviderImpl(this),
-            LeakLookupProviderImpl(),
-            TelegramLookupProvider(),
+            // LeakLookup (low-precision DDG leak hint) + Telegram (t.me false-CONFIRM;
+            // SocialEnum covers WA/TG presence) + UPI (+91-gated, never hits +880) unregistered.
             EyeconProviderImpl(this),
-            UpiLookupProviderImpl(),
             DisposablePhoneProviderImpl(),
-            DarkWebLookupProviderImpl(),
             NominatimGeocodingProviderImpl(commonHttpClient, sharedGson),
             NidDatabaseProvider(database),
             NidGovEnrichmentProvider(database, commonHttpClient),
-            NidIdentityLookupProviderImpl(),
+            // NidIdentityLookup (Google-scrape hallucination) unregistered — see note above.
             EmailLookupProviderImpl(commonHttpClient, sharedGson),
             HoleheEmailProviderImpl(commonHttpClient),
             WhatsMyNameProviderImpl(commonHttpClient, sharedGson),
-            PhoneInfogaProviderImpl(),
-            DuckDuckGoSearchProviderImpl(),
-            BingSearchProviderImpl(),
+            // PhoneInfoga (filler) unregistered — see note above.
             GitHubSearchProviderImpl(commonHttpClient),
             SherlockProviderImpl(commonHttpClient),
-            FreePhoneValidationProviderImpl(commonHttpClient),
+            // FreePhoneValidation (DDG-scrape filler dup of spam scraper) unregistered.
             CallerIdDeepOsintProvider(commonHttpClient),
             GrepAppCodeSearchProviderImpl(commonHttpClient),
             SpamReputationScraperProviderImpl(),
             XposedOrNotBreachProviderImpl(commonHttpClient),
-            AlternativeSearchScraperProviderImpl(),
+            // AltSearchScraper (hallucinated names/filler) unregistered — see note above.
             DisifyEmailValidationProviderImpl(commonHttpClient),
             HackerTargetDomainReconProviderImpl(commonHttpClient),
             EmailSocialBridgeProvider(commonHttpClient),
-            UsernameSocialDeepProvider(commonHttpClient),
-            PhoneSocialBridgeProvider(commonHttpClient),
+            // UsernameSocialDeep (Sherlock subset) + PhoneSocialBridge (dup) unregistered.
             NameSocialVerifierProvider(),
             ImageSocialVerifierProvider(),
             FacebookProfileProvider(),
