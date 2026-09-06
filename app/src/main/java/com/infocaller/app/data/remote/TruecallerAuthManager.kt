@@ -177,10 +177,13 @@ class TruecallerAuthManager(
         val cc = PhoneNumberUtils.getCountryCode(norm) ?: "BD"
         val sig = PhoneNumberUtils.getSignificantNumber(norm) ?: norm.filter{it.isDigit()}
         val dial = PhoneNumberUtils.getDialingCode(norm) ?: 880
+        // Benojir VerifyOTPHelper.completeOnboarding reuses the exact verify JSON
+        // (countryCode/dialingCode/phoneNumber/requestId/token) with no extra
+        // fields — match it exactly so status-17 onboarding can't be rejected
+        // for an unexpected body shape.
         val body = JsonObject().apply {
             addProperty("countryCode",cc); addProperty("dialingCode",dial); addProperty("phoneNumber",sig)
             addProperty("requestId",requestId); addProperty("token",otp.filter{it.isDigit()})
-            addProperty("firstName","Info"); addProperty("lastName","User")
         }
         try{
             val req = Request.Builder().url("https://account-noneu.truecaller.com/v1/completeOnboarding")

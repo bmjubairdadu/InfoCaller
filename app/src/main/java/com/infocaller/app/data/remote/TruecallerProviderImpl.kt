@@ -10,8 +10,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 class TruecallerProviderImpl(private val context: Context) : LookupProvider {
@@ -49,15 +47,11 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
         val countryCode = PhoneNumberUtils.getCountryCode(identifier) ?: "BD"
         val significant = PhoneNumberUtils.getSignificantNumber(identifier) ?: identifier.filter { it.isDigit() }
 
-        // Primary: truecallerjs pattern - search5-noneu (Benojir/Caller-ID + sumithemmadi/truecallerjs)
-        val s5 = trySearch5(significant, countryCode, token)
-        if (s5 != null) return@withContext s5
-
-        // Fallback: profile-view-noneu v2 (existing)
-        val v2Result = tryV2Search(significant, countryCode, token)
-        if (v2Result != null) return@withContext v2Result
-
-        tryV0Search(significant, token)
+        // Single canonical endpoint per both reference repos
+        // (sumithemmadi/truecallerjs src/search.ts + Benojir GetPhoneNumberInfo):
+        // search5-noneu only. Legacy profile-view v2/v0 fallbacks were removed —
+        // same backend, so they only added 2x latency/heat on every miss.
+        return@withContext trySearch5(significant, countryCode, token)
     }
 
     override suspend fun bulkLookup(identifiers: List<String>, type: String, context: LookupContext): Map<String, PartialResult> = withContext(Dispatchers.IO) {
@@ -68,21 +62,29 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
         tryBulkSearch(chunk, token)
     }
 
-    // truecallerjs pattern: search5-noneu (primary, as in Benojir/Caller-ID GetPhoneNumberInfo + sumithemmadi/truecallerjs src/search.ts)
+    // truecallerjs src/search.ts pattern (Benojir GetPhoneNumberInfo matches):
+    // GET search5-noneu/v2/search?q=<significant>&countryCode=<region>&type=4&locAddr=&placement=SEARCHRESULTS,HISTORY,DETAILS&encoding=json
     private fun trySearch5(q: String, countryCode: String, token: String): PartialResult? {
         try {
-            val url = "https://search5-noneu.truecaller.com/v2/search?q=$q&countryCode=$countryCode&type=4&locAddr=&encoding=json"
+            val encQ = java.net.URLEncoder.encode(q, "UTF-8")
+            val encCc = java.net.URLEncoder.encode(countryCode, "UTF-8")
+            val url = "https://search5-noneu.truecaller.com/v2/search?q=$encQ&countryCode=$encCc&type=4&locAddr=&placement=SEARCHRESULTS,HISTORY,DETAILS&encoding=json"
             val req = Request.Builder().url(url)
                 .addHeader("Authorization", "Bearer $token")
+                .addHeader("content-type", "application/json; charset=UTF-8")
                 .addHeader("Accept", "application/json")
-                .addHeader("Accept-Encoding", "gzip")
+                // Do NOT set Accept-Encoding manually: OkHttp transparently
+                // decompresses gzip only when it adds the header itself. Setting
+                // it manually (as before) left gzip bytes in body.string() so
+                // JSON parsing failed and every lookup returned null.
                 .addHeader("User-Agent", "Truecaller/11.75.5 (Android;10)")
                 .build()
-            val resp = httpClient.newCall(req).execute()
-            val code = resp.code
-            if (code == 401 || code == 403) { clearAuthToken(); return null }
-            if (code == 429 || code == 404) return null
-            if (resp.isSuccessful) {
+            httpClient.newCall(req).execute().use { resp ->
+                val code = resp.code
+                if (code == 401 || code == 403) { clearAuthToken(); return null }
+                if (code == 429 || code == 404) return null
+                if (!resp.isSuccessful) return null
+                // Body is already decompressed by OkHttp (see above).
                 val body = resp.body?.string() ?: return null
                 val json = try { gson.fromJson(body, JsonObject::class.java) } catch (_: Exception) { null } ?: return null
                 val arr = json.getAsJsonArray("data") ?: return null
@@ -97,99 +99,37 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
 
     private fun tryBulkSearch(numbers: List<String>, token: String): Map<String, PartialResult> {
         try {
+            // truecallerjs bulk: max 30 per request; q must be URL-encoded
+            // or '+' in E.164 numbers decodes to space server-side.
             val q = numbers.joinToString(",")
             // Default region from first number
             val rc = PhoneNumberUtils.getCountryCode(numbers.firstOrNull() ?: "") ?: "BD"
-            val url = "https://search5-noneu.truecaller.com/v2/bulk?q=$q&countryCode=$rc&type=14&placement=SEARCHRESULTS,HISTORY,DETAILS&encoding=json"
+            val encQ = java.net.URLEncoder.encode(q, "UTF-8")
+            val encRc = java.net.URLEncoder.encode(rc, "UTF-8")
+            val url = "https://search5-noneu.truecaller.com/v2/bulk?q=$encQ&countryCode=$encRc&type=14&placement=SEARCHRESULTS,HISTORY,DETAILS&encoding=json"
             val req = Request.Builder().url(url)
                 .addHeader("Authorization", "Bearer $token")
+                .addHeader("content-type", "application/json; charset=UTF-8")
                 .addHeader("Accept", "application/json")
+                // Same gzip note as trySearch5: let OkHttp auto-decompress.
                 .addHeader("User-Agent", "Truecaller/11.75.5 (Android;10)")
                 .build()
-            val resp = httpClient.newCall(req).execute()
-            if (!resp.isSuccessful) return emptyMap()
-            val body = resp.body?.string() ?: return emptyMap()
-            val json = try { gson.fromJson(body, JsonObject::class.java) } catch (_: Exception) { return emptyMap() }
-            val arr = json.getAsJsonArray("data") ?: return emptyMap()
-            val map = mutableMapOf<String, PartialResult>()
-            for (el in arr) {
-                val obj = el.asJsonObject ?: continue
-                val phones = obj.getAsJsonArray("phones") ?: continue
-                val phone = phones.firstOrNull()?.asJsonObject?.get("e164Format")?.asString ?: continue
-                if (!obj.has("name")) continue
-                map[phone] = TruecallerParser.mapResult(obj, id, version)
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyMap()
+                val body = resp.body?.string() ?: return emptyMap()
+                val json = try { gson.fromJson(body, JsonObject::class.java) } catch (_: Exception) { return emptyMap() }
+                val arr = json.getAsJsonArray("data") ?: return emptyMap()
+                val map = mutableMapOf<String, PartialResult>()
+                for (el in arr) {
+                    val obj = el.asJsonObject ?: continue
+                    val phones = obj.getAsJsonArray("phones") ?: continue
+                    val phone = phones.firstOrNull()?.asJsonObject?.get("e164Format")?.asString ?: continue
+                    if (!obj.has("name")) continue
+                    map[phone] = TruecallerParser.mapResult(obj, id, version)
+                }
+                return map
             }
-            return map
         } catch (_: Exception) { return emptyMap() }
-    }
-
-    private fun tryV2Search(q: String, countryCode: String, token: String): PartialResult? {
-        try {
-            val url = "https://profile-view-noneu.truecaller.com/v2/search?q=$q&countryCode=$countryCode&type=4&encoding=json"
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("Authorization", "Bearer $token")
-                .addHeader("User-Agent", "Truecaller/15.34.6 (Android;14)")
-                .addHeader("Accept", "application/json")
-                .addHeader("Host", "profile-view-noneu.truecaller.com")
-                .addHeader("Connection", "Keep-Alive")
-                .build()
-
-            val response = httpClient.newCall(request).execute()
-            val code = response.code
-            if (code == 401 || code == 403) {
-                clearAuthToken()
-                response.close()
-                return null
-            }
-            if (code == 429 || code == 404) { response.close(); return null }
-            if (!response.isSuccessful) { response.close(); return null }
-            val body = response.body?.string()
-            response.close()
-            if (body == null) return null
-            val json = try { gson.fromJson(body, JsonObject::class.java) } catch (_: Exception) { null } ?: return null
-            // Truecaller returns {"data":[]} for not found - check empty array explicitly
-            val dataArr = json.getAsJsonArray("data") ?: return null
-            if (dataArr.size() == 0) return null
-            val data = dataArr.firstOrNull()?.asJsonObject ?: return null
-            return TruecallerParser.mapResult(data, id, version)
-        } catch (_: Exception) {
-        }
-        return null
-    }
-
-    private fun tryV0Search(q: String, token: String): PartialResult? {
-        try {
-            val url = "https://profile-view-noneu.truecaller.com/v0/wsm/search?encoding=json"
-            val bodyObj = JsonObject().apply {
-                addProperty("isPhoneBookContact", false)
-                addProperty("phoneNumber", q.toLongOrNull() ?: 0L)
-            }
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("Authorization", "Bearer $token")
-                .addHeader("Content-Type", "application/json")
-                .addHeader("User-Agent", "Truecaller/15.34.6 (Android;14)")
-                .post(bodyObj.toString().toRequestBody("application/json".toMediaType()))
-                .build()
-
-            val response = httpClient.newCall(request).execute()
-            val code = response.code
-            if (code == 401 || code == 403) { clearAuthToken(); response.close(); return null }
-            if (code == 404 || code == 429) { response.close(); return null }
-            if (!response.isSuccessful) { response.close(); return null }
-            val body = response.body?.string()
-            response.close()
-            if (body == null) return null
-            val json = try { gson.fromJson(body, JsonObject::class.java) } catch (_: Exception) { null } ?: return null
-            val dataArr = json.getAsJsonArray("data")
-            if (dataArr != null && dataArr.size() == 0) return null
-            val data = dataArr?.firstOrNull()?.asJsonObject ?: json
-            // Validate that data actually contains a name - otherwise it's not a hit
-            if (!data.has("name") && !data.has("names")) return null
-            return TruecallerParser.mapResult(data, id, version)
-        } catch (_: Exception) { }
-        return null
     }
 
     private fun getAuthToken(): String? {

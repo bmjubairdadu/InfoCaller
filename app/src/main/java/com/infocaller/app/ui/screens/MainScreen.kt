@@ -42,15 +42,16 @@ fun MainScreen(
 
         // Heavy first sync only makes sense once contacts permission exists;
         // otherwise Contacts/Recents screens ask lazily when actually opened.
+        // Heat fix: run ONLY the throttled worker (gap-aware, batched) — never
+        // the direct full-scan calls. performMasterSync + syncWhatsAppPhotos each
+        // re-scanned every contact with full provider lookups on every launch.
         val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
         val isFirstSyncDone = prefs.getBoolean("is_first_sync_done", false)
         if (!isFirstSyncDone && com.infocaller.app.permissions.PermissionManager.hasPermissions(
                 context, com.infocaller.app.permissions.PermissionManager.CONTACTS_PERMISSIONS
             )
         ) {
-            viewModel.performMasterSync()
             viewModel.triggerThrottledSync(context)
-            viewModel.syncWhatsAppPhotos()
             prefs.edit { putBoolean("is_first_sync_done", true) }
         }
     }
@@ -123,9 +124,9 @@ fun MainScreen(
                             ),
                             onClick = {
                                 if (currentRoute != item.route) {
-                                    if (item.route == "contacts") {
-                                        viewModel.syncWhatsAppPhotos()
-                                    }
+                                    // Heat fix: no full re-scan on tab switch. The
+                                    // throttled worker handles gap-aware enrichment;
+                                    // syncWhatsAppPhotos() re-ran every contact here.
                                     if (item.route == "settings") {
                                         parentNavController.navigate("settings")
                                     } else {

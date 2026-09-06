@@ -9,6 +9,14 @@ import kotlinx.coroutines.*
 class PublicLookupEngine(
     private val providerManager: ProviderManager
 ) : IPublicLookupEngine {
+    companion object {
+        /** Per-provider network timeout (was 15s — radio held open too long). */
+        const val PROVIDER_TIMEOUT_MS = 8000L
+        /** Max providers tried per scan — bounds radio/CPU per lookup. */
+        const val MAX_PROVIDERS_PER_SCAN = 8
+        /** Max deep-discovery pivots per scan (was 5 + NID + email/handle mining). */
+        const val MAX_PIVOTS = 1
+    }
     override suspend fun performLookup(
         identifier: String,
         type: String,
@@ -28,11 +36,17 @@ class PublicLookupEngine(
             requiredCapabilities.toMutableSet()
         }
 
+        // Heat/lag fix: cap the fan-out. Dozens of providers x deep-discovery
+        // pivots x 15s timeouts = sustained radio+CPU = hot phone. Skip BROKEN
+        // providers, stop after a small number of attempts, and let the
+        // capability/early-exit logic below end the scan as soon as we have
+        // a name + photo.
         val allProviders = providerManager.getAllProviders()
             .filter { p ->
                 // Only FREE/LOW providers run on-device. HIGH/MEDIUM are
                 // opt-in via registration and never auto-run.
-                p.costClass == CostClass.FREE || p.costClass == CostClass.LOW
+                (p.costClass == CostClass.FREE || p.costClass == CostClass.LOW) &&
+                    providerManager.getHealth(p.id)?.status != ProviderStatus.BROKEN
             }
         val tc = allProviders.find { it.id.contains("truecaller", ignoreCase = true) }
         val eyecon = allProviders.find { it.id.contains("eyecon", ignoreCase = true) }
@@ -46,7 +60,9 @@ class PublicLookupEngine(
 
         var photoFound = false
         var nameFound = false
+        var attempts = 0
         for (provider in executionPlan) {
+            if (attempts >= MAX_PROVIDERS_PER_SCAN) break
             if (alreadyCompletedProviders.contains(provider.id)) continue
             val caps = provider.capabilities.toMutableSet()
             if (photoFound) caps.remove(Capability.PROFILE_PHOTO)
@@ -56,10 +72,11 @@ class PublicLookupEngine(
                 if (caps.isEmpty()) continue
                 continue
             }
-            
+
+            attempts++
             try {
                 val start = System.currentTimeMillis()
-                val result = withTimeoutOrNull(15000) {
+                val result = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
                     provider.lookup(normalized, type = type)
                 }
 
@@ -88,7 +105,7 @@ class PublicLookupEngine(
                 // Never swallow cancellation — the call path must stay cancellable.
                 throw e
             } catch (e: Exception) {
-                providerManager.reportResult(provider.id, false, 15000)
+                providerManager.reportResult(provider.id, false, PROVIDER_TIMEOUT_MS)
             }
         }
 
@@ -101,9 +118,12 @@ class PublicLookupEngine(
         onPartialResult: suspend (PartialResult) -> Unit,
         accumulator: MutableList<PartialResult>
     ) {
-        if (scanned.size > 15) return
+        // Heat fix: deep discovery used to fan out up to 5 pivots + NID/email/
+        // handle mining per provider hit — each pivot re-runs the provider set.
+        // Cap total pivots and only follow high-signal username pivots.
+        if (scanned.size > 10) return
         var pivots = 0
-        val maxPivots = 5
+        val maxPivots = MAX_PIVOTS
         for (profile in result.socialProfiles) {
             if (pivots >= maxPivots) break
             val username = profile.username?.trim()
@@ -111,54 +131,12 @@ class PublicLookupEngine(
                 scanned.add(username); pivots++
                 lookupPartials(username, IdentifierType.USERNAME) { partial -> accumulator.add(partial); onPartialResult(partial) }
             }
-            val handle = profile.profileUrl?.substringAfterLast("/")?.substringBefore("?")?.trim()
-            if (pivots < maxPivots && !handle.isNullOrBlank() && handle != username && handle.length in 3..30 && !scanned.contains(handle) && !handle.contains(".")) {
-                scanned.add(handle); pivots++
-                lookupPartials(handle, IdentifierType.USERNAME) { partial -> accumulator.add(partial); onPartialResult(partial) }
-            }
+            if (pivots >= maxPivots) break
         }
-        if (pivots >= maxPivots) return
-        val email = result.email?.trim()
-        if (!email.isNullOrBlank() && !scanned.contains(email) && email.contains("@")) {
-            scanned.add(email); pivots++
-
-            lookupPartials(email, IdentifierType.EMAIL) { partial -> accumulator.add(partial); onPartialResult(partial) }
-        }
-        if (pivots >= maxPivots) return
-        val name = result.name?.trim()
-        if (!name.isNullOrBlank() && pivots < maxPivots) {
-            val slug = name.lowercase().replace(Regex("[^a-z0-9]"), "")
-            if (slug.length in 4..30 && !scanned.contains(slug)) {
-                scanned.add(slug); pivots++
-                lookupPartials(slug, IdentifierType.USERNAME) { partial -> accumulator.add(partial); onPartialResult(partial) }
-            }
-        }
-        if (pivots >= maxPivots) return
-        if (!name.isNullOrBlank() && name.split(" ").size in 2..4) {
-            if (!scanned.contains("name:$name") && pivots < maxPivots) {
-                scanned.add("name:$name"); pivots++
-                lookupPartials(name, IdentifierType.FULL_NAME){ partial -> accumulator.add(partial); onPartialResult(partial) }
-            }
-        }
-        if (pivots >= maxPivots) return
-        val img = result.imageUrl
-        if (!img.isNullOrBlank() && img.startsWith("http") && !scanned.contains(img) && pivots < maxPivots) {
-            scanned.add(img); pivots++
-
-            lookupPartials(img, "IMAGE_URL"){ partial -> accumulator.add(partial); onPartialResult(partial) }
-        }
-        if (pivots >= maxPivots) return
-        result.about?.let { about ->
-            Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}").find(about)?.value?.let { foundEmail ->
-                if (!scanned.contains(foundEmail) && pivots < maxPivots) { scanned.add(foundEmail); pivots++; lookupPartials(foundEmail, IdentifierType.EMAIL){ accumulator.add(it); onPartialResult(it)} }
-            }
-            Regex("@([A-Za-z0-9_.]{3,30})").find(about)?.groupValues?.getOrNull(1)?.let { foundUser ->
-                if (!scanned.contains(foundUser) && pivots < maxPivots && foundUser.length in 3..30) { scanned.add(foundUser); pivots++; lookupPartials(foundUser, IdentifierType.USERNAME){ accumulator.add(it); onPartialResult(it)} }
-            }
-        }
-        if (pivots >= maxPivots) return
-        val nid = result.nid?.trim()
-        if (!nid.isNullOrBlank() && !scanned.contains(nid)) { scanned.add(nid); lookupPartials(nid, IdentifierType.NID){ accumulator.add(it); onPartialResult(it)} }
+        // Heat fix: handle/email/slug/full-name/image/about/NID pivots removed.
+        // Each re-ran the provider set for near-zero signal and multiplied
+        // radio + ML cost per scan. Username pivots above are the only
+        // high-signal follow-ups retained.
     }
 
     private fun isSufficientlyDetailed(results: List<PartialResult>): Boolean {
