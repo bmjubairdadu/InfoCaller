@@ -48,15 +48,7 @@ enum class Capability {
     PORTING_HISTORY,
     TELEGRAM_LINK,
     DISPOSABLE_CHECK,
-    IP_RECON,
-    DOMAIN_INTEL,
-    CRYPTO_RECON,
-    SOCIAL_UID_MATCH,
     DEEP_PII,
-    VEHICLE_INTEL,
-    FINANCIAL_RECON,
-    CORPORATE_SEARCH,
-    NETWORK_PIVOT,
     DARK_WEB_MENTION
 }
 
@@ -74,13 +66,7 @@ object IdentifierType {
     const val USERNAME = "USERNAME"
     const val IP_ADDRESS = "IP_ADDRESS"
     const val DOMAIN = "DOMAIN"
-    const val SOCIAL_UID = "SOCIAL_UID"
-    const val CRYPTO_WALLET = "CRYPTO_WALLET"
     const val FULL_NAME = "FULL_NAME"
-    const val PLATE_NUMBER = "PLATE_NUMBER"
-    const val IBAN = "IBAN"
-    const val VAT_ID = "VAT_ID"
-    const val MAC_ADDRESS = "MAC_ADDRESS"
     const val NID = "NID"
     const val DOB = "DOB"
 }

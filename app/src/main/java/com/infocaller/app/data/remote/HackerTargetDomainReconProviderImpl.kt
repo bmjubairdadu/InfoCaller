@@ -14,8 +14,7 @@ import okhttp3.Request
  * Free domain + IP recon — no keys.
  *  - HackerTarget reverse-IP (free tier, rate-limited): https://api.hackertarget.com/reverseiplookup/?q=
  *  - ip-api.com free (45 req/min): https://ip-api.com/json/{ip}?fields=...
- *  - RDAP is already covered by DomainLookupProviderImpl; this adds co-hosted
- *    domains + hosting/ISP context useful when pivoting from email domains.
+ *  - Adds co-hosted domains + hosting/ISP context useful when pivoting from email domains.
  */
 class HackerTargetDomainReconProviderImpl(
     private val httpClient: OkHttpClient
@@ -24,7 +23,7 @@ class HackerTargetDomainReconProviderImpl(
     override val name = "HackerTarget Domain Recon"
     override val version = "1.0.0"
     override val capabilities = setOf(
-        Capability.DOMAIN_INTEL, Capability.IP_RECON, Capability.CITY,
+        Capability.CITY,
         Capability.COUNTRY, Capability.CARRIER, Capability.PUBLIC_SEARCH
     )
     override val priority = 55

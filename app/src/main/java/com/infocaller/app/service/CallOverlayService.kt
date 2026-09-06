@@ -42,7 +42,6 @@ import androidx.lifecycle.*
 import androidx.savedstate.*
 import coil.compose.AsyncImage
 import com.infocaller.app.data.repository.ContactEnrichmentService
-import com.infocaller.app.domain.model.Caller
 import com.infocaller.app.domain.repository.CallerRepository
 import com.infocaller.app.ui.theme.*
 import com.infocaller.app.util.*

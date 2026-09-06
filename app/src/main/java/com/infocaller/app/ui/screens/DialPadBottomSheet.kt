@@ -218,9 +218,17 @@ private fun DialPadContent(
         Spacer(modifier = Modifier.height(20.dp))
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             DialPadActionIconButton(icon = Icons.Default.PersonAdd, contentDescription = "Add Contact", size = 56.dp, onClick = { if (textFieldValue.text.isNotEmpty()) showAddContactDialog = true })
-            Surface(onClick = { if (textFieldValue.text.isNotEmpty()) onCall(textFieldValue.text) }, modifier = Modifier.size(72.dp).shadow(12.dp, CircleShape), shape = CircleShape, color = Color.Transparent) {
+            val isUssdInput = remember(textFieldValue.text) { com.infocaller.app.util.UssdStore.isUssd(textFieldValue.text) }
+            Surface(onClick = {
+                if (textFieldValue.text.isEmpty()) return@Surface
+                if (isUssdInput) {
+                    com.infocaller.app.util.UssdStore.run(context, textFieldValue.text)
+                } else {
+                    onCall(textFieldValue.text)
+                }
+            }, modifier = Modifier.size(72.dp).shadow(12.dp, CircleShape), shape = CircleShape, color = Color.Transparent) {
                 Box(modifier = Modifier.fillMaxSize().background(Brush.linearGradient(colors = listOf(GradientStart, GradientEnd))), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Call, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(32.dp))
+                    Icon(if (isUssdInput) Icons.AutoMirrored.Filled.SendToMobile else Icons.Default.Call, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(32.dp))
                 }
             }
             DialPadActionIconButton(icon = Icons.AutoMirrored.Filled.Backspace, contentDescription = "Backspace", size = 56.dp, onClick = {

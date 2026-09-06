@@ -1,8 +1,5 @@
 package com.infocaller.app.util
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
@@ -28,13 +25,6 @@ object OSINTManager {
             DorkLink("Operator Menu", "General service menu (GP/Robi/BL)", "*121#", Icons.Default.Menu),
             DorkLink("Internet Balance", "Check remaining data volume", "*121*1*4#", Icons.Default.DataUsage)
         )
-    }
-
-    fun generateNidDorkLinks(nid: String, dob: String): List<DorkLink> {
-        // Retired: Google dork links were pruned repo-wide (blocks +
-        // title-guess hallucinations; dangerous on NIDs). Kept for
-        // interface stability; returns empty so scans show NID + DOB only.
-        return emptyList()
     }
 
     fun generateExtendedDorkLinks(phoneNumber: String): List<DorkLink> {
@@ -216,79 +206,6 @@ object OSINTManager {
         ))
 
         return links
-    }
-
-    fun generateEmailDorkLinks(email: String): List<DorkLink> {
-        val e = email.trim()
-        return listOf(
-            DorkLink(
-                "XposedOrNot Breach Check",
-                "Free breach check, no key required",
-                "https://xposedornot.com/?${urlEncode(e)}",
-                Icons.Default.Security
-            ),
-            DorkLink(
-                "Grep.app Email Search",
-                "Find email in public GitHub code",
-                "https://grep.app/search?q=${urlEncode("\"$e\"")}",
-                Icons.Default.Code
-            ),
-            DorkLink(
-                "GitHub User Pivot",
-                "Username derived from email prefix",
-                "https://github.com/${urlEncode(e.substringBefore("@"))}",
-                Icons.Default.Person
-            ),
-            DorkLink(
-                "Gravatar Lookup",
-                "Photo / profile if Gravatar exists",
-                "https://gravatar.com/${urlEncode(e.lowercase().trim())}",
-                Icons.Default.Face
-            ),
-            DorkLink(
-                "Google Email Dork",
-                "Public mentions of this email",
-                "https://www.google.com/search?q=${urlEncode("\"$e\"")}",
-                Icons.Default.Search
-            )
-        )
-    }
-
-    fun generateUsernameDorkLinks(username: String): List<DorkLink> {
-        val u = username.trim()
-        return listOf(
-            DorkLink(
-                "Grep.app Username Search",
-                "Find username in public code",
-                "https://grep.app/search?q=${urlEncode(u)}",
-                Icons.Default.Code
-            ),
-            DorkLink(
-                "GitHub Profile",
-                "Direct GitHub profile check",
-                "https://github.com/${urlEncode(u)}",
-                Icons.Default.Code
-            ),
-            DorkLink(
-                "WhatsMyName DB",
-                "Username DB covering ~600 sites",
-                "https://raw.githubusercontent.com/WebBreacher/WhatsMyName/main/wmn-data.json",
-                Icons.Default.List
-            ),
-            DorkLink(
-                "Google Username Dork",
-                "Public mentions of this handle",
-                "https://www.google.com/search?q=${urlEncode("\"$u\" site:github.com OR site:reddit.com OR site:instagram.com OR site:tiktok.com")}",
-                Icons.Default.Search
-            )
-        )
-    }
-
-    fun openLink(context: Context, url: String) {
-        try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-            context.startActivity(intent)
-        } catch (_: Exception) {}
     }
 
     private fun urlEncode(value: String): String {

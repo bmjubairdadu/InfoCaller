@@ -380,6 +380,14 @@ fun SettingsScreen(
                 )
             }
 
+            SettingsSection("USSD Codes") {
+                UssdSettingsContent()
+            }
+
+            SettingsSection("Soundboard") {
+                SoundboardSettingsContent()
+            }
+
             SettingsSection("Appearance") {
                 val darkTheme by viewModel.themeMode.collectAsState()
                 
@@ -471,4 +479,349 @@ fun SettingsInfoRow(title: String, value: String, icon: ImageVector) {
         leadingContent = { Icon(icon, null, tint = Primary) },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
+}
+
+@Composable
+private fun UssdSettingsContent() {
+    val context = LocalContext.current
+    var entries by remember { mutableStateOf(com.infocaller.app.util.UssdStore.load(context)) }
+    var newCode by remember { mutableStateOf("") }
+    var newLabel by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun persist(next: List<com.infocaller.app.util.UssdEntry>) {
+        entries = next
+        com.infocaller.app.util.UssdStore.save(context, next)
+    }
+
+    Column(modifier = Modifier.padding(16.dp)) {
+        Text(
+            "USSD shortcuts appear as chips in the dial pad and run with one tap. Use the call button in the dial pad to run a * or # code.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        OutlinedTextField(
+            value = newCode,
+            onValueChange = { newCode = it; error = null },
+            label = { Text("USSD code, e.g. *566#") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = newLabel,
+            onValueChange = { newLabel = it },
+            label = { Text("Name (optional)") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            singleLine = true
+        )
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row {
+            Button(onClick = {
+                val code = newCode.trim()
+                if (!com.infocaller.app.util.UssdStore.isUssd(code)) {
+                    error = "Enter a valid USSD code starting with * or #"
+                    return@Button
+                }
+                if (entries.any { it.code.equals(code, ignoreCase = true) }) {
+                    error = "That code is already saved"
+                    return@Button
+                }
+                persist(entries + com.infocaller.app.util.UssdEntry(code = code, label = newLabel.trim()))
+                newCode = ""
+                newLabel = ""
+                error = null
+            }) { Text("Add") }
+            Spacer(modifier = Modifier.width(8.dp))
+            TextButton(onClick = {
+                persist(com.infocaller.app.util.UssdStore.defaultEntries())
+                error = null
+            }) { Text("Reset defaults") }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        entries.forEach { entry ->
+            ListItem(
+                headlineContent = { Text(if (entry.label.isNotBlank()) entry.label else entry.code) },
+                supportingContent = { if (entry.label.isNotBlank()) Text(entry.code) else null },
+                leadingContent = { Icon(Icons.AutoMirrored.Filled.SendToMobile, null, tint = Primary) },
+                trailingContent = {
+                    Row {
+                        IconButton(onClick = {
+                            try { com.infocaller.app.util.UssdStore.run(context, entry.code) } catch (_: Exception) { }
+                        }) { Icon(Icons.Default.PlayArrow, "Run", tint = Primary) }
+                        IconButton(onClick = { persist(entries.filter { it.id != entry.id }) }) {
+                            Icon(Icons.Default.Delete, "Delete")
+                        }
+                    }
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
+        if (entries.isEmpty()) {
+            Text(
+                "No USSD codes saved.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun SoundboardSettingsContent() {
+    val context = LocalContext.current
+    var entries by remember { mutableStateOf(com.infocaller.app.util.SoundboardStore.load(context)) }
+    var playingId by remember { mutableStateOf<String?>(null) }
+    var newName by remember { mutableStateOf("") }
+    var newEmoji by remember { mutableStateOf("") }
+    var newText by remember { mutableStateOf("") }
+    var newKind by remember { mutableStateOf(com.infocaller.app.util.SoundboardStore.KIND_TTS) }
+    var newTone by remember { mutableStateOf("beep") }
+    var newFileUri by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var editing by remember { mutableStateOf<com.infocaller.app.util.SoundboardEntry?>(null) }
+
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) { }
+            newFileUri = uri.toString()
+            newKind = com.infocaller.app.util.SoundboardStore.KIND_FILE
+        }
+    }
+
+    fun persist(next: List<com.infocaller.app.util.SoundboardEntry>) {
+        entries = next
+        com.infocaller.app.util.SoundboardStore.save(context, next)
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { com.infocaller.app.util.SoundboardPlayer.stop() }
+    }
+
+    Column(modifier = Modifier.padding(16.dp)) {
+        Text(
+            "Discord-style soundboard for calls. Sounds play through the speaker so the other side hears them. Customize each button with a name and emoji.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            entries.forEach { entry ->
+                val isPlaying = playingId == entry.id
+                FilterChip(
+                    selected = isPlaying,
+                    onClick = {
+                        try {
+                            com.infocaller.app.util.SoundboardPlayer.play(context, entry) {
+                                playingId = com.infocaller.app.util.SoundboardPlayer.playingId
+                            }
+                            playingId = com.infocaller.app.util.SoundboardPlayer.playingId
+                        } catch (_: Exception) { }
+                    },
+                    label = { Text("${entry.emoji} ${entry.name}") },
+                    trailingIcon = {
+                        if (isPlaying) Icon(Icons.Default.Stop, null, modifier = Modifier.size(16.dp))
+                    }
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        OutlinedTextField(
+            value = newName,
+            onValueChange = { newName = it; error = null },
+            label = { Text("Button name") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = newEmoji,
+            onValueChange = { if (it.length <= 4) newEmoji = it },
+            label = { Text("Emoji") },
+            placeholder = { Text("\uD83D\uDD0A") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            singleLine = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FilterChip(
+                selected = newKind == com.infocaller.app.util.SoundboardStore.KIND_TTS,
+                onClick = { newKind = com.infocaller.app.util.SoundboardStore.KIND_TTS },
+                label = { Text("Voice") }
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            FilterChip(
+                selected = newKind == com.infocaller.app.util.SoundboardStore.KIND_TONE,
+                onClick = { newKind = com.infocaller.app.util.SoundboardStore.KIND_TONE },
+                label = { Text("Tone") }
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            FilterChip(
+                selected = newKind == com.infocaller.app.util.SoundboardStore.KIND_FILE,
+                onClick = {
+                    newKind = com.infocaller.app.util.SoundboardStore.KIND_FILE
+                    audioPicker.launch("audio/*")
+                },
+                label = { Text("Audio file") }
+            )
+        }
+        if (newKind == com.infocaller.app.util.SoundboardStore.KIND_TTS) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = newText,
+                onValueChange = { newText = it },
+                label = { Text("What the voice says") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            )
+        }
+        if (newKind == com.infocaller.app.util.SoundboardStore.KIND_TONE) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Row {
+                listOf("beep", "chime", "airhorn").forEach { tone ->
+                    FilterChip(
+                        selected = newTone == tone,
+                        onClick = { newTone = tone },
+                        label = { Text(tone.replaceFirstChar { c -> c.uppercase() }) }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+            }
+        }
+        if (newKind == com.infocaller.app.util.SoundboardStore.KIND_FILE) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    newFileUri?.takeLast(32)?.let { "…$it" } ?: "No file picked",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { audioPicker.launch("audio/*") }) { Text("Pick audio") }
+            }
+        }
+        error?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row {
+            Button(onClick = {
+                val name = newName.trim()
+                if (name.isEmpty()) {
+                    error = "Give the button a name"
+                    return@Button
+                }
+                val emoji = newEmoji.ifBlank { "\uD83D\uDD0A" }
+                val payload = when (newKind) {
+                    com.infocaller.app.util.SoundboardStore.KIND_TTS -> newText.trim().ifBlank { name }
+                    com.infocaller.app.util.SoundboardStore.KIND_TONE -> newTone
+                    else -> newFileUri ?: ""
+                }
+                if (newKind == com.infocaller.app.util.SoundboardStore.KIND_FILE && payload.isBlank()) {
+                    error = "Pick an audio file first"
+                    return@Button
+                }
+                persist(
+                    entries + com.infocaller.app.util.SoundboardEntry(
+                        name = name, emoji = emoji, kind = newKind, payload = payload
+                    )
+                )
+                newName = ""
+                newEmoji = ""
+                newText = ""
+                newFileUri = null
+                error = null
+            }) { Text("Add sound") }
+            Spacer(modifier = Modifier.width(8.dp))
+            TextButton(onClick = {
+                persist(com.infocaller.app.util.SoundboardStore.defaultEntries())
+                error = null
+            }) { Text("Reset defaults") }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        entries.forEach { entry ->
+            ListItem(
+                headlineContent = { Text("${entry.emoji} ${entry.name}") },
+                supportingContent = {
+                    Text(
+                        when (entry.kind) {
+                            com.infocaller.app.util.SoundboardStore.KIND_TTS -> "Voice: ${(entry.payload.ifBlank { entry.name }).take(60)}"
+                            com.infocaller.app.util.SoundboardStore.KIND_FILE -> "Audio file"
+                            else -> "Tone: ${entry.payload}"
+                        }
+                    )
+                },
+                trailingContent = {
+                    Row {
+                        IconButton(onClick = { editing = entry; newName = entry.name; newEmoji = entry.emoji }) {
+                            Icon(Icons.Default.Edit, "Rename")
+                        }
+                        IconButton(onClick = {
+                            com.infocaller.app.util.SoundboardPlayer.stop()
+                            persist(entries.filter { it.id != entry.id })
+                        }) { Icon(Icons.Default.Delete, "Delete") }
+                    }
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
+    }
+
+    val editEntry = editing
+    if (editEntry != null) {
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            title = { Text("Rename sound") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("Button name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = newEmoji,
+                        onValueChange = { v -> if (v.length <= 4) newEmoji = v },
+                        label = { Text("Emoji") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val name = newName.trim()
+                    if (name.isNotEmpty()) {
+                        persist(entries.map {
+                            if (it.id == editEntry.id) it.copy(name = name, emoji = newEmoji.ifBlank { it.emoji })
+                            else it
+                        })
+                    }
+                    editing = null
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editing = null }) { Text("Cancel") }
+            }
+        )
+    }
 }

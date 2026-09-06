@@ -55,8 +55,19 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 class InCallActivity : ComponentActivity() {
+    private var proximityLock: com.infocaller.app.util.ProximityLock? = null
+
+    fun setProximityHeld(held: Boolean) {
+        try { proximityLock?.setHeld(held) } catch (_: Exception) { }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        proximityLock = try {
+            com.infocaller.app.util.ProximityLock(this)
+        } catch (_: Exception) {
+            null
+        }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -77,6 +88,12 @@ class InCallActivity : ComponentActivity() {
                 InCallScreen(onDismiss = { finish() })
             }
         }
+    }
+
+    override fun onDestroy() {
+        try { proximityLock?.release() } catch (_: Exception) { }
+        proximityLock = null
+        super.onDestroy()
     }
 }
 
@@ -112,9 +129,25 @@ fun InCallScreen(onDismiss: () -> Unit) {
 
     val infiniteTransition = rememberInfiniteTransition(label = "Pulse")
 
+    val activity = context as? ComponentActivity
+
     DisposableEffect(Unit) {
         CallManager.init(context)
-        onDispose {}
+        onDispose {
+            try { (activity as? InCallActivity)?.setProximityHeld(false) } catch (_: Exception) { }
+        }
+    }
+
+    DisposableEffect(callState, isSpeakerOn) {
+        // Proximity screen-off: held ONLY during an active earpiece call —
+        // sensor blanks the screen at the ear and wakes it when pulled away.
+        // Released while ringing (user needs answer buttons), on speaker
+        // (phone is away from the face), or when the call ends.
+        val hold = com.infocaller.app.util.ProximityPolicy.shouldHold(callState, isSpeakerOn)
+        try {
+            (activity as? InCallActivity)?.setProximityHeld(hold)
+        } catch (_: Exception) { }
+        onDispose { }
     }
 
     val callback = object : Call.Callback() {
@@ -636,6 +669,7 @@ private fun TapAnswerButton(
 fun ActiveCallControls(number: String, isMuted: Boolean, isSpeakerOn: Boolean, isHolding: Boolean, isRecording: Boolean, onMute: () -> Unit, onSpeaker: () -> Unit, onHold: () -> Unit, onEnd: () -> Unit, onKeypad: () -> Unit) {
     val context = LocalContext.current
     var showMore by remember { mutableStateOf(false) }
+    var showSoundboard by remember { mutableStateOf(false) }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             InCallButton(icon = if (isMuted) Icons.Rounded.MicOff else Icons.Rounded.Mic, label = "Mute", active = isMuted, onClick = onMute)
@@ -654,6 +688,7 @@ fun ActiveCallControls(number: String, isMuted: Boolean, isSpeakerOn: Boolean, i
         Spacer(modifier = Modifier.height(20.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             InCallButton(icon = Icons.Rounded.MoreHoriz, label = "More", onClick = { showMore = true })
+            InCallButton(icon = Icons.Rounded.MusicNote, label = "Sounds", onClick = { showSoundboard = true })
             InCallButton(icon = Icons.Rounded.PersonAdd, label = "Add call", onClick = {
                 try {
                     val intent = android.content.Intent(android.content.Intent.ACTION_DIAL)
@@ -709,6 +744,9 @@ fun ActiveCallControls(number: String, isMuted: Boolean, isSpeakerOn: Boolean, i
             onKeypad = { onKeypad(); showMore = false },
         )
     }
+    if (showSoundboard) {
+        InCallSoundboardSheet(onDismiss = { showSoundboard = false })
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -740,6 +778,72 @@ private fun MoreRow(icon: ImageVector, title: String, onClick: () -> Unit) {
             Icon(icon, null, tint = Color.White, modifier = Modifier.size(24.dp))
             Spacer(modifier = Modifier.width(16.dp))
             Text(title, color = Color.White, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun InCallSoundboardSheet(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val entries = remember { com.infocaller.app.util.SoundboardStore.load(context) }
+    var playingId by remember { mutableStateOf<String?>(com.infocaller.app.util.SoundboardPlayer.playingId) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (playingId == null) com.infocaller.app.util.SoundboardPlayer.stop()
+        }
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.fillMaxWidth().padding(24.dp)) {
+            Text("Soundboard", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+            Text(
+                "Sounds play through the speaker so the other side hears them. Customize buttons in Settings → Soundboard.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                entries.forEach { entry ->
+                    val isPlaying = playingId == entry.id
+                    Surface(
+                        onClick = {
+                            try {
+                                com.infocaller.app.util.SoundboardPlayer.play(context, entry) {
+                                    playingId = com.infocaller.app.util.SoundboardPlayer.playingId
+                                }
+                                playingId = com.infocaller.app.util.SoundboardPlayer.playingId
+                            } catch (_: Exception) { }
+                        },
+                        shape = RoundedCornerShape(20.dp),
+                        color = if (isPlaying) Primary else Color.White.copy(alpha = 0.08f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(entry.emoji, fontSize = 24.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                if (isPlaying) "Stop" else entry.name,
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+            if (entries.isEmpty()) {
+                Text("No sounds yet — add some in Settings → Soundboard.", color = Color.White.copy(alpha = 0.6f))
+            }
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
