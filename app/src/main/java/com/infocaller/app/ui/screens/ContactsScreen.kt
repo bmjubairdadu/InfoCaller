@@ -474,6 +474,17 @@ fun ContactItem(enriched: com.infocaller.app.data.local.model.EnrichedContact, m
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.5f)
                 )
+                // Automatic NID match: any contact number present in
+                // database.json shows its NID here with no manual step.
+                val contactNid = enrichment?.nid
+                if (!contactNid.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "NID: $contactNid",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Primary.copy(alpha = 0.85f)
+                    )
+                }
             }
             
             if (contact.isBusiness) {

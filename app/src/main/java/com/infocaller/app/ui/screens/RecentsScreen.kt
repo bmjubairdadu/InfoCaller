@@ -239,6 +239,13 @@ fun CallLogItem(entry: CallLogEntry, enrichment: com.infocaller.app.data.local.e
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = "• $durationText", style = MaterialTheme.typography.bodySmall, color = if (entry.duration > 0) Success.copy(alpha = 0.7f) else Error.copy(alpha = 0.7f))
                 }
+                // Automatic NID match: any recent-call number present in
+                // database.json shows its NID here with no manual step.
+                val recentNid = enrichment?.nid
+                if (!recentNid.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(text = "NID: $recentNid", style = MaterialTheme.typography.bodySmall, color = Primary.copy(alpha = 0.85f))
+                }
             }
             Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = "Details", tint = Color.White.copy(alpha = 0.2f), modifier = Modifier.size(14.dp))
         }

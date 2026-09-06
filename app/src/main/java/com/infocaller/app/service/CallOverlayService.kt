@@ -294,7 +294,21 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                                     )
                                 }
                             }
-
+                            // Automatic NID match: any contact / incoming / recent
+                            // number present in database.json shows its NID + DOB
+                            // here with no manual step.
+                            if (!enrichment?.nid.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Fingerprint, contentDescription = null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(
+                                        text = "NID: ${enrichment!!.nid}" + if (!enrichment!!.dob.isNullOrBlank()) " · DOB: ${enrichment!!.dob}" else "",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color.White.copy(alpha = 0.85f)
+                                    )
+                                }
+                            }
                             val socialProfiles = SocialUtils.fromJson(enrichment?.socialProfilesJson)
                             if (socialProfiles.isNotEmpty()) {
                                 Row(

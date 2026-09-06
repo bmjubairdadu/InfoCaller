@@ -209,27 +209,6 @@ fun SettingsScreen(
                 }
             }
 
-            SettingsSection("NID Database") {
-                // database.json status: shows whether the local 115k-row file
-                // has been imported into the on-device table. Search is
-                // phone-number only — matching numbers show NID + DOB.
-                val nidImported = remember {
-                    try { com.infocaller.app.data.local.NidDatabaseImporter.isImported(context) }
-                    catch (_: Exception) { false }
-                }
-                val nidCount = remember {
-                    try { com.infocaller.app.data.local.NidDatabaseImporter.getCount(context) }
-                    catch (_: Exception) { 0 }
-                }
-                Text(
-                    if (nidImported) "Local NID database ready ($nidCount records) — search any phone number to see its NID + DOB"
-                    else "Local NID database not loaded yet — restart the app once with database.json in place",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)
-                )
-            }
-
             SettingsSection("Calls") {
                 val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
                 val screeningDao = remember(app) { app.database.screeningDao() }
