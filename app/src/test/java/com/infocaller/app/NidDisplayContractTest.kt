@@ -31,8 +31,8 @@ class NidDisplayContractTest {
         assertNull(partial.city)
         assertEquals("1234567890", partial.nid)
         assertEquals("1990-01-01", partial.dob)
-        assertTrue(partial.about.contains("1234567890"))
-        assertTrue(partial.about.contains("1990-01-01"))
+        assertTrue(partial.about?.contains("1234567890") == true)
+        assertTrue(partial.about?.contains("1990-01-01") == true)
     }
 
     @Test

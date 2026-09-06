@@ -134,7 +134,8 @@ fun DetailsScreen(
                                 scope.launch {
                                     val res = DetailsPngExporter.export(
                                         context, displayIdentifier,
-                                        contact?.displayName, caller, enrichment
+                                        contact?.displayName, caller, enrichment,
+                                        contact?.photoUri,
                                     )
                                     snackbarHostState.showSnackbar(
                                         res.fold(
