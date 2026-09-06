@@ -32,10 +32,14 @@ class CryptoLookupProviderImpl(
         try {
             val url = "https://blockchain.info/rawaddr/$identifier"
             val request = Request.Builder().url(url).build()
-            val response = httpClient.newCall(request).execute()
-            
-            if (response.isSuccessful) {
-                val json = gson.fromJson(response.body?.string(), JsonObject::class.java)
+            // Response must be closed (use{}) or connections leak.
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val json = try {
+                    gson.fromJson(response.body?.string(), JsonObject::class.java)
+                } catch (_: Exception) {
+                    return@withContext null
+                }
                 val txCount = json.get("n_tx")?.asInt ?: 0
                 val totalReceived = json.get("total_received")?.asLong ?: 0L
                 

@@ -162,6 +162,54 @@ fun SettingsScreen(
                 }
             }
 
+            SettingsSection("Username Lookup") {
+                var searchUsername by remember { mutableStateOf("") }
+                var usernameError by remember { mutableStateOf<String?>(null) }
+
+                Column(modifier = Modifier.padding(16.dp)) {
+                    OutlinedTextField(
+                        value = searchUsername,
+                        onValueChange = { searchUsername = it; usernameError = null },
+                        label = { Text("Search Username") },
+                        placeholder = { Text("jubairdadubm") },
+                        leadingIcon = { Icon(Icons.Default.AlternateEmail, null) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        trailingIcon = {
+                            if (searchUsername.isNotBlank()) {
+                                IconButton(onClick = { searchUsername = "" }) {
+                                    Icon(Icons.Default.Clear, null)
+                                }
+                            }
+                        }
+                    )
+                    usernameError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            val cleaned = searchUsername.trim().lowercase().removePrefix("@")
+                            if (cleaned.length < 2 || cleaned.contains(" ") || cleaned.contains("@")) { usernameError = "Enter a valid username (letters, digits, . _ -)"; return@Button }
+                            usernameError = null
+                            // CRITICAL scan over USERNAME providers (Sherlock 40-site
+                            // sweep, WhatsMyName, GitHub, profile extractors).
+                            // Same focus semantics as NID/email.
+                            viewModel.searchUsernameManual(cleaned)
+                            onNavigateToDetails(cleaned)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = searchUsername.trim().length >= 2
+                    ) {
+                        Icon(Icons.Default.Search, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("LOOKUP USERNAME")
+                    }
+                }
+            }
+
             SettingsSection("NID Lookup") {
                 var nid by remember { mutableStateOf("") }
                 var dob by remember { mutableStateOf("") }

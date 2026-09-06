@@ -59,7 +59,7 @@ object DetailsPngExporter {
         if (name != null) out += name
         // Email identifiers must bypass phone formatting (as-you-type formatter
         // expects digits and mangles addresses).
-        if (phoneNumber.isNotBlank()) out += if (phoneNumber.contains("@")) phoneNumber else PhoneNumberUtils.formatAsYouType(phoneNumber)
+        if (phoneNumber.isNotBlank()) out += if (com.infocaller.app.util.IdentifierRouter.isEmail(phoneNumber)) phoneNumber else if (com.infocaller.app.util.IdentifierRouter.routeType(phoneNumber) == "USERNAME") phoneNumber.trim() else PhoneNumberUtils.formatAsYouType(phoneNumber)
         e?.alternateName?.takeIf { it.isNotBlank() && it != name }?.let { out += "aka $it" }
         e?.about?.takeIf { it.isNotBlank() }?.let { out += it.take(300) }
         val location = LocationUtils.formatCallerLocation(e?.city, e?.region, e?.country ?: caller?.country)
@@ -168,11 +168,11 @@ object DetailsPngExporter {
     }
 
     private fun savePng(context: Context, bitmap: Bitmap, phoneNumber: String): String {
-        // Email filenames use a sanitized prefix instead of trailing digits.
-        val digits = if (phoneNumber.contains("@")) {
-            phoneNumber.substringBefore("@").filter { it.isLetterOrDigit() }.take(24).ifBlank { "email" }
-        } else {
-            phoneNumber.filter { it.isDigit() }.takeLast(12).ifBlank { "unknown" }
+        // Non-phone filenames use a sanitized identifier instead of digits.
+        val digits = when {
+            com.infocaller.app.util.IdentifierRouter.isEmail(phoneNumber) -> phoneNumber.substringBefore("@").filter { it.isLetterOrDigit() }.take(24).ifBlank { "email" }
+            com.infocaller.app.util.IdentifierRouter.routeType(phoneNumber) == "USERNAME" -> phoneNumber.removePrefix("@").filter { it.isLetterOrDigit() }.take(24).ifBlank { "username" }
+            else -> phoneNumber.filter { it.isDigit() }.takeLast(12).ifBlank { "unknown" }
         }
         val fileName = "InfoCaller_$digits.png"
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

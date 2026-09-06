@@ -98,9 +98,9 @@ class CallerViewModel(
     }
 
     fun searchNumber(phoneNumber: String) {
-        // Single routed entry: emails must run an EMAIL scan (phone normalize
-        // strips them to digits), NIDs a NID scan, phones a PHONE scan. Used by
-        // nav-graph + details retry + settings identity box for every type.
+        // Single routed entry: emails run an EMAIL scan (phone normalize strips
+        // them to digits), NIDs a NID scan, handles a USERNAME scan, phones a
+        // PHONE scan. Used by nav-graph + details retry + settings identity box.
         when (com.infocaller.app.util.IdentifierRouter.routeType(phoneNumber)) {
             com.infocaller.app.domain.engine.IdentifierType.EMAIL -> {
                 searchEmailManual(phoneNumber)
@@ -108,6 +108,10 @@ class CallerViewModel(
             }
             com.infocaller.app.domain.engine.IdentifierType.NID -> {
                 searchNidManual(phoneNumber)
+                return
+            }
+            com.infocaller.app.domain.engine.IdentifierType.USERNAME -> {
+                searchUsernameManual(phoneNumber)
                 return
             }
             else -> {}
@@ -137,9 +141,19 @@ class CallerViewModel(
      *  the address to digits). Details screen shows the raw identifier. */
     fun searchEmailManual(email: String) {
         val cleaned = email.trim().lowercase()
-        if (cleaned.isBlank() || !cleaned.contains("@")) return
+        if (cleaned.isBlank() || !com.infocaller.app.util.IdentifierRouter.isEmail(cleaned)) return
         _dialerInput.value = cleaned
         searchByIdentifier(cleaned, com.infocaller.app.domain.engine.IdentifierType.EMAIL)
+    }
+
+    /** Manual username search: same focus semantics, USERNAME identifier type.
+     *  Lowercased/trimmed, leading @ stripped, never phone-normalized.
+     *  Details screen shows the raw handle. */
+    fun searchUsernameManual(username: String) {
+        val cleaned = username.trim().lowercase().removePrefix("@")
+        if (cleaned.length !in 2..40 || cleaned.contains(" ") || cleaned.contains("@")) return
+        _dialerInput.value = cleaned
+        searchByIdentifier(cleaned, com.infocaller.app.domain.engine.IdentifierType.USERNAME)
     }
 
     fun performFullLookup(phoneNumber: String) {
@@ -303,16 +317,27 @@ class CallerViewModel(
     }
 
     fun getEnrichment(number: String): Flow<com.infocaller.app.data.local.entity.ContactEnrichmentEntity?> {
-        // Email keys must NOT go through phone normalization (strips to digits).
-        val key = if (number.contains("@")) number.trim().lowercase() else PhoneNumberUtils.normalize(number)
+        // Email/username keys must NOT go through phone normalization
+        // (strips addresses to digits, mangles handles).
+        val key = when {
+            com.infocaller.app.util.IdentifierRouter.isEmail(number) -> number.trim().lowercase()
+            com.infocaller.app.util.IdentifierRouter.routeType(number) == com.infocaller.app.domain.engine.IdentifierType.USERNAME -> number.trim().lowercase().removePrefix("@")
+            else -> PhoneNumberUtils.normalize(number)
+        }
         return database.enrichmentDao().getEnrichment(key)
     }
 
     fun getEnrichments(numbers: List<String>): Flow<List<com.infocaller.app.data.local.entity.ContactEnrichmentEntity>> {
         // Room generates "IN ()" for an empty list, which is a syntax error and
         // crashes collectors (fresh install with no call history). Short-circuit.
-        // Email keys bypass phone normalization (strips addresses to digits).
-        val normalized = numbers.map { if (it.contains("@")) it.trim().lowercase() else PhoneNumberUtils.normalize(it) }.filter { it.isNotBlank() }.distinct()
+        // Email/username keys bypass phone normalization.
+        val normalized = numbers.map {
+            when {
+                com.infocaller.app.util.IdentifierRouter.isEmail(it) -> it.trim().lowercase()
+                com.infocaller.app.util.IdentifierRouter.routeType(it) == com.infocaller.app.domain.engine.IdentifierType.USERNAME -> it.trim().lowercase().removePrefix("@")
+                else -> PhoneNumberUtils.normalize(it)
+            }
+        }.filter { it.isNotBlank() }.distinct()
         if (normalized.isEmpty()) return kotlinx.coroutines.flow.flowOf(emptyList())
         return database.enrichmentDao().getEnrichments(normalized)
     }

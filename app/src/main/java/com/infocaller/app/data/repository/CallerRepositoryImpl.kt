@@ -62,13 +62,20 @@ class CallerRepositoryImpl(
     }
 
     override suspend fun saveLookupResult(result: LookupResult) {
-        // Email (and NID/username) identifiers must NOT go through phone
-        // normalization — normalize() strips an address to digits. Phone rows
-        // stay keyed by E.164; non-phone results merge into the existing row
-        // only when one already exists, otherwise they are surfaced live only.
-        val isEmail = result.phoneNumber.contains("@")
-        val normalized = if (isEmail) result.phoneNumber.trim().lowercase() else PhoneNumberUtils.normalize(result.phoneNumber)
-        val existing = if (isEmail) null else enrichmentDao.getEnrichmentSync(normalized)
+        // Email/username (and NID) identifiers must NOT go through phone
+        // normalization — normalize() strips an address to digits and mangles
+        // handles. Phone rows stay keyed by E.164; non-phone results are
+        // surfaced live and cached under their own lowercased key.
+        val raw = result.phoneNumber
+        val isEmailAddr = com.infocaller.app.util.IdentifierRouter.isEmail(raw)
+        val isNonPhone = isEmailAddr ||
+            com.infocaller.app.util.IdentifierRouter.routeType(raw) == com.infocaller.app.domain.engine.IdentifierType.USERNAME
+        val normalized = when {
+            isEmailAddr -> raw.trim().lowercase()
+            com.infocaller.app.util.IdentifierRouter.routeType(raw) == com.infocaller.app.domain.engine.IdentifierType.USERNAME -> raw.trim().lowercase().removePrefix("@")
+            else -> PhoneNumberUtils.normalize(raw)
+        }
+        val existing = enrichmentDao.getEnrichmentSync(normalized)
 
         if (existing != null) {
             val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(existing)
@@ -82,12 +89,12 @@ class CallerRepositoryImpl(
         }
 
         val existingCaller = callerDao.getCallerSync(normalized)
-        // PhoneLookup with an email address is meaningless — skip the system query.
-        val localName = if (isEmail) existingCaller?.localName else existingCaller?.localName ?: findLocalNameInSystem(normalized)
+        // PhoneLookup with an email/username is meaningless — skip the query.
+        val localName = if (isNonPhone) existingCaller?.localName else existingCaller?.localName ?: findLocalNameInSystem(normalized)
 
         // mapToEntity keys rows by res.phoneNumber; store under the normalized
-        // key so email rows (lowercased) are retrievable instead of mixed-case.
-        val resultToStore = if (isEmail && result.phoneNumber != normalized) result.copy(phoneNumber = normalized) else result
+        // key so non-phone rows (lowercased) are retrievable instead of mixed-case.
+        val resultToStore = if (isNonPhone && result.phoneNumber != normalized) result.copy(phoneNumber = normalized) else result
         val merged = mapToEntity(resultToStore, existing)
         enrichmentDao.insertEnrichment(merged)
 

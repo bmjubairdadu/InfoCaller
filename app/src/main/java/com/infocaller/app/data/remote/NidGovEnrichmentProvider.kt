@@ -5,8 +5,6 @@ import com.infocaller.app.domain.engine.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.jsoup.Jsoup
 
 
 class NidGovEnrichmentProvider(
@@ -44,27 +42,9 @@ class NidGovEnrichmentProvider(
             )
         }
 
-        try {
-            val q = "\"$nid\" ${dob ?: ""} Bangladesh"
-            val url = "https://html.duckduckgo.com/html/?q=${java.net.URLEncoder.encode(q, "UTF-8")}"
-            val doc = Jsoup.connect(url)
-                .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
-                .timeout(7000).ignoreHttpErrors(true).get()
-            val title = doc.select("h2.result__title a").firstOrNull()?.text()
-            val snippet = doc.select(".result__snippet").firstOrNull()?.text()
-            if (!title.isNullOrBlank() && title.length in 5..60 && !title.contains("DuckDuckGo", true)) {
-                val words = title.split("|","-").first().trim()
-                if (words.split(" ").size in 2..4) {
-                    return@withContext PartialResult(
-                        name = words.takeIf { it.split(" ").size in 2..4 },
-                        about = snippet?.take(300) ?: "Public mention for NID $nid",
-                        nid = nid, dob = rec.dob,
-                        city = rec.address, country = "Bangladesh",
-                        confidence = 0.52f, source = "NID Dork Enrichment", providerId = id, providerVersion = version
-                    )
-                }
-            }
-        } catch (_: Exception){}
+        // NOTE: the old DuckDuckGo "NID dork" fallback was removed — DDG
+        // scraping was pruned repo-wide (blocks + title-guess hallucinations
+        // for NIDs are dangerous). Fall through to the DB row below.
         return@withContext PartialResult(
             nid = rec.nid, dob = rec.dob, city = rec.address, country = "Bangladesh",
             about = "NID: ${rec.nid} | DOB: ${rec.dob} | Phone: ${rec.number}",

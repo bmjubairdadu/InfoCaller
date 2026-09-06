@@ -5,7 +5,7 @@ import com.infocaller.app.util.IdentifierRouter
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-class EmailRoutingTest {
+class IdentifierRoutingTest {
 
     @Test
     fun emailRoutesToEmail() {
@@ -31,5 +31,19 @@ class EmailRoutingTest {
         assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("8801785917145"))
         assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("01785917145"))
         assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("01785-917145"))
+    }
+
+    @Test
+    fun handlesRouteToUsername() {
+        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("@jubairdadubm"))
+        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("jubairdadu143"))
+        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("jubairhose143"))
+        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("jubairdaduff"))
+    }
+
+    @Test
+    fun numericStringsStayPhone() {
+        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("01785 917145"))
+        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("123"))
     }
 }
