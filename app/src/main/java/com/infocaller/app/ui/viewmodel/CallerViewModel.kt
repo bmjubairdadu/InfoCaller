@@ -98,6 +98,20 @@ class CallerViewModel(
     }
 
     fun searchNumber(phoneNumber: String) {
+        // Single routed entry: emails must run an EMAIL scan (phone normalize
+        // strips them to digits), NIDs a NID scan, phones a PHONE scan. Used by
+        // nav-graph + details retry + settings identity box for every type.
+        when (com.infocaller.app.util.IdentifierRouter.routeType(phoneNumber)) {
+            com.infocaller.app.domain.engine.IdentifierType.EMAIL -> {
+                searchEmailManual(phoneNumber)
+                return
+            }
+            com.infocaller.app.domain.engine.IdentifierType.NID -> {
+                searchNidManual(phoneNumber)
+                return
+            }
+            else -> {}
+        }
         val normalized = PhoneNumberUtils.normalize(phoneNumber)
         _dialerInput.value = normalized
         searchByIdentifier(normalized, com.infocaller.app.domain.engine.IdentifierType.PHONE)
@@ -116,6 +130,16 @@ class CallerViewModel(
     /** Manual NID search: same focus semantics, NID identifier type. */
     fun searchNidManual(identifier: String) {
         searchByIdentifier(identifier, com.infocaller.app.domain.engine.IdentifierType.NID)
+    }
+
+    /** Manual email search: same focus semantics, EMAIL identifier type.
+     *  Lowercased/trimmed but never phone-normalized (normalize() would strip
+     *  the address to digits). Details screen shows the raw identifier. */
+    fun searchEmailManual(email: String) {
+        val cleaned = email.trim().lowercase()
+        if (cleaned.isBlank() || !cleaned.contains("@")) return
+        _dialerInput.value = cleaned
+        searchByIdentifier(cleaned, com.infocaller.app.domain.engine.IdentifierType.EMAIL)
     }
 
     fun performFullLookup(phoneNumber: String) {
@@ -279,13 +303,16 @@ class CallerViewModel(
     }
 
     fun getEnrichment(number: String): Flow<com.infocaller.app.data.local.entity.ContactEnrichmentEntity?> {
-        return database.enrichmentDao().getEnrichment(PhoneNumberUtils.normalize(number))
+        // Email keys must NOT go through phone normalization (strips to digits).
+        val key = if (number.contains("@")) number.trim().lowercase() else PhoneNumberUtils.normalize(number)
+        return database.enrichmentDao().getEnrichment(key)
     }
 
     fun getEnrichments(numbers: List<String>): Flow<List<com.infocaller.app.data.local.entity.ContactEnrichmentEntity>> {
         // Room generates "IN ()" for an empty list, which is a syntax error and
         // crashes collectors (fresh install with no call history). Short-circuit.
-        val normalized = numbers.map { PhoneNumberUtils.normalize(it) }.filter { it.isNotBlank() }.distinct()
+        // Email keys bypass phone normalization (strips addresses to digits).
+        val normalized = numbers.map { if (it.contains("@")) it.trim().lowercase() else PhoneNumberUtils.normalize(it) }.filter { it.isNotBlank() }.distinct()
         if (normalized.isEmpty()) return kotlinx.coroutines.flow.flowOf(emptyList())
         return database.enrichmentDao().getEnrichments(normalized)
     }

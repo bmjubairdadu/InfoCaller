@@ -59,23 +59,43 @@ fun DetailsScreen(
     val caller = (uiState as? SearchUiState.Success)?.caller
     val isLive = (uiState as? SearchUiState.Success)?.isLive ?: false
     val lastProvider = (uiState as? SearchUiState.Success)?.lastProvider
-    val phoneNumber = remember(uiState, dialerInput) {
-        val raw = when (uiState) {
+    // Email scans carry the address as the identifier (phone normalize would
+    // strip it to digits). Detect first so every lookup below can route.
+    val rawIdentifier = remember(uiState, dialerInput) {
+        when (uiState) {
             is SearchUiState.Success -> (uiState as SearchUiState.Success).caller.phoneNumber
             else -> dialerInput
         }
-        PhoneNumberUtils.normalize(raw)
     }
-    val enrichment by viewModel.getEnrichment(phoneNumber).collectAsState(initial = null)
-    val isBlocked = blocklist.contains(phoneNumber)
+    val isEmailScan = remember(rawIdentifier) { rawIdentifier.contains("@") }
+    val phoneNumber = remember(uiState, dialerInput, isEmailScan) {
+        if (isEmailScan) "" else {
+            val raw = when (uiState) {
+                is SearchUiState.Success -> (uiState as SearchUiState.Success).caller.phoneNumber
+                else -> dialerInput
+            }
+            PhoneNumberUtils.normalize(raw)
+        }
+    }
+    // Lookup key: lowercased address for email scans (matches repository rows),
+    // E.164 number for phone scans.
+    val lookupKey = remember(rawIdentifier, phoneNumber, isEmailScan) {
+        if (isEmailScan) rawIdentifier.trim().lowercase() else phoneNumber
+    }
+    // Identifier shown/exported: raw address for email scans, number otherwise.
+    val displayIdentifier = remember(rawIdentifier, phoneNumber, isEmailScan) {
+        if (isEmailScan) rawIdentifier.trim() else phoneNumber
+    }
+    val enrichment by viewModel.getEnrichment(lookupKey).collectAsState(initial = null)
+    val isBlocked = !isEmailScan && blocklist.contains(phoneNumber)
     val contactsList by viewModel.contacts.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
     val isOnline by app.enrichmentEngine.isOnline.collectAsState()
     
-    val contact = remember(phoneNumber, contactsList) {
-        contactsList.find { it.phoneNumber == phoneNumber }
+    val contact = remember(phoneNumber, contactsList, isEmailScan) {
+        if (isEmailScan) null else contactsList.find { it.phoneNumber == phoneNumber }
     }
     val isContact = contact != null
     var showAddContactDialog by remember { mutableStateOf(false) }
@@ -91,7 +111,7 @@ fun DetailsScreen(
                     TopAppBar(
                         title = { 
                             Column {
-                                Text(if (isContact) "Contact Details" else "Caller Identity", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                                Text(if (isEmailScan) "Email Identity" else if (isContact) "Contact Details" else "Caller Identity", color = Color.White, style = MaterialTheme.typography.titleMedium)
                                 if (isLive) {
                                     Text(text = "Live scan: ${lastProvider ?: "Searching..."}", style = MaterialTheme.typography.labelSmall, color = Primary)
                                 }
@@ -108,7 +128,7 @@ fun DetailsScreen(
                             IconButton(onClick = {
                                 scope.launch {
                                     val res = DetailsPngExporter.export(
-                                        context, phoneNumber,
+                                        context, displayIdentifier,
                                         contact?.displayName, caller, enrichment
                                     )
                                     snackbarHostState.showSnackbar(
@@ -121,7 +141,7 @@ fun DetailsScreen(
                             }) {
                                 Icon(Icons.Default.Download, "Download PNG", tint = Primary)
                             }
-                            if (!isContact && phoneNumber.isNotBlank()) {
+                            if (!isEmailScan && !isContact && phoneNumber.isNotBlank()) {
                                 IconButton(onClick = { showAddContactDialog = true }) {
                                     Icon(Icons.Default.PersonAdd, "Add Contact", tint = Primary)
                                 }
@@ -152,21 +172,26 @@ fun DetailsScreen(
                                     }
                                 }
                             }
-                            IconButton(onClick = { 
-                                if (isBlocked) viewModel.unblockNumber(phoneNumber)
-                                else viewModel.blockNumber(phoneNumber)
-                            }) {
-                                Icon(
-                                    imageVector = if (isBlocked) Icons.Default.Block else Icons.Default.VerifiedUser,
-                                    contentDescription = null,
-                                    tint = if (isBlocked) Error else Success
-                                )
+                            // Blocking is phone-only; email scans have no block action.
+                            if (!isEmailScan) {
+                                IconButton(onClick = {
+                                    if (isBlocked) viewModel.unblockNumber(phoneNumber)
+                                    else viewModel.blockNumber(phoneNumber)
+                                }) {
+                                    Icon(
+                                        imageVector = if (isBlocked) Icons.Default.Block else Icons.Default.VerifiedUser,
+                                        contentDescription = null,
+                                        tint = if (isBlocked) Error else Success
+                                    )
+                                }
                             }
                         }
                     )
                 }
             },
+            // No call bar for email scans — nothing to dial.
             bottomBar = {
+                if (!isEmailScan) {
                 Surface(
                     modifier = Modifier.fillMaxWidth().glassy(blur = 30.dp, radius = 0.dp).padding(bottom = 8.dp).navigationBarsPadding(),
                     color = Color.Black.copy(alpha = 0.4f),
@@ -192,9 +217,10 @@ fun DetailsScreen(
                         }
                     }
                 }
+                }
             }
         ) { innerPadding ->
-            if (phoneNumber.isBlank() && caller == null) {
+            if (displayIdentifier.isBlank() && caller == null) {
                 // Stale/empty navigation (deep link, process death, lost race) must not
                 // spin forever — time out with a retry path after 20s.
                 var timedOut by remember { mutableStateOf(false) }
@@ -210,17 +236,17 @@ fun DetailsScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Text("Couldn't identify this number", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                        Text(if (isEmailScan) "Couldn't identify this email" else "Couldn't identify this number", style = MaterialTheme.typography.titleMedium, color = Color.White)
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "The lookup timed out or no number was provided.",
+                            "The lookup timed out or nothing was provided.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = 0.6f)
                         )
                         Spacer(Modifier.height(16.dp))
                         Button(onClick = {
                             timedOut = false
-                            if (phoneNumber.isNotBlank()) viewModel.searchNumber(phoneNumber)
+                            if (displayIdentifier.isNotBlank()) viewModel.searchNumber(displayIdentifier)
                         }) { Text("Retry") }
                         Spacer(Modifier.height(8.dp))
                         TextButton(onClick = onBack) { Text("Go back", color = Primary) }
@@ -232,7 +258,7 @@ fun DetailsScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     // Missing data is skipped, never "N/A" / "Unknown" placeholders.
-                    val displayName = contact?.displayName ?: enrichment?.publicName ?: caller?.displayName ?: phoneNumber.ifBlank { "" }
+                    val displayName = contact?.displayName ?: enrichment?.publicName ?: caller?.displayName ?: displayIdentifier.ifBlank { "" }
                     Spacer(modifier = Modifier.height(24.dp))
                     Box(modifier = Modifier.size(140.dp).glassy(radius = 70.dp).shadow(24.dp, CircleShape), contentAlignment = Alignment.Center) {
                         val photoUrl = contact?.photoUri ?: enrichment?.profileImageUrl
@@ -263,7 +289,7 @@ fun DetailsScreen(
                     if (!enrichment?.alternateName.isNullOrBlank() && enrichment?.alternateName != displayName) {
                         Text(text = "aka ${enrichment!!.alternateName}", style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.6f), modifier = Modifier.padding(top = 4.dp))
                     }
-                    Text(text = com.infocaller.app.util.PhoneNumberUtils.formatAsYouType(phoneNumber), style = MaterialTheme.typography.titleLarge, color = Primary, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                    Text(text = if (isEmailScan) displayIdentifier else com.infocaller.app.util.PhoneNumberUtils.formatAsYouType(phoneNumber), style = MaterialTheme.typography.titleLarge, color = Primary, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
                     if (!enrichment?.about.isNullOrBlank()) {
                         Box(modifier = Modifier.padding(top = 24.dp).padding(horizontal = 32.dp).glassy(radius = 16.dp).padding(16.dp)) {
                             Column {
@@ -354,17 +380,18 @@ fun DetailsScreen(
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                     socialProfiles.forEach { profile -> SocialIcon(profile) }
                                 }
-                                val wa = socialProfiles.find { it.platform.lowercase()=="whatsapp" }
-                                    ?: enrichment?.let { SocialUtils.filteredUsedProfiles(listOf(com.infocaller.app.domain.model.SocialProfile("WhatsApp", phoneNumber, "https://wa.me/${phoneNumber.filter{it.isDigit()}}", com.infocaller.app.domain.model.SocialLookupStatus.CONFIRMED))).firstOrNull() }
-                                Button(onClick = {
-                                    val intent = try { SocialUtils.whatsappHelloIntent(context, phoneNumber, "Hello") } catch(_:Exception){ android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://wa.me/${phoneNumber.filter{it.isDigit()}}?text=Hello")) }
-                                    try { context.startActivity(intent) } catch(_:Exception){ context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://wa.me/${phoneNumber.filter{it.isDigit()}}?text=Hello"))) }
-                                }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = androidx.compose.ui.graphics.Color(0xFF25D366))) {
-                                    androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.Chat, null, tint = androidx.compose.ui.graphics.Color.White); Spacer(Modifier.width(8.dp)); Text("WhatsApp - Hello", color = androidx.compose.ui.graphics.Color.White)
+                                // WhatsApp connect is phone-only (button below is gated).
+                                if (!isEmailScan) {
+                                    Button(onClick = {
+                                        val intent = try { SocialUtils.whatsappHelloIntent(context, phoneNumber, "Hello") } catch(_:Exception){ android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://wa.me/${phoneNumber.filter{it.isDigit()}}?text=Hello")) }
+                                        try { context.startActivity(intent) } catch(_:Exception){ context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://wa.me/${phoneNumber.filter{it.isDigit()}}?text=Hello"))) }
+                                    }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = androidx.compose.ui.graphics.Color(0xFF25D366))) {
+                                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.Chat, null, tint = androidx.compose.ui.graphics.Color.White); Spacer(Modifier.width(8.dp)); Text("WhatsApp - Hello", color = androidx.compose.ui.graphics.Color.White)
+                                    }
                                 }
                             }
                         }
-                    } else {
+                    } else if (!isEmailScan) {
                         DetailSection("Connect") {
                             Button(onClick = {
                                 val intent = try { SocialUtils.whatsappHelloIntent(context, phoneNumber, "Hello") } catch(_:Exception){ android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://wa.me/${phoneNumber.filter{it.isDigit()}}?text=Hello")) }

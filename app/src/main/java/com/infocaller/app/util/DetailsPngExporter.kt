@@ -57,7 +57,9 @@ object DetailsPngExporter {
             ?: e?.publicName?.takeIf { it.isNotBlank() && !ContactUtils.isPlaceholderName(it) }
             ?: caller?.displayName?.takeIf { it.isNotBlank() && !ContactUtils.isPlaceholderName(it) }
         if (name != null) out += name
-        if (phoneNumber.isNotBlank()) out += PhoneNumberUtils.formatAsYouType(phoneNumber)
+        // Email identifiers must bypass phone formatting (as-you-type formatter
+        // expects digits and mangles addresses).
+        if (phoneNumber.isNotBlank()) out += if (phoneNumber.contains("@")) phoneNumber else PhoneNumberUtils.formatAsYouType(phoneNumber)
         e?.alternateName?.takeIf { it.isNotBlank() && it != name }?.let { out += "aka $it" }
         e?.about?.takeIf { it.isNotBlank() }?.let { out += it.take(300) }
         val location = LocationUtils.formatCallerLocation(e?.city, e?.region, e?.country ?: caller?.country)
@@ -166,7 +168,12 @@ object DetailsPngExporter {
     }
 
     private fun savePng(context: Context, bitmap: Bitmap, phoneNumber: String): String {
-        val digits = phoneNumber.filter { it.isDigit() }.takeLast(12).ifBlank { "unknown" }
+        // Email filenames use a sanitized prefix instead of trailing digits.
+        val digits = if (phoneNumber.contains("@")) {
+            phoneNumber.substringBefore("@").filter { it.isLetterOrDigit() }.take(24).ifBlank { "email" }
+        } else {
+            phoneNumber.filter { it.isDigit() }.takeLast(12).ifBlank { "unknown" }
+        }
         val fileName = "InfoCaller_$digits.png"
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {

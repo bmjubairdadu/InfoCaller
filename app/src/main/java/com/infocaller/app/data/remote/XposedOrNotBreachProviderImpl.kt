@@ -37,7 +37,8 @@ class XposedOrNotBreachProviderImpl(
                     .header("Accept", "application/json")
                     .build()
                 val resp = httpClient.newCall(req).execute()
-                val body = resp.body?.string() ?: return@withContext null
+                // Response must be closed (use{}) or connections leak.
+                val body = resp.use { it.body?.string() } ?: return@withContext null
                 val root = try { JsonParser.parseString(body).asJsonObject } catch (_: Exception) { return@withContext null }
                 if (root.has("Error")) return@withContext null // "Not found" = clean
                 val breachesEl = root.get("breaches") ?: return@withContext null

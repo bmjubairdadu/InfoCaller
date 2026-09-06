@@ -19,8 +19,10 @@ class HoleheEmailProviderImpl(
     override val priority = 60
     override val costClass = CostClass.FREE
 
+    // Verified: en.gravatar.com/<email> 404s — Gravatar needs the MD5 hash
+    // URL (covered by EmailLookup/EmailSocialBridge), so no Gravatar probe here.
+    // Remaining 5 checks derive usernames from the email prefix.
     private val checks = listOf(
-        Site("Gravatar", "https://en.gravatar.com/%s", "profile"),
         Site("GitHub", "https://github.com/%s", null), // username derived from email prefix
         Site("AboutMe", "https://about.me/%s", null),
         Site("Pinterest", "https://www.pinterest.com/%s/", "pinterest"),
@@ -37,7 +39,7 @@ class HoleheEmailProviderImpl(
             val target = if (site.urlTemplate.contains("%s.wordpress.com")) site.urlTemplate.format(prefix)
             else if (site.keyword == null) site.urlTemplate.format(prefix)
             else site.urlTemplate.format(email)
-            // Keyword sites (Gravatar/Pinterest) need page-specific presence text;
+            // Keyword sites (Pinterest) need page-specific presence text;
             // plain profile probes use the shared heuristic.
             val found = if (site.keyword != null) keywordExists(site, target)
             else UsernameExistenceChecker.exists(httpClient, target)

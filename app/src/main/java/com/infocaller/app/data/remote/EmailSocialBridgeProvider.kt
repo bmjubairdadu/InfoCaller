@@ -7,8 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.jsoup.Jsoup
-import java.net.URLEncoder
 
 
 class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvider {
@@ -31,35 +29,38 @@ class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvid
             val hash = java.security.MessageDigest.getInstance("MD5").digest(email.toByteArray()).joinToString(""){"%02x".format(it)}
             val gravReq = Request.Builder().url("https://www.gravatar.com/$hash.json")
                 .header("User-Agent","Mozilla/5.0 (Linux; Android 14)").build()
-            val gravResp = client.newCall(gravReq).execute()
             var gravName: String? = null
             var gravPhoto: String? = null
-            if (gravResp.isSuccessful) {
-                val j = gravResp.body?.string() ?: ""
-                if (j.contains("\"entry\"")) {
-                    try {
-                        val obj = com.google.gson.JsonParser.parseString(j).asJsonObject.getAsJsonArray("entry").firstOrNull()?.asJsonObject
-                        gravName = obj?.get("displayName")?.takeIf{!it.isJsonNull}?.asString
-                        gravPhoto = obj?.get("thumbnailUrl")?.takeIf{!it.isJsonNull}?.asString
-                        if (!gravPhoto.isNullOrBlank()) profiles.add(SocialProfile("Gravatar", prefix, "https://gravatar.com/$hash", SocialLookupStatus.PUBLIC_MATCH))
-                    } catch(_:Exception){}
-                }
-            }
-            val ghReq = Request.Builder().url("https://github.com/$prefix").header("User-Agent","Mozilla/5.0").build()
-            val ghResp = try { client.newCall(ghReq).execute() } catch(_:Exception){ null }
-            if (ghResp?.code == 200) {
-                val b = ghResp.body?.string()?.lowercase() ?: ""
-                if (!b.contains("page not found") && !b.contains("not found") && ghResp.request.url.toString().contains(prefix, true)) {
-                    profiles.add(SocialProfile("GitHub", prefix, "https://github.com/$prefix", SocialLookupStatus.PUBLIC_MATCH))
+            // Responses must be closed (use{}) or connections leak; string()
+            // self-closes only when called on the body inside use{}.
+            client.newCall(gravReq).execute().use { gravResp ->
+                if (gravResp.isSuccessful) {
+                    val j = gravResp.body?.string() ?: ""
+                    if (j.contains("\"entry\"")) {
+                        try {
+                            val obj = com.google.gson.JsonParser.parseString(j).asJsonObject.getAsJsonArray("entry").firstOrNull()?.asJsonObject
+                            gravName = obj?.get("displayName")?.takeIf{!it.isJsonNull}?.asString
+                            gravPhoto = obj?.get("thumbnailUrl")?.takeIf{!it.isJsonNull}?.asString
+                            if (!gravPhoto.isNullOrBlank()) profiles.add(SocialProfile("Gravatar", prefix, "https://gravatar.com/$hash", SocialLookupStatus.PUBLIC_MATCH))
+                        } catch(_:Exception){}
+                    }
                 }
             }
             try {
-                val q = "\"$email\" site:linkedin.com/in"
-                val url = "https://html.duckduckgo.com/html/?q=${URLEncoder.encode(q, "UTF-8")}"
-                val doc = Jsoup.connect(url).userAgent("Mozilla/5.0 (Linux; Android 14)").timeout(7000).ignoreHttpErrors(true).get()
-                val href = doc.select("a.result__a").firstOrNull()?.attr("href")
-                if (href != null && href.contains("linkedin.com/in/")) profiles.add(SocialProfile("LinkedIn", prefix, href, SocialLookupStatus.PUBLIC_MATCH))
+                val ghReq = Request.Builder().url("https://github.com/$prefix").header("User-Agent","Mozilla/5.0").build()
+                client.newCall(ghReq).execute().use { ghResp ->
+                    if (ghResp.code == 200) {
+                        val b = ghResp.body?.string()?.lowercase() ?: ""
+                        if (!b.contains("page not found") && !b.contains("not found") && ghResp.request.url.toString().contains(prefix, true)) {
+                            profiles.add(SocialProfile("GitHub", prefix, "https://github.com/$prefix", SocialLookupStatus.PUBLIC_MATCH))
+                        }
+                    }
+                }
             } catch(_:Exception){}
+            // NOTE: the old DuckDuckGo "site:linkedin.com/in" probe was removed —
+            // DDG scraping was pruned repo-wide (blocks/hallucinations) and a raw
+            // HTML href is not a verified LinkedIn match. GitHub API provider
+            // covers username search with display names.
 
             if (profiles.isEmpty() && gravName == null && gravPhoto == null) return@withContext null
             PartialResult(

@@ -44,17 +44,28 @@ class EmailLookupProviderImpl(
             val hash = md5(email.trim().lowercase())
             val url = "https://www.gravatar.com/$hash.json"
             val request = Request.Builder().url(url).build()
-            val response = httpClient.newCall(request).execute()
-            
-            if (response.isSuccessful) {
-                val json = gson.fromJson(response.body?.string(), JsonObject::class.java)
-                val entry = json.getAsJsonArray("entry")?.get(0)?.asJsonObject
-                
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val json = try {
+                    gson.fromJson(response.body?.string(), JsonObject::class.java)
+                } catch (_: Exception) {
+                    return null
+                }
+                val entry = try {
+                    json?.getAsJsonArray("entry")?.get(0)?.asJsonObject
+                } catch (_: Exception) {
+                    null
+                } ?: return null
+                val name = entry.get("displayName")?.takeIf { !it.isJsonNull }?.asString
+                val image = entry.get("thumbnailUrl")?.takeIf { !it.isJsonNull }?.asString
+                val about = entry.get("aboutMe")?.takeIf { !it.isJsonNull }?.asString
+                val city = entry.get("currentLocation")?.takeIf { !it.isJsonNull }?.asString
+                if (name.isNullOrBlank() && image.isNullOrBlank() && about.isNullOrBlank()) return null
                 return PartialResult(
-                    name = entry?.get("displayName")?.asString,
-                    imageUrl = entry?.get("thumbnailUrl")?.asString,
-                    about = entry?.get("aboutMe")?.asString,
-                    city = entry?.get("currentLocation")?.asString,
+                    name = name,
+                    imageUrl = image,
+                    about = about,
+                    city = city,
                     confidence = 0.9f,
                     source = "Gravatar",
                     providerId = id,

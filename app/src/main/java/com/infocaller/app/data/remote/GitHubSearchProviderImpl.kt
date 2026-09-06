@@ -31,9 +31,16 @@ class GitHubSearchProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                         .header("Accept","application/vnd.github+json")
                         .build()
                     val resp = httpClient.newCall(req).execute()
-                    if (!resp.isSuccessful) return@withContext null
-                    val json = JsonParser.parseString(resp.body?.string()).asJsonObject
-                    val items = json.getAsJsonArray("items") ?: return@withContext null
+                    // Responses must be closed (use{}) or connections leak.
+                    val items = resp.use { r ->
+                        if (!r.isSuccessful) return@withContext null
+                        val json = try {
+                            JsonParser.parseString(r.body?.string()).asJsonObject
+                        } catch (_: Exception) {
+                            return@withContext null
+                        }
+                        json.getAsJsonArray("items")
+                    } ?: return@withContext null
                     if (items.size() == 0) return@withContext null
                     val profiles = items.mapNotNull {
                         val o = it.asJsonObject
@@ -47,18 +54,23 @@ class GitHubSearchProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                         val first = items[0].asJsonObject
                         val userUrl = first.get("url")?.asString
                         if (userUrl != null) {
-                            val r2 = httpClient.newCall(Request.Builder().url(userUrl).header("User-Agent","InfoCaller").build()).execute()
-                            if (r2.isSuccessful) {
-                                val u = JsonParser.parseString(r2.body?.string()).asJsonObject
-                                displayName = u.get("name")?.takeIf { !it.isJsonNull }?.asString
-                                val bio = u.get("bio")?.takeIf { !it.isJsonNull }?.asString
-                                val loc = u.get("location")?.takeIf { !it.isJsonNull }?.asString
-                                if (displayName != null || bio != null) {
-                                    return@withContext PartialResult(
-                                        name = displayName, about = bio, city = loc,
-                                        socialProfiles = profiles,
-                                        confidence = 0.65f, source = name, providerId = id, providerVersion = version
-                                    )
+                            httpClient.newCall(Request.Builder().url(userUrl).header("User-Agent","InfoCaller").build()).execute().use { r2 ->
+                                if (r2.isSuccessful) {
+                                    val u = try {
+                                        JsonParser.parseString(r2.body?.string()).asJsonObject
+                                    } catch (_: Exception) {
+                                        null
+                                    }
+                                    displayName = u?.get("name")?.takeIf { !it.isJsonNull }?.asString
+                                    val bio = u?.get("bio")?.takeIf { !it.isJsonNull }?.asString
+                                    val loc = u?.get("location")?.takeIf { !it.isJsonNull }?.asString
+                                    if (displayName != null || bio != null) {
+                                        return@withContext PartialResult(
+                                            name = displayName, about = bio, city = loc,
+                                            socialProfiles = profiles,
+                                            confidence = 0.65f, source = name, providerId = id, providerVersion = version
+                                        )
+                                    }
                                 }
                             }
                         }

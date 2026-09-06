@@ -31,15 +31,20 @@ class DisifyEmailValidationProviderImpl(
             val email = identifier.trim().lowercase()
             if (!email.contains("@") || email.length > 120) return@withContext null
             try {
-                val url = "https://api.disify.com/api/email/" +
+                // Verified live: api.disify.com is dead; www.disify.com returns
+                // {format,domain,disposable,dns,...} for the same path.
+                val url = "https://www.disify.com/api/email/" +
                     URLEncoder.encode(email, StandardCharsets.UTF_8.toString())
                 val req = Request.Builder().url(url)
                     .header("User-Agent", "InfoCaller-OSINT/2.0")
                     .header("Accept", "application/json")
                     .build()
                 val resp = httpClient.newCall(req).execute()
-                if (!resp.isSuccessful) return@withContext null
-                val body = resp.body?.string() ?: return@withContext null
+                // Response must be closed (use{}) or connections leak.
+                val body = resp.use { r ->
+                    if (!r.isSuccessful) return@withContext null
+                    r.body?.string()
+                } ?: return@withContext null
                 val root = try { JsonParser.parseString(body).asJsonObject } catch (_: Exception) { return@withContext null }
                 val format = root.get("format")?.asBoolean ?: return@withContext null
                 if (!format) {

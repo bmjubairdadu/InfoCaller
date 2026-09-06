@@ -64,8 +64,11 @@ class GrepAppCodeSearchProviderImpl(
                     .header("Accept", "application/json")
                     .build()
                 val resp = httpClient.newCall(req).execute()
-                if (!resp.isSuccessful) return@withContext null
-                val body = resp.body?.string() ?: return@withContext null
+                // Response must be closed (use{}) or connections leak.
+                val body = resp.use { r ->
+                    if (!r.isSuccessful) return@withContext null
+                    r.body?.string()
+                } ?: return@withContext null
                 val root = try { JsonParser.parseString(body).asJsonObject } catch (_: Exception) { return@withContext null }
                 val hitsObj = root.getAsJsonObject("hits") ?: return@withContext null
                 val hits = try { hitsObj.getAsJsonArray("hits") } catch (_: Exception) { null }

@@ -7,6 +7,7 @@ import androidx.core.content.edit
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.infocaller.app.data.remote.CommunityConsent
@@ -108,6 +110,54 @@ fun SettingsScreen(
                         Icon(Icons.Default.Search, null)
                         Spacer(Modifier.width(8.dp))
                         Text("IDENTIFY CALLER")
+                    }
+                }
+            }
+
+            SettingsSection("Email Lookup") {
+                var searchEmail by remember { mutableStateOf("") }
+                var emailError by remember { mutableStateOf<String?>(null) }
+
+                Column(modifier = Modifier.padding(16.dp)) {
+                    OutlinedTextField(
+                        value = searchEmail,
+                        onValueChange = { searchEmail = it; emailError = null },
+                        label = { Text("Search Email Address") },
+                        placeholder = { Text("name@example.com") },
+                        leadingIcon = { Icon(Icons.Default.Email, null) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        trailingIcon = {
+                            if (searchEmail.isNotBlank()) {
+                                IconButton(onClick = { searchEmail = "" }) {
+                                    Icon(Icons.Default.Clear, null)
+                                }
+                            }
+                        }
+                    )
+                    emailError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            val cleaned = searchEmail.trim().lowercase()
+                            if (!cleaned.contains("@") || !cleaned.contains(".")) { emailError = "Enter a valid email address"; return@Button }
+                            emailError = null
+                            // CRITICAL scan over EMAIL providers (Gravatar, GitHub,
+                            // breach check, presence). Same focus semantics as NID.
+                            viewModel.searchEmailManual(cleaned)
+                            onNavigateToDetails(cleaned)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = searchEmail.contains("@")
+                    ) {
+                        Icon(Icons.Default.Search, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("LOOKUP EMAIL")
                     }
                 }
             }

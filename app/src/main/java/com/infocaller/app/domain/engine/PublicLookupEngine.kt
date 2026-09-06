@@ -54,9 +54,42 @@ class PublicLookupEngine(
             .sortedWith(compareBy<LookupProvider> { it.costClass }.thenByDescending { it.priority })
 
         val executionPlan = mutableListOf<LookupProvider>()
-        tc?.let { executionPlan.add(it) }
-        eyecon?.let { executionPlan.add(it) }
-        executionPlan.addAll(others)
+        // Truecaller/Eyecon are PHONE-only and null out instantly for other types —
+        // but each still costs one of the 8 scan attempts. Only prioritize them for
+        // PHONE scans so EMAIL scans spend attempts on email-capable providers.
+        // Same problem in general: phone-only providers sort first by priority and
+        // would burn all 8 attempts on instant nulls for EMAIL/USERNAME/NID scans.
+        // Fix: for non-phone scans, run the providers that actually handle that
+        // type first (verified per-file: which IdentifierType each lookup accepts).
+        if (type == IdentifierType.PHONE) {
+            tc?.let { executionPlan.add(it) }
+            eyecon?.let { executionPlan.add(it) }
+            executionPlan.addAll(others)
+        } else {
+            val typeFirstIds: Set<String> = when (type) {
+                IdentifierType.EMAIL -> setOf(
+                    "email_lookup", "holehe_email", "xposedornot_breach",
+                    "email_social_bridge", "github_osint", "grepapp_code_search",
+                    "sherlock_osint", "disify_email_validation"
+                )
+                IdentifierType.USERNAME -> setOf(
+                    "sherlock_osint", "github_osint", "whatsmyname",
+                    "facebook_profile", "tiktok_profile", "instagram_deep",
+                    "grepapp_code_search"
+                )
+                IdentifierType.FULL_NAME -> setOf(
+                    "whatsmyname", "facebook_profile", "tiktok_profile",
+                    "instagram_deep", "name_social_verifier", "grepapp_code_search"
+                )
+                IdentifierType.NID, IdentifierType.DOB -> setOf(
+                    "bd_nid_database", "nid_gov_enrichment"
+                )
+                else -> emptySet()
+            }
+            val (typeFirst, typeRest) = others.partition { it.id in typeFirstIds }
+            executionPlan.addAll(typeFirst.sortedByDescending { it.priority })
+            executionPlan.addAll(typeRest)
+        }
 
         var photoFound = false
         var nameFound = false
