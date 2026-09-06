@@ -74,8 +74,9 @@ class TruecallerAuthManager(
                 .addHeader("accept-encoding","gzip")
                 .post(body.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())).build()
             val resp = client.newCall(req).execute()
-            val rawBytes = resp.body?.bytes() ?: return@withContext null
-            resp.close()
+            // bytes() self-closes, but only when called inside use{} — the old
+            // code called bytes() then close() outside use{}, leaking on throw.
+            val rawBytes = resp.use { it.body?.bytes() } ?: return@withContext null
             val txt = if (rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else String(rawBytes)
             val j = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ return@withContext OtpRequestResult("", "", 0, -1, txt.take(200)) }
             val status = j.get("status")?.asInt ?: 0

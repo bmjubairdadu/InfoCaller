@@ -67,6 +67,23 @@ fun AddContactBottomSheet(
             suggestedPhotoUrl = uri.toString()
         }
     }
+
+    // WRITE_CONTACTS is requested only here, at the exact moment the user
+    // taps SAVE — never with the read side, never up front. The launcher must
+    // be registered before any UI that uses it; it flips saveRequested, and
+    // the SAVE button / effect below (after selectedAccount) does the work.
+    var saveRequested by remember { mutableStateOf(false) }
+    var saveDeniedNotice by remember { mutableStateOf(false) }
+    val writeLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        if (results.values.all { it }) {
+            saveRequested = true
+        } else {
+            saveDeniedNotice = true
+            isSaving = false
+        }
+    }
     
     val enrichmentService = remember { 
         ContactEnrichmentService(context, database = (context.applicationContext as com.infocaller.app.InfoCallerApplication).database) 
@@ -120,6 +137,39 @@ fun AddContactBottomSheet(
     val accounts = remember(context) { ContactUtils.getContactAccounts(context) }
     var selectedAccount by remember { mutableStateOf(accounts.firstOrNull()) }
     var showAccountPicker by remember { mutableStateOf(false) }
+
+    // Save logic lives here — after enrichmentService/lookupResult/
+    // selectedAccount — so no forward references. Triggered by the SAVE
+    // button below or by the write-permission grant above.
+    fun doSave() {
+        scope.launch {
+            val success = enrichmentService.saveContactFast(
+                phoneNumber = inputNumber,
+                displayName = displayName,
+                photoUrl = suggestedPhotoUrl,
+                accountName = selectedAccount?.accountName,
+                accountType = selectedAccount?.accountType,
+                lookupResult = lookupResult
+            )
+            if (success) {
+                onContactSaved()
+                onDismiss()
+            } else {
+                errorMessage = "Failed to save contact"
+                isSaving = false
+            }
+        }
+    }
+    if (saveDeniedNotice) {
+        saveDeniedNotice = false
+        errorMessage = "Contacts write permission denied — tap SAVE again to retry"
+    }
+    LaunchedEffect(saveRequested) {
+        if (saveRequested) {
+            saveRequested = false
+            doSave()
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -243,24 +293,11 @@ fun AddContactBottomSheet(
                         errorMessage = "Please enter a name"
                         return@Button
                     }
+                    errorMessage = null
                     isSaving = true
-                    scope.launch {
-                        val success = enrichmentService.saveContactFast(
-                            phoneNumber = inputNumber,
-                            displayName = displayName,
-                            photoUrl = suggestedPhotoUrl,
-                            accountName = selectedAccount?.accountName,
-                            accountType = selectedAccount?.accountType,
-                            lookupResult = lookupResult
-                        )
-                        if (success) {
-                            onContactSaved()
-                            onDismiss()
-                        } else {
-                            errorMessage = "Failed to save contact"
-                            isSaving = false
-                        }
-                    }
+                    val missing = com.infocaller.app.permissions.PermissionManager.missingPermissions(context, com.infocaller.app.permissions.PermissionManager.WRITE_CONTACTS_PERMISSION)
+                    if (missing.isEmpty()) doSave()
+                    else writeLauncher.launch(missing)
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(28.dp),

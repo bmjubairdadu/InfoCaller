@@ -37,8 +37,9 @@ object PermissionManager {
     /**
      * Extra runtime permissions for Caller ID + spam detection:
      * call history (screening, missed-call lookup) and contacts
-     * (unknown-not-in-contacts check). Requested CONTEXTUALLY — call log on
-     * the Recent tab, contacts on the Contacts tab — never bulk up front.
+     * (unknown-not-in-contacts check). Only the READ sides are requested
+     * contextually — call log on the Recent tab, contacts on the Contacts
+     * tab — never bulk up front, never the WRITE sides.
      */
     val CALLER_ID_EXTRA_PERMISSIONS = arrayOf(
         Manifest.permission.READ_CALL_LOG,
@@ -61,11 +62,16 @@ object PermissionManager {
         wanted.filter { !hasPermission(context, it) }.toTypedArray()
 
     val CONTACTS_PERMISSIONS = arrayOf(
-        Manifest.permission.READ_CONTACTS,
+        Manifest.permission.READ_CONTACTS
+    )
+
+    /** Requested only when the user taps Save/Update in AddContactBottomSheet. */
+    val WRITE_CONTACTS_PERMISSION = arrayOf(
         Manifest.permission.WRITE_CONTACTS
     )
 
     val CALL_LOG_PERMISSIONS = arrayOf(Manifest.permission.READ_CALL_LOG)
+    /** Requested only when the user taps Clear All in Recents. */
     val WRITE_CALL_LOG_PERMISSION = arrayOf(Manifest.permission.WRITE_CALL_LOG)
 
     val NOTIFICATION_PERMISSION = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -74,20 +80,12 @@ object PermissionManager {
         emptyArray<String>()
     }
 
-    val BLUETOOTH_PERMISSION = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        arrayOf(Manifest.permission.BLUETOOTH_CONNECT)
-    } else {
-        emptyArray<String>()
-    }
-
     val RECORD_AUDIO_PERMISSION = arrayOf(Manifest.permission.RECORD_AUDIO)
 
+    /** SMS OTP auto-read: opt-in ONLY from the OTP screen (see LoginScreen).
+     *  No history permission: the app never reads SMS history, only the
+     *  incoming verification code via BROADCAST_SMS delivery. */
     val SMS_PERMISSION = arrayOf(Manifest.permission.RECEIVE_SMS)
-
-    val SMS_HISTORY_PERMISSIONS = arrayOf(
-        Manifest.permission.READ_SMS,
-        Manifest.permission.RECEIVE_SMS
-    )
 
     fun canDrawOverlays(context: Context): Boolean {
         return Settings.canDrawOverlays(context)

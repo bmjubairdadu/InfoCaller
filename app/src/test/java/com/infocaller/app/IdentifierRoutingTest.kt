@@ -46,4 +46,13 @@ class IdentifierRoutingTest {
         assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("01785 917145"))
         assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("123"))
     }
+
+    @Test
+    fun bareAtHandleIsNotEmail() {
+        assertEquals(false, IdentifierRouter.isEmail("@samplehandle01"))
+        assertEquals(false, IdentifierRouter.isEmail("nodot@domain"))
+        assertEquals(false, IdentifierRouter.isEmail("plain word"))
+        assertEquals(true, IdentifierRouter.isEmail("user.name+tag@gmail.com"))
+        assertEquals(true, IdentifierRouter.isEmail("  Test@Example.com  "))
+    }
 }

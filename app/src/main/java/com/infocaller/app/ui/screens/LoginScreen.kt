@@ -97,31 +97,49 @@ fun LoginScreen(
         }
         // SMS auto-fill (only when RECEIVE_SMS was granted from this screen).
         // Manual entry below always stays visible — the code may be on another phone.
+        // Guard: only auto-fill codes that arrived AFTER this OTP request (the
+        // bus now expires entries after 10 min, and any pre-request code is
+        // cleared below when a fresh requestId lands).
         if (autoFillEnabled) {
             val last: String? = OtpManager.lastOtpFlow.value
             if (last != null && last.length == 6 && tcOtp.isEmpty()) {
+                autoVerifying = true
                 tcOtp = last
                 val preResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, last)
+                autoVerifying = false
                 if (preResult.success) {
                     viewModel.loginWithTruecaller(null)
                     snackbarHostState.showSnackbar("Auto-verified from SMS ✓")
                     OtpManager.clearOtp()
                     return@LaunchedEffect
+                } else {
+                    // Stale/wrong code must not sit in the box masquerading as
+                    // the fresh one — clear it so the user types the new code.
+                    tcOtp = ""
+                    OtpManager.clearOtp()
                 }
             }
         }
         // Missed-call (flash-call) auto-verify: tail digits arrive on the
         // dedicated channel and the verification call was already rejected.
+        // Guard: only tails for THIS request (same requestId + TTL-checked bus).
+        val servedRequestId = tcAuthResult!!.requestId
         launch {
             OtpManager.missedCallFlow.collectLatest { tail: String? ->
+                if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collectLatest
                 if (tail == null || tail.length != 6) return@collectLatest
                 if (method != "call" && method != "flashcall" && method != "missedcall") return@collectLatest
+                autoVerifying = true
                 tcOtp = tail
-                val verifyResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, tail)
+                val verifyResult = authManager.verifyOtp(tcPhone, servedRequestId, tail)
+                autoVerifying = false
                 if (verifyResult.success) {
                     viewModel.loginWithTruecaller(null)
                     snackbarHostState.showSnackbar("Auto-verified from missed call ✓")
                 } else {
+                    // Wrong tail (e.g. ordinary missed call) — clear the box so
+                    // it never looks like the verification code.
+                    tcOtp = ""
                     snackbarHostState.showSnackbar("Auto-verify failed: ${verifyResult.message ?: "Invalid code"} - enter the code manually")
                 }
                 OtpManager.clearMissedCallTail()
@@ -131,6 +149,7 @@ fun LoginScreen(
         // or the SMS channel fires, still attempt. Manual entry is the path.
         launch {
             OtpManager.otpFlow.collectLatest { code: String? ->
+                if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collectLatest
                 if (!autoFillEnabled) return@collectLatest
                 if (code == null) return@collectLatest
                 val codeStr: String = code
@@ -464,8 +483,58 @@ fun LoginScreen(
                                 }
                             }
                             
-                            TextButton(onClick = { viewModel.setTcAuthResult(null); tcOtp = ""; verifyError = null }, modifier = Modifier.padding(top = 8.dp)) {
-                                Text("Edit Phone Number", color = Color.White.copy(alpha = 0.6f))
+                            // Resend with cooldown: hammering SEND is what triggers
+                            // Truecaller rate limits (status 5/6 = 1-hour lockout).
+                            // 60s cooldown + code-box reset + stale-bus clearing.
+                            var resendCooldown by remember { mutableStateOf(0) }
+                            LaunchedEffect(resendCooldown) {
+                                if (resendCooldown > 0) {
+                                    kotlinx.coroutines.delay(1000)
+                                    resendCooldown -= 1
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(onClick = { viewModel.setTcAuthResult(null); tcOtp = ""; verifyError = null; authError = null }) {
+                                    Text("Edit Phone Number", color = Color.White.copy(alpha = 0.6f))
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                TextButton(
+                                    enabled = resendCooldown == 0 && !tcLoading,
+                                    onClick = {
+                                        resendCooldown = 60
+                                        tcOtp = ""
+                                        verifyError = null
+                                        authError = null
+                                        OtpManager.clearOtp()
+                                        OtpManager.clearMissedCallTail()
+                                        tcLoading = true
+                                        scope.launch {
+                                            val normalized = PhoneNumberUtils.normalize(tcPhone)
+                                            val r = authManager.requestOtp(normalized)
+                                            val result = if (r != null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
+                                            if (result == null || result.statusCode == -1) {
+                                                authError = result?.errorMessage ?: "Connection error — check internet"
+                                            } else if (result.requestId.isBlank() && result.statusCode != 3) {
+                                                val isLimit = result.statusCode == 5 || result.statusCode == 6 || result.statusCode == 429
+                                                authError = if (isLimit) "Too many requests. Try again after 1 hour."
+                                                else result.errorMessage?.takeIf { it.isNotBlank() } ?: "Verification service unavailable (Error ${result.statusCode})."
+                                            } else {
+                                                viewModel.setTcAuthResult(result)
+                                                snackbarHostState.showSnackbar("Code resent ✓")
+                                            }
+                                            tcLoading = false
+                                        }
+                                    }
+                                ) {
+                                    Text(
+                                        if (resendCooldown > 0) "Resend in ${resendCooldown}s" else "Resend Code",
+                                        color = if (resendCooldown > 0) Color.White.copy(alpha = 0.35f) else Primary
+                                    )
+                                }
                             }
                         }
                     }

@@ -82,29 +82,9 @@ object PermissionExplanations {
             icon = Icons.Default.Mic
         ),
         Manifest.permission.RECEIVE_SMS to PermissionInfo(
-            title = "SMS Access",
-            description = "Allows InfoCaller to automatically read OTP/verification codes for Truecaller login.",
+            title = "SMS OTP Auto-fill",
+            description = "Allows InfoCaller to automatically fill the Truecaller verification code when it arrives. Message history is never read.",
             icon = Icons.Default.Message
-        ),
-        Manifest.permission.READ_SMS to PermissionInfo(
-            title = "SMS History",
-            description = "Allows InfoCaller to read SMS history for verification codes and spam detection.",
-            icon = Icons.Default.Message
-        ),
-        Manifest.permission.BLUETOOTH_CONNECT to PermissionInfo(
-            title = "Bluetooth Connect",
-            description = "Allows InfoCaller to connect to Bluetooth devices for call audio routing.",
-            icon = Icons.Default.Bluetooth
-        ),
-        Manifest.permission.ACCESS_FINE_LOCATION to PermissionInfo(
-            title = "Precise Location",
-            description = "Allows InfoCaller to provide location-based caller identification and spam reporting.",
-            icon = Icons.Default.LocationOn
-        ),
-        Manifest.permission.ACCESS_COARSE_LOCATION to PermissionInfo(
-            title = "Approximate Location",
-            description = "Allows InfoCaller to provide general location-based caller identification.",
-            icon = Icons.Default.LocationOn
         )
     )
 

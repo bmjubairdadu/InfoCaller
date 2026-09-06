@@ -38,9 +38,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
-    <!-- RUNTIME: SMS OTP auto-read - asked only on Login screen for Truecaller verify -->
+    <!-- RUNTIME: SMS OTP auto-read - asked only on Login screen for Truecaller verify.
+         No READ_SMS: history is never read, only the incoming code via BROADCAST_SMS. -->
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
-    <uses-permission android:name="android.permission.READ_SMS" />
 
     <!-- IMPLICIT via InCallService - still declared but not runtime-prompted separately -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />

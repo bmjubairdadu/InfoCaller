@@ -19,9 +19,14 @@ class SmsReceiver : BroadcastReceiver() {
             for (message in messages) {
                 val body = message.displayMessageBody
                 val sender = message.displayOriginatingAddress ?: ""
-                val otp = extractOtp(body)
-                if (otp != null) {
-                    OtpManager.onOtpReceivedSync(otp)
+                // Only verification senders feed the OTP bus: any 6-digit
+                // number in an ordinary SMS (bank balance, booking ref) must
+                // never auto-fill the Truecaller code box.
+                if (isVerificationSender(sender, body)) {
+                    val otp = extractOtp(body)
+                    if (otp != null) {
+                        OtpManager.onOtpReceivedSync(otp)
+                    }
                 }
                 identifySmsSender(context, sender)
             }
@@ -72,10 +77,27 @@ class SmsReceiver : BroadcastReceiver() {
         manager.notify(number.hashCode(), builder.build())
     }
 
+    private fun isVerificationSender(sender: String, body: String): Boolean {
+        val s = sender.lowercase()
+        val b = body.lowercase()
+        // Truecaller OTP senders: short codes / Truecaller-labeled alphanumeric
+        // senders, or bodies that explicitly mention verification with a code.
+        if (s.contains("truecaller")) return true
+        if (s.length <= 6 && s.any { it.isDigit() }) return true
+        if (s.length <= 11 && s.all { it.isLetterOrDigit() || it == '-' || it == ' ' } &&
+            (b.contains("truecaller") || b.contains("verification") || b.contains("verify"))) return true
+        return b.contains("truecaller") &&
+            (b.contains("code") || b.contains("otp") || b.contains("verification") || b.contains("verify"))
+    }
+
     private fun extractOtp(body: String): String? {
+        // Labeled code first (code/otp/verification near digits), so a stray
+        // 6-digit number elsewhere in the body never beats the real code.
+        val labeled = Pattern.compile("(?:code|otp|verification|verify|pin|password)[^\\d]{0,20}(\\d{4,10})(?!\\d)", Pattern.CASE_INSENSITIVE)
+        labeled.matcher(body).let { m -> if (m.find()) return m.group(1)?.takeIf { it.length in 4..10 } }
         val patterns = listOf(
             Pattern.compile("(?:code|is|verification)\\s*(?:is)?\\s*(\\d{6})(?!\\d)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("(?<!\\d)(\\d{6})(?!\\d)") 
+            Pattern.compile("(?<!\\d)(\\d{6})(?!\\d)")
         )
         for (pattern in patterns) {
             val matcher = pattern.matcher(body)

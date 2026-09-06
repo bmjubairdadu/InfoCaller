@@ -25,6 +25,14 @@ class AuthViewModel(
     val tcPhone = _tcPhone.asStateFlow()
 
     fun setTcAuthResult(result: com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult?) {
+        // A fresh requestId invalidates any in-flight auto-fill: clear stale
+        // SMS/missed-call codes so an old code can never verify a new request.
+        if (result != null && result.requestId != _tcAuthResult.value?.requestId) {
+            try {
+                com.infocaller.app.util.OtpManager.clearOtp()
+                com.infocaller.app.util.OtpManager.clearMissedCallTail()
+            } catch (_: Exception) { }
+        }
         _tcAuthResult.value = result
     }
 
@@ -33,10 +41,14 @@ class AuthViewModel(
     }
 
     fun refreshTcSession(context: android.content.Context) {
+        // Rate-limit lockout (status 5/6): drop the in-flight request keys too,
+        // or a later flash-call tail could auto-reject against a dead request.
         val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
         prefs.edit()
             .remove("tc_device_id")
             .remove("truecaller_token")
+            .remove("last_tc_request_id")
+            .remove("last_tc_phone")
             .apply()
     }
 

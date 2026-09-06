@@ -51,15 +51,25 @@ fun RecentsScreen(
     innerPadding: PaddingValues = PaddingValues(0.dp)
 ) {
     val context = LocalContext.current
-    var hasPermission by remember { 
-        mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.CALL_LOG_PERMISSIONS)) 
+    var hasPermission by remember {
+        mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.CALL_LOG_PERMISSIONS))
     }
-    
+
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
         hasPermission = results.values.all { it }
         // The call-log flow closes itself when permission is missing; restart it
         // now so the list populates immediately instead of staying empty.
         if (hasPermission) viewModel.refreshDeviceData()
+    }
+    // WRITE_CALL_LOG is requested only when the user taps Clear All — never
+    // with the read side, never up front.
+    val writeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+        if (results.values.all { it }) viewModel.clearAllCallLogs()
+    }
+    fun requestClearAll() {
+        val missing = PermissionManager.missingPermissions(context, PermissionManager.WRITE_CALL_LOG_PERMISSION)
+        if (missing.isEmpty()) viewModel.clearAllCallLogs()
+        else writeLauncher.launch(missing)
     }
     // One-shot, contextual, minimal: request ONLY the still-missing call-log
     // permission when this tab is first opened — never a bulk set.
@@ -105,7 +115,7 @@ fun RecentsScreen(
                     TopAppBar(
                         title = { Text("Activity", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White) },
                         actions = {
-                            IconButton(onClick = { viewModel.clearAllCallLogs() }) {
+                            IconButton(onClick = { requestClearAll() }) {
                                 Icon(Icons.Default.DeleteSweep, contentDescription = "Clear All", tint = Color.White.copy(alpha = 0.6f))
                             }
                         },
@@ -118,7 +128,7 @@ fun RecentsScreen(
         ) { screenPadding ->
             Box(modifier = Modifier.fillMaxSize()) {
                 if (!hasPermission) {
-                    PermissionEmptyState(title = "Recents Permission", description = "To show your call history, InfoCaller needs access to your call logs.", onGrant = { requestMissingCallLog() })
+                    PermissionEmptyState(title = "Recents Permission", description = "To show your call history, InfoCaller reads your call log here — only this permission, only on this tab. Deleting history asks separately when you tap it.", onGrant = { requestMissingCallLog() })
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
