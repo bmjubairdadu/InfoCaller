@@ -14,15 +14,13 @@ class IdentifierRoutingTest {
     }
 
     @Test
-    fun nidPipeRoutesToNid() {
-        assertEquals(IdentifierType.NID, IdentifierRouter.routeType("1234567890|1990-01-01"))
-    }
-
-    @Test
-    fun plainNidLengthsRouteToNid() {
-        assertEquals(IdentifierType.NID, IdentifierRouter.routeType("1234567890"))
-        assertEquals(IdentifierType.NID, IdentifierRouter.routeType("1234567890123"))
-        assertEquals(IdentifierType.NID, IdentifierRouter.routeType("12345678901234567"))
+    fun nidStyleInputsRouteToPhone() {
+        // Search is phone-number only: NID/DOB are display-only fields from
+        // database.json matches. No input routes to NID anymore.
+        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("1234567890|1990-01-01"))
+        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("1234567890"))
+        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("1234567890123"))
+        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("12345678901234567"))
     }
 
     @Test

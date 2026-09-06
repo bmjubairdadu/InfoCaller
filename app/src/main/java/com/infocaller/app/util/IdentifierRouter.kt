@@ -3,10 +3,11 @@ package com.infocaller.app.util
 import com.infocaller.app.domain.engine.IdentifierType
 
 /**
- * Shared routing for the single details screen: email addresses must run an
- * EMAIL scan (phone normalization would strip them to digits), NID / NID|DOB
- * identifiers run a NID scan, @-prefixed or handle-shaped identifiers run a
- * USERNAME scan, everything else runs a phone scan.
+ * Shared routing for the single details screen: email addresses run an
+ * EMAIL scan, @-prefixed or handle-shaped identifiers run a USERNAME scan,
+ * everything else runs a PHONE scan. NID / DOB are DISPLAY-ONLY fields from
+ * database.json matches — searching by them is disabled, so no NID route
+ * exists here. Phone-number scans auto-attach NID/DOB from the local table.
  */
 object IdentifierRouter {
     /** True email address (not a bare @handle): dotted domain, no leading @. */
@@ -22,14 +23,9 @@ object IdentifierRouter {
         // A bare @handle is a username, not an email: real addresses have a
         // dotted domain and never start with @.
         if (isEmail(t)) return IdentifierType.EMAIL
-        if (t.contains("|")) return IdentifierType.NID
-        if (t.all { it.isDigit() }) {
-            // BD phones: 11 digits (01...) locally, 13 (880...) in E.164.
-            // 10/17-digit all-digit strings can only be NIDs; 13-digit strings
-            // that are not 880-prefixed are NIDs too.
-            if (t.length == 10 || t.length == 17) return IdentifierType.NID
-            if (t.length == 13 && !t.startsWith("880")) return IdentifierType.NID
-        }
+        // NOTE: no NID route — search is phone-number only. All-digit strings
+        // of any length fall through to the dialer path; NID/DOB surface as
+        // display fields on phone matches.
         // Explicit @handle or handle-shaped tokens (letters/digits/._- with
         // no phone structure) run a username scan. Short numeric strings
         // still fall through to the dialer path.

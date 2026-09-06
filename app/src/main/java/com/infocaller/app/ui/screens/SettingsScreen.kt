@@ -209,10 +209,10 @@ fun SettingsScreen(
                 }
             }
 
-            SettingsSection("NID Lookup") {
+            SettingsSection("NID Database") {
                 // database.json status: shows whether the local 115k-row file
-                // has been imported into the on-device table. Matches show
-                // NID + DOB only — never names/photos the file doesn't have.
+                // has been imported into the on-device table. Search is
+                // phone-number only — matching numbers show NID + DOB.
                 val nidImported = remember {
                     try { com.infocaller.app.data.local.NidDatabaseImporter.isImported(context) }
                     catch (_: Exception) { false }
@@ -222,60 +222,12 @@ fun SettingsScreen(
                     catch (_: Exception) { 0 }
                 }
                 Text(
-                    if (nidImported) "Local NID database ready ($nidCount records)"
+                    if (nidImported) "Local NID database ready ($nidCount records) — search any phone number to see its NID + DOB"
                     else "Local NID database not loaded yet — restart the app once with database.json in place",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)
                 )
-                var nid by remember { mutableStateOf("") }
-                var dob by remember { mutableStateOf("") }
-                var nidError by remember { mutableStateOf<String?>(null) }
-
-                Column(modifier = Modifier.padding(16.dp)) {
-                    OutlinedTextField(
-                        value = nid,
-                        onValueChange = { nid = it.filter { c -> c.isDigit() }; nidError = null },
-                        label = { Text("NID (10/13/17 digits)") },
-                        leadingIcon = { Icon(Icons.Default.Fingerprint, null) },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = dob,
-                        onValueChange = { dob = it; nidError = null },
-                        label = { Text("Date of Birth (YYYY-MM-DD)") },
-                        placeholder = { Text("1992-10-11") },
-                        leadingIcon = { Icon(Icons.Default.Cake, null) },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        singleLine = true
-                    )
-                    nidError?.let {
-                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Button(
-                        onClick = {
-                            if (nid.length < 7) { nidError = "Enter valid NID (min 7 digits)"; return@Button }
-                            if (dob.isNotBlank() && !Regex("\\d{4}-\\d{2}-\\d{2}").matches(dob)) { nidError = "DOB must be YYYY-MM-DD"; return@Button }
-                            nidError = null
-                            val identifier = if (dob.isNotBlank()) "$nid|$dob" else nid
-                            viewModel.searchNidManual(identifier)
-                            viewModel.triggerThrottledSync(context)
-                            onNavigateToDetails(identifier)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        enabled = nid.length >= 7
-                    ) {
-                        Icon(Icons.Default.Search, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("SEARCH NID")
-                    }
-                }
             }
 
             SettingsSection("Calls") {

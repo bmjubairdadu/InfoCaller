@@ -99,15 +99,12 @@ class CallerViewModel(
 
     fun searchNumber(phoneNumber: String) {
         // Single routed entry: emails run an EMAIL scan (phone normalize strips
-        // them to digits), NIDs a NID scan, handles a USERNAME scan, phones a
-        // PHONE scan. Used by nav-graph + details retry + settings identity box.
+        // them to digits), handles a USERNAME scan, everything else a PHONE
+        // scan. NID/DOB are display-only from database.json matches — there is
+        // no NID search path. Used by nav-graph + details retry + settings.
         when (com.infocaller.app.util.IdentifierRouter.routeType(phoneNumber)) {
             com.infocaller.app.domain.engine.IdentifierType.EMAIL -> {
                 searchEmailManual(phoneNumber)
-                return
-            }
-            com.infocaller.app.domain.engine.IdentifierType.NID -> {
-                searchNidManual(phoneNumber)
                 return
             }
             com.infocaller.app.domain.engine.IdentifierType.USERNAME -> {
@@ -131,9 +128,11 @@ class CallerViewModel(
         searchNumber(phoneNumber)
     }
 
-    /** Manual NID search: same focus semantics, NID identifier type. */
+    /** NID search is DISABLED: search is phone-number only. NID/DOB surface
+     *  automatically as display fields on phone matches (see NidDatabase*).
+     *  Kept as a no-op so existing call sites fail safe instead of crashing. */
     fun searchNidManual(identifier: String) {
-        searchByIdentifier(identifier, com.infocaller.app.domain.engine.IdentifierType.NID)
+        return
     }
 
     /** Manual email search: same focus semantics, EMAIL identifier type.

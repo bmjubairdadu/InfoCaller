@@ -64,7 +64,14 @@ class PublicLookupEngine(
         if (type == IdentifierType.PHONE) {
             tc?.let { executionPlan.add(it) }
             eyecon?.let { executionPlan.add(it) }
-            executionPlan.addAll(others)
+            // NID providers run immediately after Truecaller/Eyecon on PHONE
+            // scans: search is phone-number only, so the local database.json
+            // match (NID + DOB display) must surface before generic scrapers
+            // consume the 8-attempt budget.
+            val nidFirst = others.filter { it.id == "bd_nid_database" || it.id == "nid_gov_enrichment" }
+                .sortedByDescending { it.priority }
+            executionPlan.addAll(nidFirst)
+            executionPlan.addAll(others.filter { it.id != "bd_nid_database" && it.id != "nid_gov_enrichment" })
         } else {
             val typeFirstIds: Set<String> = when (type) {
                 IdentifierType.EMAIL -> setOf(
@@ -81,6 +88,8 @@ class PublicLookupEngine(
                     "whatsmyname", "facebook_profile", "tiktok_profile",
                     "instagram_deep", "name_social_verifier", "grepapp_code_search"
                 )
+                // No NID scan path exists (search is phone-number only) — this
+                // ordering is dead but kept so a future caller fails safe.
                 IdentifierType.NID, IdentifierType.DOB -> setOf(
                     "nid_gov_enrichment", "bd_nid_database"
                 )
