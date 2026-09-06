@@ -27,18 +27,18 @@ class IdentifierRoutingTest {
 
     @Test
     fun phonesRouteToPhone() {
-        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("+8801785917145"))
-        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("8801785917145"))
-        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("01785917145"))
-        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("01785-917145"))
+        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("+8801712345678"))
+        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("8801712345678"))
+        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("01712345678"))
+        assertEquals(IdentifierType.PHONE, IdentifierRouter.routeType("01712-345678"))
     }
 
     @Test
     fun handlesRouteToUsername() {
-        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("@jubairdadubm"))
-        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("jubairdadu143"))
-        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("jubairhose143"))
-        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("jubairdaduff"))
+        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("@samplehandle01"))
+        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("testuser143"))
+        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("demo_handle02"))
+        assertEquals(IdentifierType.USERNAME, IdentifierRouter.routeType("sample_user99"))
     }
 
     @Test

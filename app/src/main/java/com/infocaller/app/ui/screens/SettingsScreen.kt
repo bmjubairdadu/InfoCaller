@@ -171,7 +171,7 @@ fun SettingsScreen(
                         value = searchUsername,
                         onValueChange = { searchUsername = it; usernameError = null },
                         label = { Text("Search Username") },
-                        placeholder = { Text("jubairdadubm") },
+                        placeholder = { Text("username123") },
                         leadingIcon = { Icon(Icons.Default.AlternateEmail, null) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
