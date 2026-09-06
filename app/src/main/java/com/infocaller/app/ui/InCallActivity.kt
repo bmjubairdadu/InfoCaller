@@ -300,6 +300,14 @@ fun InCallScreen(onDismiss: () -> Unit) {
                             }
                         }
 
+                        // Big tap targets: red decline (left) + green answer
+                        // (right) with handset glyphs, kept alongside the
+                        // swipe gesture for users who prefer it.
+                        TapAnswerRow(
+                            onAccept = { call?.answer(VideoProfile.STATE_AUDIO_ONLY) },
+                            onDecline = { call?.reject(false, null); onDismiss() }
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
                         SwipeToAnswer(
                             onAccept = { call?.answer(VideoProfile.STATE_AUDIO_ONLY) },
                             onDecline = { call?.reject(false, null); onDismiss() }
@@ -442,36 +450,6 @@ fun SwipeToAnswer(onAccept: () -> Unit, onDecline: () -> Unit) {
 }
 
 @Composable
-fun ActiveCallControls(number: String, isMuted: Boolean, isSpeakerOn: Boolean, isHolding: Boolean, isRecording: Boolean, onMute: () -> Unit, onSpeaker: () -> Unit, onHold: () -> Unit, onEnd: () -> Unit, onKeypad: () -> Unit) {
-    val context = LocalContext.current
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            InCallButton(icon = if (isMuted) Icons.Rounded.MicOff else Icons.Rounded.Mic, label = "Mute", active = isMuted, onClick = onMute)
-            InCallButton(icon = Icons.AutoMirrored.Filled.VolumeUp, label = "Speaker", active = isSpeakerOn, onClick = onSpeaker)
-            InCallButton(
-                icon = if (isRecording) Icons.Rounded.FiberManualRecord else Icons.Rounded.RadioButtonUnchecked, 
-                label = if (isRecording) "Recording" else "Record", 
-                active = isRecording, 
-                onClick = { 
-                    CallManager.toggleRecording(context as? android.app.Activity ?: return@InCallButton, number) 
-                }
-            )
-            InCallButton(icon = if (isHolding) Icons.Rounded.PlayArrow else Icons.Rounded.Pause, label = if (isHolding) "Resume" else "Hold", active = isHolding, onClick = onHold)
-            InCallButton(icon = Icons.Rounded.Dialpad, label = "Keypad", onClick = onKeypad)
-        }
-        Spacer(modifier = Modifier.height(48.dp))
-        Surface(
-            onClick = onEnd, 
-            modifier = Modifier.size(80.dp).shadow(24.dp, CircleShape), 
-            shape = CircleShape, 
-            color = Error
-        ) {
-            Box(contentAlignment = Alignment.Center) { Icon(Icons.Rounded.CallEnd, null, tint = Color.White, modifier = Modifier.size(36.dp)) }
-        }
-    }
-}
-
-@Composable
 fun InCallButton(icon: ImageVector, label: String, active: Boolean = false, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(onClick = onClick, modifier = Modifier.size(60.dp), shape = CircleShape, color = if (active) Primary else Color.White.copy(alpha = 0.1f)) {
@@ -506,22 +484,262 @@ fun DtmfGrid(onDigit: (Char) -> Unit) {
 
 @Composable
 fun SocialMiniIcon(profile: com.infocaller.app.domain.model.SocialProfile) {
+    SocialBrandIcon(profile, size = 36.dp, iconSize = 20.dp, showLabel = false)
+}
+
+@Composable
+fun SocialBrandIcon(
+    profile: com.infocaller.app.domain.model.SocialProfile,
+    size: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp(36f),
+    iconSize: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp(20f),
+    showLabel: Boolean = false,
+) {
     val context = LocalContext.current
-    
-    Surface(
-        onClick = { SocialUtils.openSocialProfile(context, profile) },
-        modifier = Modifier.size(36.dp),
-        shape = CircleShape,
-        color = Color.White.copy(alpha = 0.1f),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            AsyncImage(
-                model = SocialUtils.getLogoUrl(profile.platform),
-                contentDescription = profile.platform,
-                modifier = Modifier.size(20.dp).clip(CircleShape),
-                contentScale = androidx.compose.ui.layout.ContentScale.Fit
+    // Brand-tinted ring per platform so each social account reads as its logo.
+    val brand = SocialBrandColors.forPlatform(profile.platform)
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(
+            onClick = { SocialUtils.openSocialProfile(context, profile) },
+            modifier = Modifier.size(size).shadow(8.dp, CircleShape),
+            shape = CircleShape,
+            color = Color.White.copy(alpha = 0.08f),
+            border = androidx.compose.foundation.BorderStroke(2.dp, brand.copy(alpha = 0.75f))
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier.matchParentSize().clip(CircleShape)
+                        .background(Brush.radialGradient(listOf(brand.copy(alpha = 0.35f), Color.Transparent)))
+                )
+                AsyncImage(
+                    model = SocialUtils.getLogoUrl(profile.platform),
+                    contentDescription = profile.platform,
+                    modifier = Modifier.size(iconSize).clip(CircleShape),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    error = rememberVectorPainter(Icons.Default.Share),
+                    placeholder = rememberVectorPainter(Icons.Default.Share)
+                )
+            }
+        }
+        if (showLabel) {
+            Text(
+                profile.platform.uppercase(),
+                modifier = Modifier.padding(top = 6.dp),
+                fontSize = 9.sp,
+                color = Color.White.copy(alpha = 0.6f),
+                fontWeight = FontWeight.Bold
             )
+        }
+    }
+}
+
+object SocialBrandColors {
+    fun forPlatform(platform: String): Color = when (platform.lowercase()) {
+        "whatsapp" -> Color(0xFF25D366)
+        "telegram" -> Color(0xFF229ED9)
+        "facebook" -> Color(0xFF1877F2)
+        "instagram" -> Color(0xFFE1306C)
+        "linkedin" -> Color(0xFF0A66C2)
+        "twitter", "x" -> Color(0xFF1D9BF0)
+        "youtube" -> Color(0xFFFF0000)
+        "tiktok" -> Color(0xFF69C9D0)
+        "github" -> Color(0xFF9E9E9E)
+        "snapchat" -> Color(0xFFFFFC00)
+        "spotify" -> Color(0xFF1DB954)
+        "reddit" -> Color(0xFFFF4500)
+        else -> Color(0xFFFBBF24)
+    }
+}
+
+/**
+ * Big tap accept/decline: red decline circle (left) + green answer circle
+ * (right) with handset glyphs + labels. Haptic on press. Kept alongside
+ * SwipeToAnswer for users who prefer the gesture.
+ */
+@Composable
+fun TapAnswerRow(onAccept: () -> Unit, onDecline: () -> Unit) {
+    val haptic = LocalHapticFeedback.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        TapAnswerButton(
+            icon = Icons.Rounded.CallEnd,
+            label = "DECLINE",
+            base = Color(0xFFEF4444),
+            deep = Color(0xFFB91C1C),
+            onTap = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onDecline()
+            }
+        )
+        TapAnswerButton(
+            icon = Icons.Rounded.Call,
+            label = "ANSWER",
+            base = Color(0xFF22C55E),
+            deep = Color(0xFF15803D),
+            onTap = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onAccept()
+            }
+        )
+    }
+}
+
+@Composable
+private fun TapAnswerButton(
+    icon: ImageVector,
+    label: String,
+    base: Color,
+    deep: Color,
+    onTap: () -> Unit,
+) {
+    var pressed by remember { mutableStateOf(false) }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(
+            onClick = onTap,
+            modifier = Modifier.size(88.dp).shadow(24.dp, CircleShape).scale(if (pressed) 0.92f else 1f),
+            shape = CircleShape,
+            color = Color.Transparent,
+            border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = 0.25f))
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize().background(Brush.linearGradient(listOf(base, deep))),
+                contentAlignment = Alignment.Center
+            ) {
+                // White circular badge behind the glyph = logo-button look.
+                Box(
+                    modifier = Modifier.size(52.dp).clip(CircleShape).background(Color.White),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, label, tint = deep, modifier = Modifier.size(30.dp))
+                }
+            }
+        }
+        Text(label, modifier = Modifier.padding(top = 10.dp), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
+    }
+    LaunchedEffect(pressed) {
+        if (pressed) {
+            kotlinx.coroutines.delay(150)
+            pressed = false
+        }
+    }
+}
+
+/**
+ * Active-call control grid: mute / speaker / record / hold / keypad on row
+ * one, a "More" button opening mic-routes, add-call, video, and contacts
+ * shortcuts on row two, and the red end-call button below.
+ */
+@Composable
+fun ActiveCallControls(number: String, isMuted: Boolean, isSpeakerOn: Boolean, isHolding: Boolean, isRecording: Boolean, onMute: () -> Unit, onSpeaker: () -> Unit, onHold: () -> Unit, onEnd: () -> Unit, onKeypad: () -> Unit) {
+    val context = LocalContext.current
+    var showMore by remember { mutableStateOf(false) }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            InCallButton(icon = if (isMuted) Icons.Rounded.MicOff else Icons.Rounded.Mic, label = "Mute", active = isMuted, onClick = onMute)
+            InCallButton(icon = Icons.AutoMirrored.Filled.VolumeUp, label = "Speaker", active = isSpeakerOn, onClick = onSpeaker)
+            InCallButton(
+                icon = if (isRecording) Icons.Rounded.FiberManualRecord else Icons.Rounded.RadioButtonUnchecked,
+                label = if (isRecording) "Recording" else "Record",
+                active = isRecording,
+                onClick = {
+                    CallManager.toggleRecording(context as? android.app.Activity ?: return@InCallButton, number)
+                }
+            )
+            InCallButton(icon = if (isHolding) Icons.Rounded.PlayArrow else Icons.Rounded.Pause, label = if (isHolding) "Resume" else "Hold", active = isHolding, onClick = onHold)
+            InCallButton(icon = Icons.Rounded.Dialpad, label = "Keypad", onClick = onKeypad)
+        }
+        Spacer(modifier = Modifier.height(20.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            InCallButton(icon = Icons.Rounded.MoreHoriz, label = "More", onClick = { showMore = true })
+            InCallButton(icon = Icons.Rounded.PersonAdd, label = "Add call", onClick = {
+                try {
+                    val intent = android.content.Intent(android.content.Intent.ACTION_DIAL)
+                    context.startActivity(intent)
+                } catch (_: Exception) { }
+            })
+            InCallButton(icon = Icons.Rounded.Videocam, label = "Video", onClick = {
+                // Video upgrade needs carrier/IMS support — fall back to the
+                // system dialer for video-capable handling instead of a no-op.
+                try {
+                    val intent = android.content.Intent(android.content.Intent.ACTION_DIAL)
+                    context.startActivity(intent)
+                } catch (_: Exception) { }
+            })
+            InCallButton(icon = Icons.Rounded.Contacts, label = "Contacts", onClick = {
+                try {
+                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                        data = android.provider.ContactsContract.Contacts.CONTENT_URI
+                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                } catch (_: Exception) { }
+            })
+        }
+        Spacer(modifier = Modifier.height(36.dp))
+        Surface(
+            onClick = onEnd,
+            modifier = Modifier.size(80.dp).shadow(24.dp, CircleShape),
+            shape = CircleShape,
+            color = Color.Transparent,
+            border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = 0.25f))
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Error, Color(0xFFB91C1C)))),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.White),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.CallEnd, null, tint = Color(0xFFB91C1C), modifier = Modifier.size(28.dp))
+                }
+            }
+        }
+        Text("END CALL", modifier = Modifier.padding(top = 10.dp), color = Error, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
+    }
+    if (showMore) {
+        MoreControlsSheet(
+            onDismiss = { showMore = false },
+            onMute = { onMute(); showMore = false },
+            onSpeaker = { onSpeaker(); showMore = false },
+            onHold = { onHold(); showMore = false },
+            onKeypad = { onKeypad(); showMore = false },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MoreControlsSheet(
+    onDismiss: () -> Unit,
+    onMute: () -> Unit,
+    onSpeaker: () -> Unit,
+    onHold: () -> Unit,
+    onKeypad: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("More controls", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.height(8.dp))
+            MoreRow(icon = Icons.Rounded.Mic, title = "Mute microphone", onClick = onMute)
+            MoreRow(icon = Icons.AutoMirrored.Filled.VolumeUp, title = "Speaker output", onClick = onSpeaker)
+            MoreRow(icon = Icons.Rounded.Pause, title = "Hold / resume", onClick = onHold)
+            MoreRow(icon = Icons.Rounded.Dialpad, title = "Keypad", onClick = onKeypad)
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun MoreRow(icon: ImageVector, title: String, onClick: () -> Unit) {
+    Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.06f)) {
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = Color.White, modifier = Modifier.size(24.dp))
+            Spacer(modifier = Modifier.width(16.dp))
+            Text(title, color = Color.White, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }

@@ -19,11 +19,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material.icons.rounded.CallEnd
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
@@ -32,6 +35,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
 import com.infocaller.app.R
 import androidx.lifecycle.*
@@ -198,7 +202,16 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
         val displayName = contactName ?: enrichment?.publicName ?: "Unknown Caller"
         val photoUrl = contactPhotoUri ?: enrichment?.profileImageUrl
         val location = LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
+        val overlaySocials = remember(enrichment?.socialProfilesJson) {
+            try { SocialUtils.filteredUsedProfiles(SocialUtils.fromJson(enrichment?.socialProfilesJson)) }
+            catch (_: Exception) { emptyList() }
+        }
 
+        // Premium incoming card: dark gradient header, gold-ring circular
+        // photo, name + number, location, automatic NID badge, branded social
+        // logos, and big red-decline / green-answer tap targets. The overlay
+        // window is NOT_FOCUSABLE so taps deep-link to the full-screen UI
+        // where the red/green buttons answer for real.
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -212,122 +225,221 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                         .fillMaxWidth()
                         .background(
                             brush = Brush.horizontalGradient(
-                                colors = listOf(GradientStart, GradientEnd)
+                                colors = listOf(Color(0xFF1B2B4D), Color(0xFF0E1830))
                             )
                         )
-                        .padding(16.dp)
+                        .padding(20.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (photoUrl != null) {
-                            AsyncImage(
-                                model = photoUrl,
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clip(CircleShape)
-                                    .border(2.dp, Color.White.copy(alpha = 0.2f), CircleShape),
-                                contentScale = ContentScale.Crop,
-                                placeholder = rememberVectorPainter(Icons.Default.Person),
-                                error = rememberVectorPainter(Icons.Default.Person)
-                            )
-                        } else {
-                            val initials = ContactUtils.getInitials(displayName)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(contentAlignment = Alignment.Center) {
                             Box(
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White.copy(alpha = 0.1f))
-                                    .border(2.dp, Color.White.copy(alpha = 0.2f), CircleShape),
+                                modifier = Modifier.size(88.dp).clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.12f))
+                                    .border(3.dp, Color(0xFFE8B84B), CircleShape),
                                 contentAlignment = Alignment.Center
                             ) {
+                                if (photoUrl != null) {
+                                    AsyncImage(
+                                        model = photoUrl,
+                                        contentDescription = null,
+                                        modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                        contentScale = ContentScale.Crop,
+                                        placeholder = rememberVectorPainter(Icons.Default.Person),
+                                        error = rememberVectorPainter(Icons.Default.Person)
+                                    )
+                                } else {
+                                    Text(
+                                        text = ContactUtils.getInitials(displayName),
+                                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = if (isBlocked) "Blocked Caller" else "Incoming Call",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isBlocked) Color(0xFFEF4444) else Color(0xFF4FC3F7),
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 2.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = displayName,
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = Color.White,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Text(
+                            text = try { PhoneNumberUtils.formatAsYouType(phoneNumber) } catch (_: Exception) { phoneNumber },
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.White.copy(alpha = 0.75f),
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                        if (enrichment == null && contactName == null && !isBlocked) {
+                            Text(
+                                text = "Identifying…",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.55f),
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                        if (location.isNotBlank()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(top = 8.dp)
+                            ) {
+                                Icon(Icons.Default.Place, contentDescription = null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = initials,
-                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = Color.White
+                                    text = location,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Color.White.copy(alpha = 0.75f)
                                 )
                             }
                         }
-
-                        Spacer(modifier = Modifier.width(16.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = displayName,
-                                style = MaterialTheme.typography.titleLarge,
-                                color = Color.White,
-                                fontWeight = FontWeight.Bold
-                            )
-                            
-                            if (enrichment == null && contactName == null && !isBlocked) {
-                                Text(
-                                    text = "Identifying...",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White.copy(alpha = 0.6f)
-                                )
-                            }
-
-                            Text(
-                                text = phoneNumber,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = 0.8f)
-                            )
-
-                            if (!enrichment?.confidence.isNullOrBlank() && contactName == null) {
-                                val confidence = enrichment?.confidence?.toFloatOrNull() ?: 0f
-                                if (confidence > 0f) {
-                                    Text(
-                                        text = "Confidence: ${(confidence * 100).toInt()}%",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color.White.copy(alpha = 0.9f)
-                                    )
-                                }
-                            }
-
-                            if (location.isNotBlank()) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Place, contentDescription = null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = location,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color.White.copy(alpha = 0.6f)
-                                    )
-                                }
-                            }
-                            // Automatic NID match: any contact / incoming / recent
-                            // number present in database.json shows its NID + DOB
-                            // here with no manual step.
-                            if (!enrichment?.nid.isNullOrBlank()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Fingerprint, contentDescription = null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text(
-                                        text = "NID: ${enrichment!!.nid}" + if (!enrichment!!.dob.isNullOrBlank()) " · DOB: ${enrichment!!.dob}" else "",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color.White.copy(alpha = 0.85f)
-                                    )
-                                }
-                            }
-                            val socialProfiles = SocialUtils.fromJson(enrichment?.socialProfilesJson)
-                            if (socialProfiles.isNotEmpty()) {
+                        if (!enrichment?.nid.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Surface(
+                                color = Color.White.copy(alpha = 0.1f),
+                                shape = RoundedCornerShape(20.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFE8B84B).copy(alpha = 0.5f))
+                            ) {
                                 Row(
-                                    modifier = Modifier.padding(top = 4.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                 ) {
-                                    socialProfiles.forEach { profile ->
-                                        AsyncImage(
-                                            model = SocialUtils.getLogoUrl(profile.platform),
-                                            contentDescription = profile.platform,
-                                            modifier = Modifier.size(16.dp).clip(CircleShape),
-                                            contentScale = ContentScale.Fit
-                                        )
-                                    }
+                                    Icon(Icons.Default.Fingerprint, contentDescription = null, tint = Color(0xFFE8B84B), modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    val overlayNid = enrichment!!.nid + if (!enrichment!!.dob.isNullOrBlank()) " · ${enrichment!!.dob}" else ""
+                                    Text(
+                                        text = "NID $overlayNid",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
                         }
+                        if (overlaySocials.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                overlaySocials.take(5).forEach { profile ->
+                                    OverlaySocialBadge(profile = profile)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OverlayCallButton(
+                                icon = Icons.Rounded.CallEnd,
+                                label = "DECLINE",
+                                baseColor = Color(0xFFEF4444),
+                                deepColor = Color(0xFFB91C1C),
+                                onTap = { openInCallScreen(context) }
+                            )
+                            OverlayCallButton(
+                                icon = Icons.Rounded.Call,
+                                label = "ANSWER",
+                                baseColor = Color(0xFF22C55E),
+                                deepColor = Color(0xFF15803D),
+                                onTap = { openInCallScreen(context) }
+                            )
+                        }
+                        Text(
+                            text = "Tap to open call controls",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.4f),
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
                     }
                 }
+            }
+        }
+    }
+
+    private fun openInCallScreen(context: Context) {
+        // The overlay window cannot answer calls directly (NOT_FOCUSABLE +
+        // no Telecom handle here) — deep-link to the full-screen incoming UI
+        // where the red/green buttons answer for real.
+        try {
+            val intent = Intent(context, com.infocaller.app.ui.InCallActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) { }
+    }
+
+    @Composable
+    private fun OverlayCallButton(
+        icon: androidx.compose.ui.graphics.vector.ImageVector,
+        label: String,
+        baseColor: Color,
+        deepColor: Color,
+        onTap: () -> Unit,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Surface(
+                onClick = onTap,
+                modifier = Modifier.size(72.dp).shadow(16.dp, CircleShape),
+                shape = CircleShape,
+                color = Color.Transparent,
+                border = androidx.compose.foundation.BorderStroke(2.dp, Color.White.copy(alpha = 0.25f))
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize().background(Brush.linearGradient(listOf(baseColor, deepColor))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier.size(42.dp).clip(CircleShape).background(Color.White),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(icon, label, tint = deepColor, modifier = Modifier.size(24.dp))
+                    }
+                }
+            }
+            Text(label, modifier = Modifier.padding(top = 8.dp), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
+        }
+    }
+
+    @Composable
+    private fun OverlaySocialBadge(profile: com.infocaller.app.domain.model.SocialProfile) {
+        val brand = when (profile.platform.lowercase()) {
+            "whatsapp" -> Color(0xFF25D366)
+            "telegram" -> Color(0xFF229ED9)
+            "facebook" -> Color(0xFF1877F2)
+            "instagram" -> Color(0xFFE1306C)
+            "linkedin" -> Color(0xFF0A66C2)
+            "twitter", "x" -> Color(0xFF1D9BF0)
+            "youtube" -> Color(0xFFFF0000)
+            "tiktok" -> Color(0xFF69C9D0)
+            "github" -> Color(0xFF9E9E9E)
+            "spotify" -> Color(0xFF1DB954)
+            "reddit" -> Color(0xFFFF4500)
+            else -> Color(0xFFFBBF24)
+        }
+        Surface(
+            modifier = Modifier.size(34.dp).shadow(6.dp, CircleShape),
+            shape = CircleShape,
+            color = Color.White.copy(alpha = 0.08f),
+            border = androidx.compose.foundation.BorderStroke(2.dp, brand.copy(alpha = 0.8f))
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                AsyncImage(
+                    model = SocialUtils.getLogoUrl(profile.platform),
+                    contentDescription = profile.platform,
+                    modifier = Modifier.size(18.dp).clip(CircleShape),
+                    contentScale = ContentScale.Fit
+                )
             }
         }
     }

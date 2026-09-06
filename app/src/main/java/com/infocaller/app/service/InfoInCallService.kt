@@ -140,8 +140,28 @@ class InfoInCallService : InCallService() {
             .setColor(0xFFFBBF24.toInt())
             .setColorized(true)
             .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
-            .addAction(android.R.drawable.ic_menu_call, "Answer", answerPendingIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", declinePendingIntent)
+            // Distinct answer/decline glyphs: green-style handset for Answer,
+            // crossed handset for Decline. (System tints action icons
+            // monochrome on most versions — the glyph shapes carry the
+            // meaning; the labels stay explicit.)
+            .addAction(
+                androidx.core.app.NotificationCompat.Action.Builder(
+                    androidx.core.graphics.drawable.IconCompat.createWithBitmap(
+                        CallNotificationIcons.answer(this)
+                    ),
+                    "Answer",
+                    answerPendingIntent,
+                ).build()
+            )
+            .addAction(
+                androidx.core.app.NotificationCompat.Action.Builder(
+                    androidx.core.graphics.drawable.IconCompat.createWithBitmap(
+                        CallNotificationIcons.decline(this)
+                    ),
+                    "Decline",
+                    declinePendingIntent,
+                ).build()
+            )
             
         val photoUrl = enrichment?.profileImageUrl ?: com.infocaller.app.util.PhoneNumberUtils.getContactPhotoUri(this, number)
         if (photoUrl != null) {
