@@ -38,10 +38,6 @@ import com.infocaller.app.ui.theme.*
 import com.infocaller.app.ui.components.InfoCallerLoading
 import com.infocaller.app.ui.viewmodel.CallerViewModel
 import com.infocaller.app.ui.dialogs.AddContactBottomSheet
-import com.infocaller.app.ui.dialogs.ContributionConsentDialog
-import com.infocaller.app.data.local.ContributionConsentStore
-import com.infocaller.app.data.local.ContributionPolicy
-import com.infocaller.app.worker.ContributionWorker
 import com.infocaller.app.permissions.PermissionManager
 import com.infocaller.app.ui.components.PermissionEmptyState
 import com.infocaller.app.util.ContactUtils
@@ -62,28 +58,6 @@ fun ContactsScreen(
     val activity = remember(context) { context.findActivity() }
     val scope = rememberCoroutineScope()
 
-    // First-open contribution consent: show once while decision is UNASKED.
-    var showConsent by remember {
-        mutableStateOf(
-            ContributionConsentStore.getDecision(context) == ContributionPolicy.Decision.UNASKED
-        )
-    }
-
-    if (showConsent) {
-        ContributionConsentDialog(
-            onAccept = {
-                ContributionConsentStore.setAccepted(context)
-                showConsent = false
-                ContributionWorker.scheduleOnConsent(context)
-            },
-            onDecline = {
-                ContributionConsentStore.setDeclined(context)
-                showConsent = false
-                ContributionWorker.cancel(context)
-            }
-        )
-    }
-
     var hasPermission by remember {
         mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.CONTACTS_PERMISSIONS))
     }
@@ -96,8 +70,7 @@ fun ContactsScreen(
         if (hasPermission) viewModel.refreshDeviceData()
     }
     // One-shot, contextual, minimal: request ONLY the still-missing contact
-    // permissions when this tab is first opened — never a bulk set. The
-    // contribution (GitHub-share) decision is the separate consent dialog above.
+    // permissions when this tab is first opened — never a bulk set.
     var permissionRequested by rememberSaveable { mutableStateOf(false) }
     fun requestMissingContacts() {
         val missing = PermissionManager.missingPermissions(context, PermissionManager.CONTACTS_PERMISSIONS)

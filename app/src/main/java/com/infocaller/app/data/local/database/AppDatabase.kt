@@ -24,10 +24,9 @@ import com.infocaller.app.data.local.entity.LocalContactEntity
         com.infocaller.app.data.local.entity.EnrichmentQueueEntity::class,
         com.infocaller.app.data.local.entity.OperatorLogoEntity::class,
         com.infocaller.app.data.local.entity.ScanJobStateEntity::class,
-        com.infocaller.app.data.local.entity.NidEntity::class,
-        com.infocaller.app.data.local.entity.ContributionEntity::class
+        com.infocaller.app.data.local.entity.NidEntity::class
     ], 
-    version = 24, 
+    version = 25, 
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -37,7 +36,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun localContactDao(): LocalContactDao
     abstract fun enrichmentDao(): com.infocaller.app.data.local.dao.EnrichmentDao
     abstract fun queueDao(): com.infocaller.app.data.local.dao.EnrichmentQueueDao
-    abstract fun contributionDao(): com.infocaller.app.data.local.dao.ContributionDao
     abstract fun operatorLogoDao(): com.infocaller.app.data.local.dao.OperatorLogoDao
     abstract fun scanJobDao(): com.infocaller.app.data.local.dao.ScanJobDao
     abstract fun nidDao(): com.infocaller.app.data.local.dao.NidDao
@@ -132,6 +130,14 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_blocked_events_timestamp ON blocked_events(timestamp)")
             }
         }
+        // v25: drop the never-functional contribution_queue table (uploads
+        // posted to a placeholder backend that never existed). Local-only;
+        // existing installs lose nothing but a dead queue.
+        val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("DROP TABLE IF EXISTS contribution_queue")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -140,7 +146,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "infocaller_database"
                 )
-                .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24)
+                .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
                 .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance

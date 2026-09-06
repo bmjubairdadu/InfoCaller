@@ -18,7 +18,6 @@ class InfoCallerApplication : Application() {
     lateinit var orchestrator: IScanOrchestrator
     lateinit var enrichmentEngine: ContinuousEnrichmentEngine
     lateinit var providerManager: ProviderManager
-    lateinit var registryService: RegistryApiService
     lateinit var operatorLogoManager: com.infocaller.app.util.OperatorLogoManager
     lateinit var truecallerAuthManager: TruecallerAuthManager
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -43,13 +42,6 @@ class InfoCallerApplication : Application() {
         providerManager = ProviderManager(this)
         operatorLogoManager = com.infocaller.app.util.OperatorLogoManager(this, database)
 
-        // Registry manifest is fetched with @Url — base URL must end with '/'.
-        val retrofit = retrofit2.Retrofit.Builder()
-            .baseUrl("https://raw.githubusercontent.com/")
-            .addConverterFactory(retrofit2.converter.gson.GsonConverterFactory.create())
-            .build()
-
-        registryService = retrofit.create(RegistryApiService::class.java)
         truecallerAuthManager = TruecallerAuthManager(this)
         
         val commonHttpClient = okhttp3.OkHttpClient.Builder()
@@ -62,7 +54,11 @@ class InfoCallerApplication : Application() {
         providerManager.registerProviders(listOf(
             LocalEnrichmentProvider(database.enrichmentDao()),
             OwnerVerifiedLookupProvider(this, commonHttpClient),
-            RegistryLookupProvider(registryService),
+            // RegistryLookup REMOVED: it called a relative URL
+            // (api/v1/registry/lookup/...) against a raw.githubusercontent.com
+            // Retrofit base — no such endpoint exists, so every scan burned an
+            // attempt on an instant failure. SupabaseCommunityProvider is the
+            // live read-only community path.
             SupabaseCommunityProvider(this, commonHttpClient),
             OfflineOperatorTablesProviderImpl(),
             CommunitySpamCsvProviderImpl(commonHttpClient),
@@ -82,7 +78,7 @@ class InfoCallerApplication : Application() {
             DisposablePhoneProviderImpl(),
             NominatimGeocodingProviderImpl(commonHttpClient, sharedGson),
             NidDatabaseProvider(database),
-            NidGovEnrichmentProvider(database, commonHttpClient),
+            NidGovEnrichmentProvider(database),
             // NidIdentityLookup (Google-scrape hallucination) unregistered — see note above.
             EmailLookupProviderImpl(commonHttpClient, sharedGson),
             HoleheEmailProviderImpl(commonHttpClient),

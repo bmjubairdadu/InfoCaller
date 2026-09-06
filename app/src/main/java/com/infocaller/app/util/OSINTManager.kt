@@ -31,32 +31,10 @@ object OSINTManager {
     }
 
     fun generateNidDorkLinks(nid: String, dob: String): List<DorkLink> {
-        val links = mutableListOf<DorkLink>()
-        
-        links.add(DorkLink(
-            "NID Identity Check",
-            "Search for identity details using NID number",
-            "https://www.google.com/search?q=${urlEncode("\"$nid\" identity OR verification OR profile")}",
-            Icons.Default.Fingerprint
-        ))
-
-        links.add(DorkLink(
-            "Gov Portal Discovery",
-            "Search within government portals for this NID",
-            "https://www.google.com/search?q=${urlEncode("site:gov.bd \"$nid\"")}",
-            Icons.Default.AdminPanelSettings
-        ))
-
-        if (dob.isNotBlank()) {
-            links.add(DorkLink(
-                "Full Record Pivot",
-                "Combined NID and DOB deep search",
-                "https://www.google.com/search?q=${urlEncode("\"$nid\" \"$dob\"")}",
-                Icons.Default.ManageSearch
-            ))
-        }
-
-        return links
+        // Retired: Google dork links were pruned repo-wide (blocks +
+        // title-guess hallucinations; dangerous on NIDs). Kept for
+        // interface stability; returns empty so scans show NID + DOB only.
+        return emptyList()
     }
 
     fun generateExtendedDorkLinks(phoneNumber: String): List<DorkLink> {

@@ -9,7 +9,6 @@ import okhttp3.OkHttpClient
 
 class NidGovEnrichmentProvider(
     private val db: AppDatabase,
-    private val httpClient: OkHttpClient
 ) : LookupProvider {
     override val id = "nid_gov_enrichment"
     override val name = "NID Full Identity (NID+DOB)"
@@ -31,7 +30,12 @@ class NidGovEnrichmentProvider(
         val recNullable = if (dob != null) dao.findByNidAndDob(nid, dob) ?: dao.findByNid(nid) else dao.findByNid(nid)
         val rec = recNullable ?: return@withContext null
 
-        if (!rec.nameEn.isNullOrBlank() || !rec.photoUrl.isNullOrBlank() || !rec.fatherName.isNullOrBlank()) {
+        // database.json rows carry ONLY number/nid/dob: show exactly NID +
+        // DOB and nothing else. Enriched fields render only when a real
+        // enrichment source has filled them.
+        val hasEnriched = !rec.nameEn.isNullOrBlank() || !rec.photoUrl.isNullOrBlank() ||
+            !rec.fatherName.isNullOrBlank() || !rec.motherName.isNullOrBlank() || !rec.address.isNullOrBlank()
+        if (hasEnriched) {
             return@withContext PartialResult(
                 name = rec.nameEn ?: rec.nameBn,
                 alternateName = rec.fatherName,
@@ -41,13 +45,9 @@ class NidGovEnrichmentProvider(
                 confidence = 0.97f, source = "NID Enriched Cache", providerId = id, providerVersion = version
             )
         }
-
-        // NOTE: the old DuckDuckGo "NID dork" fallback was removed — DDG
-        // scraping was pruned repo-wide (blocks + title-guess hallucinations
-        // for NIDs are dangerous). Fall through to the DB row below.
         return@withContext PartialResult(
-            nid = rec.nid, dob = rec.dob, city = rec.address, country = "Bangladesh",
-            about = "NID: ${rec.nid} | DOB: ${rec.dob} | Phone: ${rec.number}",
+            nid = rec.nid, dob = rec.dob,
+            about = "NID: ${rec.nid} | DOB: ${rec.dob}",
             confidence = 0.9f, source = "BD NID Database", providerId = id, providerVersion = version
         )
     }

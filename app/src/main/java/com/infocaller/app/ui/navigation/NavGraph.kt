@@ -143,12 +143,8 @@ fun NavGraph(
                     onNavigateToDetails = { number ->
                         viewModel.searchNumber(number)
                         navController.navigate("details/" + android.net.Uri.encode(number))
-                    },
-                    onNavigateToOwnerProfile = { navController.navigate("owner_profile") }
+                    }
                 )
-            }
-            composable("owner_profile") {
-                OwnerProfileScreen(onBack = { navController.popBackStack() })
             }
             composable("privacy") {
                 PrivacyPolicyScreen(onBack = { navController.popBackStack() })

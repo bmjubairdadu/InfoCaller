@@ -37,8 +37,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     viewModel: com.infocaller.app.ui.viewmodel.CallerViewModel,
     onNavigateToPrivacy: () -> Unit = {},
-    onNavigateToDetails: (String) -> Unit = {},
-    onNavigateToOwnerProfile: () -> Unit = {}
+    onNavigateToDetails: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
@@ -211,6 +210,24 @@ fun SettingsScreen(
             }
 
             SettingsSection("NID Lookup") {
+                // database.json status: shows whether the local 115k-row file
+                // has been imported into the on-device table. Matches show
+                // NID + DOB only — never names/photos the file doesn't have.
+                val nidImported = remember {
+                    try { com.infocaller.app.data.local.NidDatabaseImporter.isImported(context) }
+                    catch (_: Exception) { false }
+                }
+                val nidCount = remember {
+                    try { com.infocaller.app.data.local.NidDatabaseImporter.getCount(context) }
+                    catch (_: Exception) { 0 }
+                }
+                Text(
+                    if (nidImported) "Local NID database ready ($nidCount records)"
+                    else "Local NID database not loaded yet — restart the app once with database.json in place",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)
+                )
                 var nid by remember { mutableStateOf("") }
                 var dob by remember { mutableStateOf("") }
                 var nidError by remember { mutableStateOf<String?>(null) }
@@ -457,42 +474,11 @@ fun SettingsScreen(
             }
 
             SettingsSection("My Caller ID") {
-                SettingsClickRow(
-                    title = "My Caller Profile",
-                    subtitle = "Verify your number, publish only your own info",
-                    icon = Icons.Default.VerifiedUser,
-                    onClick = onNavigateToOwnerProfile
-                )
-            }
-
-            SettingsSection("Community Contribution") {
-                val consentDecision = remember {
-                    mutableStateOf(
-                        com.infocaller.app.data.local.ContributionConsentStore.getDecision(context)
-                    )
-                }
-                SettingsToggleRow(
-                    title = "Contribute caller-ID info",
-                    subtitle = when (consentDecision.value) {
-                        com.infocaller.app.data.local.ContributionPolicy.Decision.ACCEPTED ->
-                            "On — one-by-one background uploads of permitted fields only"
-                        com.infocaller.app.data.local.ContributionPolicy.Decision.DECLINED ->
-                            "Off — no uploads, no background contribution"
-                        else -> "Not asked yet — open Contacts to choose"
-                    },
-                    icon = Icons.Default.GroupAdd,
-                    checked = consentDecision.value == com.infocaller.app.data.local.ContributionPolicy.Decision.ACCEPTED,
-                    onCheckedChange = { enabled ->
-                        if (enabled) {
-                            com.infocaller.app.data.local.ContributionConsentStore.setAccepted(context)
-                            consentDecision.value = com.infocaller.app.data.local.ContributionPolicy.Decision.ACCEPTED
-                            com.infocaller.app.worker.ContributionWorker.scheduleOnConsent(context)
-                        } else {
-                            com.infocaller.app.data.local.ContributionConsentStore.setDeclined(context)
-                            consentDecision.value = com.infocaller.app.data.local.ContributionPolicy.Decision.DECLINED
-                            com.infocaller.app.worker.ContributionWorker.cancel(context)
-                        }
-                    }
+                Text(
+                    "Your number is verified by Truecaller OTP at login. No profile publishing: there is no backend server, so nothing is ever uploaded.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp)
                 )
             }
 

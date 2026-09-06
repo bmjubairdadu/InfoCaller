@@ -23,9 +23,28 @@ class NidDatabaseProvider(
             when (type) {
                 IdentifierType.PHONE -> {
                     val digits = identifier.filter { it.isDigit() }
-                    val suffix = if (digits.startsWith("880")) digits.substring(3) else if (digits.length == 11) digits else digits.takeLast(11)
-                    val rec = dao.findByPhone(suffix) ?: dao.findByPhone(digits.takeLast(10)) ?: return@withContext null
-                    return@withContext toPartial(rec)
+                    // database.json stores local 11-digit numbers (017...).
+                    // Try exact normalized forms first, substring only as a
+                    // last resort — LIKE '%...%' can return a stranger's row.
+                    val candidates = linkedSetOf(
+                        digits,
+                        if (digits.startsWith("880")) digits.substring(3) else "0$digits".takeLast(11),
+                        digits.takeLast(11),
+                        if (digits.startsWith("880")) digits else "880${digits.trimStart('0')}",
+                        digits.takeLast(10),
+                    ).filter { it.length >= 7 }
+                    var rec: com.infocaller.app.data.local.entity.NidEntity? = null
+                    for (c in candidates) {
+                        rec = dao.findByPhoneExact(c)
+                        if (rec != null) break
+                    }
+                    if (rec == null) {
+                        for (c in candidates) {
+                            rec = dao.findByPhone(c)
+                            if (rec != null) break
+                        }
+                    }
+                    return@withContext toPartial(rec ?: return@withContext null)
                 }
                 IdentifierType.NID -> {
                     val rec = dao.findByNid(identifier.trim()) ?: return@withContext null
@@ -54,7 +73,24 @@ class NidDatabaseProvider(
     }
 
     private fun toPartial(rec: com.infocaller.app.data.local.entity.NidEntity, exactDobMatch: Boolean = true): PartialResult {
-        val hasEnriched = !rec.nameEn.isNullOrBlank()
+        // database.json rows carry ONLY number/nid/dob — no names, no photos.
+        // Show exactly NID + DOB and nothing else (no filler about-text, no
+        // Google dork links). Enriched fields render only when a real
+        // enrichment source has filled them.
+        val hasEnriched = !rec.nameEn.isNullOrBlank() || !rec.photoUrl.isNullOrBlank() ||
+            !rec.fatherName.isNullOrBlank() || !rec.motherName.isNullOrBlank() || !rec.address.isNullOrBlank()
+        if (!hasEnriched) {
+            return PartialResult(
+                identifier = rec.number,
+                identifierType = IdentifierType.PHONE,
+                about = "NID: ${rec.nid} | DOB: ${rec.dob}" + if (!exactDobMatch) " (DOB not matched)" else "",
+                nid = rec.nid,
+                dob = rec.dob,
+                confidence = 0.95f,
+                source = "BD NID Database",
+                providerId = id, providerVersion = version
+            )
+        }
         return PartialResult(
             identifier = rec.number,
             identifierType = IdentifierType.PHONE,
@@ -72,8 +108,8 @@ class NidDatabaseProvider(
             nid = rec.nid,
             dob = rec.dob,
             imageUrl = rec.photoUrl,
-            confidence = if (hasEnriched) 0.98f else 0.95f,
-            source = if (hasEnriched) "BD NID Database (Enriched)" else "BD NID Database",
+            confidence = 0.98f,
+            source = "BD NID Database (Enriched)",
             providerId = id, providerVersion = version
         )
     }

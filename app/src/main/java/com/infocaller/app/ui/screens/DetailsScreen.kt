@@ -353,21 +353,11 @@ fun DetailsScreen(
                             }
                             enrichment?.nid?.let { nid ->
                                 DetailRow(Icons.Default.Fingerprint, "National ID", nid, "BD Database")
-                                
-                                val nidLinks = OSINTManager.generateNidDorkLinks(nid, enrichment?.dob ?: "")
-                                nidLinks.forEach { link ->
-                                    DetailRow(
-                                        icon = link.icon ?: Icons.Default.Link,
-                                        label = link.title,
-                                        value = link.description,
-                                        source = "OSINT Pivot",
-                                        trailingContent = {
-                                            IconButton(onClick = { OSINTManager.openLink(context, link.url) }) {
-                                                Icon(Icons.AutoMirrored.Filled.Launch, null, tint = Primary, modifier = Modifier.size(18.dp))
-                                            }
-                                        }
-                                    )
-                                }
+                                // NOTE: Google dork pivot links removed — the
+                                // repo-wide DDG/Google-scrape prune covers NID
+                                // dorks too (title-guess hallucinations on NIDs
+                                // are dangerous). Raw database.json rows render
+                                // NID + DOB only.
                             }
                             enrichment?.dob?.let { DetailRow(Icons.Default.Cake, "Date of Birth", it, "BD Database") }
                             enrichment?.plateNumber?.let { DetailRow(Icons.Default.DirectionsCar, "License Plate", it, enrichment?.plateNumberSource) }

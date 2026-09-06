@@ -38,10 +38,6 @@ class BootReceiver : BroadcastReceiver() {
                 // overwrite the constrained spec with an unconstrained one.
                 WorkManager.getInstance(context).enqueueUniquePeriodicWork("EnrichmentSync", ExistingPeriodicWorkPolicy.KEEP, req)
             } catch (_: Exception) { }
-            // Resume consent-gated contribution queue only if previously accepted.
-            try {
-                com.infocaller.app.worker.ContributionWorker.resumeIfConsented(context)
-            } catch (_: Exception) { }
             showAutoCloseNotification(context)
         }
     }

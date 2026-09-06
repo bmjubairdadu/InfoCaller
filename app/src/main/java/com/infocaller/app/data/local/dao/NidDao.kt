@@ -14,6 +14,14 @@ interface NidDao {
     @Query("SELECT * FROM nid_records WHERE REPLACE(REPLACE(number,'+',''), ' ','') LIKE '%' || :digits || '%' LIMIT 1")
     suspend fun findByPhone(digits: String): NidEntity?
 
+    /**
+     * Exact match on the digit-normalized stored number. Preferred over the
+     * substring [findByPhone]: with 115k rows, LIKE '%...%' can return a
+     * stranger's row that merely contains the searched digits.
+     */
+    @Query("SELECT * FROM nid_records WHERE REPLACE(REPLACE(number,'+',''), ' ','') = :digits LIMIT 1")
+    suspend fun findByPhoneExact(digits: String): NidEntity?
+
     @Query("SELECT * FROM nid_records WHERE nid = :nid LIMIT 1")
     suspend fun findByNid(nid: String): NidEntity?
 

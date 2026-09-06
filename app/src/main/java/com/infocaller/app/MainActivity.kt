@@ -46,24 +46,7 @@ class MainActivity : ComponentActivity() {
             )
         } catch (_: Exception) { }
 
-        try {
-            val updateRequest = androidx.work.PeriodicWorkRequestBuilder<com.infocaller.app.worker.ProviderUpdateWorker>(
-                12, java.util.concurrent.TimeUnit.HOURS
-            )
-            .setConstraints(
-                androidx.work.Constraints.Builder()
-                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
-                    .build()
-            )
-            .build()
-
-            androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-                "ProviderUpdate",
-                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-                updateRequest
-            )
-        } catch (_: Exception) { }
-
+        // Provider registry was a dead path (no live endpoint) — removed.
         // Community DB auto-download: periodic (KEEP = idempotent) + one immediate
         // sync only on cold start — NOT on every rotation/recreation.
         try {

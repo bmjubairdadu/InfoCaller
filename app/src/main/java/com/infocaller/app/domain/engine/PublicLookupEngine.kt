@@ -82,7 +82,7 @@ class PublicLookupEngine(
                     "instagram_deep", "name_social_verifier", "grepapp_code_search"
                 )
                 IdentifierType.NID, IdentifierType.DOB -> setOf(
-                    "bd_nid_database", "nid_gov_enrichment"
+                    "nid_gov_enrichment", "bd_nid_database"
                 )
                 else -> emptySet()
             }
