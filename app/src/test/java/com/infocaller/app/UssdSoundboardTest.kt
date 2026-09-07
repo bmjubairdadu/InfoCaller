@@ -37,8 +37,11 @@ class UssdSoundboardTest {
     fun testDefaultSoundboardEntries() {
         val defaults = SoundboardStore.defaultEntries()
         assertTrue(defaults.size >= 3)
-        assertTrue(defaults.any { it.kind == SoundboardStore.KIND_TTS })
-        assertTrue(defaults.any { it.kind == SoundboardStore.KIND_TONE })
+        assertTrue(defaults.none { it.kind == "tts" })
+        assertTrue(defaults.any { it.kind == SoundboardStore.KIND_FILE || it.kind == SoundboardStore.KIND_TONE })
+        assertTrue(defaults.any { it.name == "Dramatic gasp" })
+        assertTrue(defaults.any { it.name == "Sad trombone" })
+        assertTrue(defaults.any { it.name == "Wrong number" })
         defaults.forEach {
             assertTrue(it.name.isNotBlank())
             assertTrue(it.emoji.isNotBlank())
@@ -47,9 +50,17 @@ class UssdSoundboardTest {
 
     @Test
     fun testSoundboardEntryShape() {
-        val e = SoundboardEntry(name = "Hi", emoji = "\uD83D\uDC4B", kind = SoundboardStore.KIND_TTS, payload = "Hi there")
-        assertEquals("Hi", e.name)
-        assertEquals(SoundboardStore.KIND_TTS, e.kind)
+        val e = SoundboardEntry(name = "Laugh", emoji = "\uD83E\uDD2A", kind = SoundboardStore.KIND_FILE, payload = "content://media/laugh.mp3")
+        assertEquals("Laugh", e.name)
+        assertEquals(SoundboardStore.KIND_FILE, e.kind)
         assertTrue(e.volume in 0f..1f)
+    }
+
+    @Test
+    fun testEmojiForName() {
+        assertEquals("\uD83D\uDC4B", SoundboardStore.emojiForName("Hello"))
+        assertEquals("\uD83D\uDE31", SoundboardStore.emojiForName("Dramatic gasp"))
+        assertEquals("\uD83C\uDFC6", SoundboardStore.emojiForName("Victory"))
+        assertTrue(SoundboardStore.emojiForName("Something random").isNotBlank())
     }
 }

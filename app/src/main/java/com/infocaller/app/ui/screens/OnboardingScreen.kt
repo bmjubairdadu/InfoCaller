@@ -4,6 +4,8 @@ import android.app.role.RoleManager
 import android.content.Intent
 import android.os.Build
 import android.telecom.TelecomManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -75,7 +77,35 @@ fun OnboardingScreen(onComplete: () -> Unit) {
             callPermsError = false
             currentStage = 3
         } else {
+            // Partial grant: advance past the stuck permission step but keep
+            // the error visible on the NEXT screen instead of trapping the
+            // user here. Missing grants are re-asked contextually later
+            // (Recents/Contacts/Dialer), so nothing is lost by moving on.
             callPermsError = true
+            currentStage = 3
+        }
+    }
+
+    // Poll role state while the role steps are visible: role pickers often
+    // return RESULT_CANCELED even when the user DID pick us, and the role
+    // only lands a moment later. Without polling, the UI sits on an error
+    // until the user manually taps "Check again".
+    LaunchedEffect(currentStage) {
+        if (currentStage == 1 || currentStage == 10) {
+            while (currentStage == 1 || currentStage == 10) {
+                kotlinx.coroutines.delay(1500)
+                try {
+                    if (currentStage == 1 && PermissionManager.isDefaultDialer(context)) {
+                        roleError = null
+                        currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                            !PermissionManager.isCallScreeningRoleHeld(context)
+                        ) 10 else 2
+                    } else if (currentStage == 10 && PermissionManager.isCallScreeningRoleHeld(context)) {
+                        spamRoleError = null
+                        currentStage = 2
+                    }
+                } catch (_: Exception) { }
+            }
         }
     }
 
@@ -110,6 +140,24 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     ) { _ ->
         // Notifications are optional: denial still completes onboarding.
         currentStage = 6
+    }
+    val onboardingScope = rememberCoroutineScope()
+    val locationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        val granted = results.values.all { it }
+        if (granted) {
+            // Best-effort: resolve now and cache for callee display.
+            onboardingScope.launch(Dispatchers.IO) {
+                try {
+                    val loc = com.infocaller.app.util.UserLocationResolver.resolve(context)
+                    if (loc != null && !loc.isBlank()) {
+                        com.infocaller.app.util.UserLocationResolver.bindToSimSlots(context, loc)
+                    }
+                } catch (_: Exception) { }
+            }
+        }
+        currentStage = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) 5 else 6
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Background).padding(24.dp), contentAlignment = Alignment.Center) {
@@ -194,12 +242,16 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                     callPermsError = false
                     callPermsLauncher.launch(PermissionManager.REQUIRED_RUNTIME_CALL_PERMISSIONS)
                 },
-                // Call log + contacts are NOT asked here — Recent asks for the
-                // log and Contacts asks for contacts, contextually, on first open.
                 onSkip = { currentStage = 3 }
             )
             3 -> OverlayPermissionRationale(
                 onGrant = { PermissionManager.openOverlaySettings(context) },
+                onSkip = { currentStage = 4 }
+            )
+            4 -> LocationRationale(
+                onGrant = {
+                    locationLauncher.launch(PermissionManager.LOCATION_PERMISSIONS)
+                },
                 onSkip = { currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 5 else 6 }
             )
             5 -> NotificationRationale(onGrant = {
@@ -260,17 +312,17 @@ fun CallPermissionsExplanation(
     onSkip: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Call Permissions", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Text("Default Phone Permissions", style = MaterialTheme.typography.headlineLarge, color = Color.White)
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            "Allow InfoCaller to place and answer calls and detect incoming numbers. Without this, caller ID and dialing can't work.",
+            "As your default Phone app, InfoCaller needs: placing calls, reading the ringing number, answering and managing calls, plus your call history and contacts so the dialer can show recents and names.",
             textAlign = TextAlign.Center,
             color = Color.White.copy(alpha = 0.7f)
         )
         if (showError) {
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                "Some permissions were denied. Caller ID needs them — try again, or skip and grant later when asked.",
+                "Some permissions were denied. Caller ID needs them — try again, or continue and grant later when asked.",
                 textAlign = TextAlign.Center,
                 color = Color(0xFFFFB4A9)
             )
@@ -346,6 +398,23 @@ fun OverlayPermissionRationale(onGrant: () -> Unit, onSkip: () -> Unit) {
         Text("To show caller ID on top of other apps, we need 'Display over other apps'. You can grant it later when a call arrives.", textAlign = TextAlign.Center, color = Color.White.copy(alpha = 0.7f))
         Spacer(modifier = Modifier.height(32.dp))
         Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) { Text("Go to Settings") }
+        Spacer(modifier = Modifier.height(12.dp))
+        TextButton(onClick = onSkip) { Text("Skip for now", color = Color.White.copy(alpha = 0.7f)) }
+    }
+}
+
+@Composable
+fun LocationRationale(onGrant: () -> Unit, onSkip: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Location Access", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            "To show where you are calling from and to map village names inside caller names, InfoCaller needs your location. It uses your SIM and IP as fallback, so maps still work when precise location is denied.",
+            textAlign = TextAlign.Center,
+            color = Color.White.copy(alpha = 0.7f),
+        )
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) { Text("Allow Location") }
         Spacer(modifier = Modifier.height(12.dp))
         TextButton(onClick = onSkip) { Text("Skip for now", color = Color.White.copy(alpha = 0.7f)) }
     }

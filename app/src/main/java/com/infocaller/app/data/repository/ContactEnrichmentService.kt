@@ -147,25 +147,20 @@ class ContactEnrichmentService(
 
             if (contactId == -1L) return@withContext false
 
+            // Never overwrite a saved contact's own name. Previously this
+            // method would rename the row when a public caller-ID arrived;
+            // that is now removed. Names are shown side-by-side in UI and
+            // enrichment-cache only.
             val isSavedRealName = !ContactUtils.isPlaceholderName(existingName) && existingName != normalized && existingName?.filter { it.isDigit() } != normalized.filter { it.isDigit() }
-            val shouldUpdateName = !isSavedRealName && com.infocaller.app.util.EnrichmentGapChecker.check(database?.enrichmentDao()?.getEnrichmentSync(normalized)).missingName && !ContactUtils.isPlaceholderName(caller.displayName) && caller.displayName != null
 
-            if (isSavedRealName && caller.displayName != null) {
-                // Keep the user's own saved name; enrichment must never rename it.
-            }
+            val enrichment = database?.enrichmentDao()?.getEnrichmentSync(normalized)
+            val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(enrichment)
 
-            val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(database?.enrichmentDao()?.getEnrichmentSync(normalized))
-            if (gaps.isComplete && caller.displayName == null && caller.photoUrl == null) return@withContext false
-
-            val ops = mutableListOf<ContentProviderOperation>()
-
-            if (shouldUpdateName) {
-                ops.add(ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
-                    .withSelection("${ContactsContract.Data.RAW_CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ?",
-                        arrayOf(contactId.toString(), ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE))
-                    .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, caller.displayName)
-                    .build())
-            }
+            // Always mirror whatever the scan actually returned — enrichment
+            // rows + app-visible notes — even when phonebook fields are saved.
+            // Phonebook is a best-effort mirror for structured fields; nothing
+            // is allowed to hide because it can't go into ContactsContract.
+            syncEnrichmentToPhonebookNotes(contactId, enrichment, caller)
 
             val shouldUpdatePhoto = photoId == -1L && gaps.missingPhoto && caller.photoUrl != null
             if (shouldUpdatePhoto) {
@@ -174,22 +169,108 @@ class ContactEnrichmentService(
                     val stream = ByteArrayOutputStream()
                     bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
                     val photoBytes = stream.toByteArray()
-
-                    ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
-                        .withValue(ContactsContract.Data.RAW_CONTACT_ID, contactId)
-                        .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
-                        .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, photoBytes)
-                        .build())
+                    val ops = mutableListOf<ContentProviderOperation>()
+                    ops.add(
+                        ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                            .withValue(ContactsContract.Data.RAW_CONTACT_ID, contactId)
+                            .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                            .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, photoBytes)
+                            .build()
+                    )
+                    context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ArrayList(ops))
                 }
             }
 
-            if (ops.isNotEmpty()) {
-                context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ArrayList(ops))
+            if (isSavedRealName && caller.displayName != null) {
+                // Saved name kept; caller-ID name is displayed alongside it and
+                // also written into the notes line below — never as the row name.
             }
             true
         } catch (_: Exception) {
             false
         }
+    }
+
+    private fun syncEnrichmentToPhonebookNotes(
+        rawContactId: Long,
+        enrichment: ContactEnrichmentEntity?,
+        caller: Caller?,
+    ) {
+        try {
+            // Build a compact, human-readable block from enrichment fields that
+            // have no ContactsContract slot: about, alt-name, social presence,
+            // NID context, business tags, carrier/region deltas, etc. This is
+            // stored as a NOTE so the phonebook carries it even when the app
+            // cache is cleared. Existing notes are preserved.
+            val lines = mutableListOf<String>()
+            val publicName = enrichment?.publicName ?: caller?.displayName
+            if (!publicName.isNullOrBlank() && !ContactUtils.isPlaceholderName(publicName)) {
+                lines.add("Caller ID: $publicName")
+            }
+            enrichment?.alternateName?.takeIf { it.isNotBlank() }?.let { lines.add("Also known as: $it") }
+            enrichment?.about?.takeIf { it.isNotBlank() }?.let { lines.add("About: ${it.take(300)}") }
+            PhoneNumberUtils.getLocationInfo(enrichment?.normalizedPhoneNumber ?: "")?.let {
+                if (it.isNotBlank()) lines.add("Number region: $it")
+            }
+            val loc = com.infocaller.app.util.LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
+            if (loc.isNotBlank()) lines.add("Location: $loc")
+            enrichment?.timezone?.let { lines.add("Timezone: $it") }
+            enrichment?.carrier?.let { lines.add("Carrier: $it") }
+            enrichment?.lineType?.let { lines.add("Line type: $it") }
+            enrichment?.email?.let { lines.add("Email: $it") }
+            enrichment?.nid?.let { lines.add("NID: $it") }
+            enrichment?.dob?.let { lines.add("DOB: $it") }
+            val socials = try { SocialUtils.fromJson(enrichment?.socialProfilesJson) } catch (_: Exception) { emptyList() }
+            if (socials.isNotEmpty()) {
+                val names = socials.mapNotNull { it.platform?.takeIf { s -> s.isNotBlank() } }.distinct().take(8)
+                if (names.isNotEmpty()) lines.add("Social: ${names.joinToString(", ")}")
+            }
+            if (lines.isEmpty()) return
+
+            val noteHeader = "— InfoCaller —"
+            val noteBody = lines.joinToString("\n")
+            val newNote = "$noteHeader\n$noteBody"
+
+            // Read any existing note so we don't clobber user text.
+            val noteUri = ContactsContract.Data.CONTENT_URI
+            val sel = "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?"
+            val selArgs = arrayOf(rawContactId.toString(), ContactsContract.CommonDataKinds.Note.CONTENT_ITEM_TYPE)
+            var existingNote: String? = null
+            context.contentResolver.query(noteUri, arrayOf(ContactsContract.Data.DATA1), sel, selArgs, null)?.use { c ->
+                if (c.moveToFirst()) existingNote = c.getString(0)
+            }
+
+            val merged = when {
+                existingNote.isNullOrBlank() -> newNote
+                existingNote!!.contains(noteHeader) -> {
+                    // Replace our previous block in place.
+                    val before = existingNote!!.substringBefore(noteHeader).trimEnd()
+                    val after = existingNote!!.substringAfter(noteHeader, "").let { tail ->
+                        // tail starts with our old block; strip up to next blank line
+                        val cut = tail.indexOf("\n\n")
+                        if (cut >= 0) tail.substring(cut).trimStart() else ""
+                    }
+                    listOfNotNull(before.takeIf { it.isNotBlank() }, newNote, after.takeIf { it.isNotBlank() })
+                        .joinToString("\n\n")
+                }
+                else -> "${existingNote!!.trimEnd()}\n\n$newNote"
+            }
+
+            val already = context.contentResolver.query(noteUri, arrayOf(ContactsContract.Data._ID), sel, selArgs, null)?.use { it.moveToFirst() } ?: false
+            val op = if (already) {
+                ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
+                    .withSelection(sel, selArgs)
+                    .withValue(ContactsContract.Data.DATA1, merged.take(4000))
+                    .build()
+            } else {
+                ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
+                    .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Note.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.Data.DATA1, merged.take(4000))
+                    .build()
+            }
+            context.contentResolver.applyBatch(ContactsContract.AUTHORITY, arrayListOf(op))
+        } catch (_: Exception) { }
     }
 
     private fun downloadBitmap(url: String): Bitmap? {

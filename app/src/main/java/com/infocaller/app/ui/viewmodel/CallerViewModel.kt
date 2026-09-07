@@ -39,6 +39,12 @@ class CallerViewModel(
     private val _searchResult = MutableStateFlow<SearchUiState>(SearchUiState.Idle)
     val searchResult: StateFlow<SearchUiState> = _searchResult.asStateFlow()
 
+    private val _scanSteps = MutableStateFlow<List<ScanStepUi>>(emptyList())
+    val scanSteps: StateFlow<List<ScanStepUi>> = _scanSteps.asStateFlow()
+
+    private val _scanActive = MutableStateFlow(false)
+    val scanActive: StateFlow<Boolean> = _scanActive.asStateFlow()
+
     private val _fullLookupResult = MutableStateFlow<LookupResult?>(null)
     val fullLookupResult: StateFlow<LookupResult?> = _fullLookupResult.asStateFlow()
 
@@ -114,7 +120,6 @@ class CallerViewModel(
             else -> {}
         }
         val normalized = PhoneNumberUtils.normalize(phoneNumber)
-        _dialerInput.value = normalized
         searchByIdentifier(normalized, com.infocaller.app.domain.engine.IdentifierType.PHONE)
     }
 
@@ -141,7 +146,6 @@ class CallerViewModel(
     fun searchEmailManual(email: String) {
         val cleaned = email.trim().lowercase()
         if (cleaned.isBlank() || !com.infocaller.app.util.IdentifierRouter.isEmail(cleaned)) return
-        _dialerInput.value = cleaned
         searchByIdentifier(cleaned, com.infocaller.app.domain.engine.IdentifierType.EMAIL)
     }
 
@@ -151,7 +155,6 @@ class CallerViewModel(
     fun searchUsernameManual(username: String) {
         val cleaned = username.trim().lowercase().removePrefix("@")
         if (cleaned.length !in 2..40 || cleaned.contains(" ") || cleaned.contains("@")) return
-        _dialerInput.value = cleaned
         searchByIdentifier(cleaned, com.infocaller.app.domain.engine.IdentifierType.USERNAME)
     }
 
@@ -173,27 +176,95 @@ class CallerViewModel(
         if (identifier.isBlank()) return
         viewModelScope.launch {
             _searchResult.value = SearchUiState.Loading
+            _scanSteps.value = emptyList()
+            _scanActive.value = true
             try {
-                repository.startScan(identifier, com.infocaller.app.domain.engine.ScanPriority.CRITICAL, type)
-                    .collect { state ->
+                val scanFlow = repository.startScan(identifier, com.infocaller.app.domain.engine.ScanPriority.CRITICAL, type)
+                var sawProviderStep = false
+                scanFlow.collect { state ->
                         when (state) {
+                            is com.infocaller.app.domain.engine.ScanState.ProviderStep -> {
+                                sawProviderStep = true
+                                applyScanStep(state)
+                            }
                             is com.infocaller.app.domain.engine.ScanState.Progress -> {
                                 _searchResult.value = SearchUiState.Success(mapToCaller(state.result), isLive = true, lastProvider = state.lastProvider)
                             }
                             is com.infocaller.app.domain.engine.ScanState.Completed -> {
                                 repository.saveLookupResult(state.result)
                                 _searchResult.value = SearchUiState.Success(mapToCaller(state.result), isLive = false)
+                                _scanActive.value = false
+                                // Auto-sync to the phonebook: name + photo land
+                                // on the matching system contact (or the cached
+                                // scanned number) without a manual tap. Saved
+                                // names are never overwritten — only gaps fill.
+                                try {
+                                    autoSyncToPhonebook(state.result)
+                                } catch (_: Exception) { }
                             }
                             is com.infocaller.app.domain.engine.ScanState.Error -> {
-                                _searchResult.value = SearchUiState.Error(state.message)
+                                // Offline/no-route: fall back to whatever is
+                                // cached locally instead of dying with an error
+                                // card — the call UI must never crash offline.
+                                val cached = try {
+                                    repository.searchCaller(identifier)
+                                } catch (_: Exception) { null }
+                                if (cached != null) {
+                                    _searchResult.value = SearchUiState.Success(cached, isLive = false)
+                                } else {
+                                    _searchResult.value = SearchUiState.Error(state.message)
+                                }
+                                _scanActive.value = false
                             }
                             else -> {}
                         }
                     }
             } catch (e: Exception) {
-                _searchResult.value = SearchUiState.Error(e.message ?: "Unknown error")
+                // Any scan throw (offline, timeout, cancelled) degrades to the
+                // offline path: cached data if present, else a clean error.
+                try {
+                    val cached = repository.searchCaller(identifier)
+                    if (cached != null) {
+                        _searchResult.value = SearchUiState.Success(cached, isLive = false)
+                    } else {
+                        _searchResult.value = SearchUiState.Error(e.message ?: "Unknown error")
+                    }
+                } catch (_: Exception) {
+                    _searchResult.value = SearchUiState.Error(e.message ?: "Unknown error")
+                }
+                _scanActive.value = false
             }
         }
+    }
+
+    private fun applyScanStep(step: com.infocaller.app.domain.engine.ScanState.ProviderStep) {
+        val current = _scanSteps.value.toMutableList()
+        val idx = current.indexOfFirst { it.providerId == step.providerId }
+        val ui = ScanStepUi(
+            providerId = step.providerId,
+            providerName = step.providerName.ifBlank { step.providerId },
+            stepIndex = step.stepIndex,
+            stepTotal = step.stepTotal,
+            status = step.status.name
+        )
+        if (idx >= 0) current[idx] = ui else current.add(ui)
+        current.sortBy { it.stepIndex }
+        _scanSteps.value = current
+    }
+
+    fun dismissScanPopup() {
+        _scanActive.value = false
+    }
+
+    private suspend fun autoSyncToPhonebook(result: LookupResult) {
+        // Phone scans only — email/username keys have no phonebook row.
+        if (result.phoneNumber.isBlank()) return
+        if (!com.infocaller.app.util.IdentifierRouter.routeType(result.phoneNumber)
+            .equals(com.infocaller.app.domain.engine.IdentifierType.PHONE, ignoreCase = true)
+        ) return
+        val caller = mapToCaller(result)
+        if (caller.displayName.isNullOrBlank() && caller.photoUrl.isNullOrBlank()) return
+        contactEnrichmentService.updateExistingContact(result.phoneNumber, caller)
     }
 
     private fun mapToCaller(res: LookupResult): Caller {
@@ -349,6 +420,14 @@ sealed class SearchUiState {
     object NotFound : SearchUiState()
     data class Error(val message: String) : SearchUiState()
 }
+
+data class ScanStepUi(
+    val providerId: String,
+    val providerName: String,
+    val stepIndex: Int,
+    val stepTotal: Int,
+    val status: String,
+)
 
 sealed class SyncState {
     object Idle : SyncState()

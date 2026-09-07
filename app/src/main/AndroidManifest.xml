@@ -42,6 +42,12 @@
          No READ_SMS: history is never read, only the incoming code via BROADCAST_SMS. -->
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
 
+    <!-- RUNTIME: location — requested at app start; used to bind the user's
+         SIM slot IPs / device location for reverse display to callees. Never
+         forced: every path falls back to carrier/IP geocoding. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <!-- IMPLICIT via InCallService - still declared but not runtime-prompted separately -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />

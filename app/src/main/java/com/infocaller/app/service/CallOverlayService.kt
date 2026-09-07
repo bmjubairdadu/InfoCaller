@@ -210,7 +210,16 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
         // photo, name + number, location, automatic NID badge, branded social
         // logos, and big red-decline / green-answer tap targets. The overlay
         // window is NOT_FOCUSABLE so taps deep-link to the full-screen UI
-        // where the red/green buttons answer for real.
+        // where the red/green buttons answer for real. Entrance animates in
+        // (fade + slide) so the in-app banner feels alive, not static.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = true,
+            enter = androidx.compose.animation.fadeIn(
+                androidx.compose.animation.core.tween(350)
+            ) + androidx.compose.animation.slideInVertically(
+                androidx.compose.animation.core.tween(350)
+            ) { -it / 3 }
+        ) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -363,6 +372,7 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                     }
                 }
             }
+        }
         }
     }
 

@@ -198,6 +198,30 @@ object OSINTManager {
                 Icons.Default.Send
             ),
             DorkLink(
+                "Google Lens (photo)",
+                "Reverse-image search the caller's photo",
+                "https://lens.google.com/v3/upload",
+                Icons.Default.ImageSearch
+            ),
+            DorkLink(
+                "Pimeyes Face Search",
+                "Face-search the caller's photo across the web",
+                "https://pimeyes.com",
+                Icons.Default.Face
+            ),
+            DorkLink(
+                "FaceCheck ID",
+                "Face search + social matches",
+                "https://facecheck.id",
+                Icons.Default.FaceRetouchingNatural
+            ),
+            DorkLink(
+                "Perplexity AI Search",
+                "AI-mode answer with sources for this number",
+                "https://www.perplexity.ai/search?q=${urlEncode("\"$e164\" OR \"$clean\"")}",
+                Icons.Default.AutoAwesome
+            ),
+            DorkLink(
                 "Viber / SMS Dork",
                 "Check disposable-SMS inboxes for this number",
                 "https://www.google.com/search?q=${urlEncode("\"$clean\" site:receive-smss.com OR site:quackr.io OR site:receive-sms-free.cc")}",
@@ -206,6 +230,24 @@ object OSINTManager {
         ))
 
         return links
+    }
+
+    fun generateEmailDorkLinks(email: String): List<DorkLink> {
+        val e = email.trim()
+        return listOf(
+            DorkLink("Perplexity AI (email)", "AI-mode lookup with sources", "https://www.perplexity.ai/search?q=${urlEncode("\"$e\"")}", Icons.Default.AutoAwesome),
+            DorkLink("Google Lens (photo)", "Reverse-image the Gravatar photo", "https://lens.google.com/v3/upload", Icons.Default.ImageSearch),
+            DorkLink("HudsonRock Lookup", "Free breach/paste domain intel", "https://www.xposedornot.com/?${urlEncode(e)}", Icons.Default.Security),
+        )
+    }
+
+    fun generateUsernameDorkLinks(username: String): List<DorkLink> {
+        val u = username.trim()
+        return listOf(
+            DorkLink("Perplexity AI (handle)", "AI-mode social lookup", "https://www.perplexity.ai/search?q=${urlEncode("\"$u\"")}", Icons.Default.AutoAwesome),
+            DorkLink("Google Lens (avatar)", "Reverse-image the avatar", "https://lens.google.com/v3/upload", Icons.Default.ImageSearch),
+            DorkLink("Maigret-style sweep", "Open the handle on 120 sites via Sherlock scan", "https://github.com/$u", Icons.Default.Group),
+        )
     }
 
     private fun urlEncode(value: String): String {

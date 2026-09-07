@@ -100,7 +100,20 @@ class InfoCallerApplication : Application() {
             ImageSocialVerifierProvider(),
             FacebookProfileProvider(),
             InstagramDeepProvider(this),
-            TikTokProfileProvider()
+            TikTokProfileProvider(),
+            // Deep-scan kit (all free, keyless): Maigret 120-site username
+            // sweep, HudsonRock-style email breach+paste intel, Sync.ME phone
+            // pivot, multi-avatar harvester, reverse-image links, face-search
+            // pivot, AI-assist deep queries. Registered AFTER the core set so
+            // the 8-attempt budget still spends on Truecaller/Eyecon/NID
+            // first; these fire on attempts 5-8 and on EMAIL/USERNAME scans.
+            MaigretSweepProviderImpl(commonHttpClient),
+            HudsonRockEmailIntelProviderImpl(commonHttpClient),
+            SocialSearcherPhoneProviderImpl(commonHttpClient),
+            MultiAvatarHarvesterProviderImpl(commonHttpClient),
+            ReverseImageSearchProviderImpl(commonHttpClient),
+            PimeyesPhotoPivotProviderImpl(commonHttpClient),
+            AiAssistDeepSearchProviderImpl(commonHttpClient)
         ))
 
         lookupEngine = PublicLookupEngine(providerManager)

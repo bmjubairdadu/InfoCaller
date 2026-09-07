@@ -31,22 +31,33 @@ class InfoInCallService : InCallService() {
 
         CallManager.updateCall(call)
         CallManager.setInCallService(this)
-        
+
         @Suppress("DEPRECATION")
         val state = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             call.details?.state ?: Call.STATE_DISCONNECTED
         } else {
             call.state
         }
-        
+
         if (state == Call.STATE_RINGING) {
             showIncomingCallNotification(call)
             startEnrichmentObservation(call)
+            // Ringing must ALWAYS surface the animated full-screen UI, screen
+            // on or off — the notification's full-screen intent handles the
+            // wake, but explicitly launching covers OEMs that swallow it.
+            try {
+                val fullScreen = Intent(this, InCallActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_NO_USER_ACTION or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+                startActivity(fullScreen)
+            } catch (_: Exception) { }
         } else {
             val intent = Intent(this, InCallActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
-            startActivity(intent)
+            try { startActivity(intent) } catch (_: Exception) { }
         }
     }
 
@@ -133,7 +144,11 @@ class InfoInCallService : InCallService() {
             .setSubText(if (displayName != number) subText else null)
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_MAX)
             .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(pendingIntent, isScreenOn.not())
+            // Full-screen intent MUST fire whether the screen is on or off —
+            // the old isScreenOn.not() flag meant a screen-off call never woke
+            // into the animated InCallActivity UI. Always true here: the
+            // activity itself decides overlay vs full UI by foreground state.
+            .setFullScreenIntent(pendingIntent, true)
             .setOngoing(true)
             .setAutoCancel(false)
             .setOnlyAlertOnce(true)

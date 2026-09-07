@@ -26,12 +26,17 @@ object PermissionManager {
 
     val CORE_PERMISSIONS get() = CALLER_ID_PERMISSIONS
 
-    /** Dangerous runtime permissions every dialer user needs (MANAGE_OWN_CALLS is install-time). */
+    /** Dangerous runtime permissions every default-dialer user needs.
+     *  Covers placing/answering calls, reading the ringing number, managing
+     *  the call UI, plus the call log + contacts the dialer shows natively.
+     *  MANAGE_OWN_CALLS is install-time; the rest are runtime prompts. */
     val REQUIRED_RUNTIME_CALL_PERMISSIONS = arrayOf(
         Manifest.permission.CALL_PHONE,
         Manifest.permission.READ_PHONE_STATE,
         Manifest.permission.READ_PHONE_NUMBERS,
-        Manifest.permission.ANSWER_PHONE_CALLS
+        Manifest.permission.ANSWER_PHONE_CALLS,
+        Manifest.permission.READ_CALL_LOG,
+        Manifest.permission.READ_CONTACTS
     )
 
     /**
@@ -86,6 +91,11 @@ object PermissionManager {
      *  No history permission: the app never reads SMS history, only the
      *  incoming verification code via BROADCAST_SMS delivery. */
     val SMS_PERMISSION = arrayOf(Manifest.permission.RECEIVE_SMS)
+
+    val LOCATION_PERMISSIONS = arrayOf(
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.ACCESS_FINE_LOCATION,
+    )
 
     fun canDrawOverlays(context: Context): Boolean {
         return Settings.canDrawOverlays(context)

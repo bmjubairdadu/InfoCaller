@@ -52,7 +52,6 @@ fun DetailsScreen(
     onMakeCall: (String) -> Unit
 ) {
     val uiState by viewModel.searchResult.collectAsState()
-    val dialerInput by viewModel.dialerInput.collectAsState()
     val blocklist by viewModel.blocklist.collectAsState()
     val scrollState = rememberScrollState()
     val context = LocalContext.current
@@ -61,11 +60,12 @@ fun DetailsScreen(
     val lastProvider = (uiState as? SearchUiState.Success)?.lastProvider
     // Non-phone scans (email/username) carry their own identifier — phone
     // normalization would strip/mangle them. Detect first so every lookup
-    // below can route.
-    val rawIdentifier = remember(uiState, dialerInput) {
+    // below can route. Reads ONLY the scan result now that search no longer
+    // writes into dialerInput (dial pad keeps its own typed text).
+    val rawIdentifier = remember(uiState) {
         when (uiState) {
             is SearchUiState.Success -> (uiState as SearchUiState.Success).caller.phoneNumber
-            else -> dialerInput
+            else -> ""
         }
     }
     val isEmailScan = remember(rawIdentifier) { com.infocaller.app.util.IdentifierRouter.isEmail(rawIdentifier) }
@@ -73,11 +73,11 @@ fun DetailsScreen(
         !com.infocaller.app.util.IdentifierRouter.isEmail(rawIdentifier) && com.infocaller.app.util.IdentifierRouter.routeType(rawIdentifier) == "USERNAME"
     }
     val isNonPhoneScan = isEmailScan || isUsernameScan
-    val phoneNumber = remember(uiState, dialerInput, isNonPhoneScan) {
+    val phoneNumber = remember(uiState, isNonPhoneScan) {
         if (isNonPhoneScan) "" else {
             val raw = when (uiState) {
                 is SearchUiState.Success -> (uiState as SearchUiState.Success).caller.phoneNumber
-                else -> dialerInput
+                else -> ""
             }
             PhoneNumberUtils.normalize(raw)
         }
@@ -104,7 +104,27 @@ fun DetailsScreen(
     }
     val isContact = contact != null
     var showAddContactDialog by remember { mutableStateOf(false) }
+    val scanSteps by viewModel.scanSteps.collectAsState()
+    val scanActive by viewModel.scanActive.collectAsState()
+    var scanPopupVisible by remember { mutableStateOf(false) }
+    // Auto-open the popup when a fresh scan starts; auto-close it when the
+    // scan completes so the result is revealed underneath.
+    LaunchedEffect(scanActive) {
+        if (scanActive) scanPopupVisible = true
+        else scanPopupVisible = false
+    }
     GlassyBackground {
+        if (scanPopupVisible && (scanActive || scanSteps.isNotEmpty())) {
+            com.infocaller.app.ui.components.ScanProgressPopup(
+                identifier = displayIdentifier.ifBlank { rawIdentifier },
+                steps = scanSteps,
+                scanActive = scanActive,
+                onDismiss = {
+                    scanPopupVisible = false
+                    if (scanActive) viewModel.dismissScanPopup()
+                }
+            )
+        }
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             containerColor = Color.Transparent,
@@ -150,16 +170,6 @@ fun DetailsScreen(
                             if (!isNonPhoneScan && !isContact && phoneNumber.isNotBlank()) {
                                 IconButton(onClick = { showAddContactDialog = true }) {
                                     Icon(Icons.Default.PersonAdd, "Add Contact", tint = Primary)
-                                }
-                            }
-                            if (enrichment != null && isContact) {
-                                IconButton(onClick = {
-                                    scope.launch {
-                                        viewModel.updateSystemContact(phoneNumber, viewModel.mapToCaller(enrichment!!, phoneNumber))
-                                        snackbarHostState.showSnackbar("Contact info synced to phonebook")
-                                    }
-                                }) {
-                                    Icon(Icons.Default.CloudSync, "Sync to Phonebook", tint = Primary)
                                 }
                             }
                             if (!isOnline) {
@@ -263,8 +273,17 @@ fun DetailsScreen(
                     modifier = Modifier.padding(innerPadding).fillMaxSize().verticalScroll(scrollState),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Missing data is skipped, never "N/A" / "Unknown" placeholders.
-                    val displayName = contact?.displayName ?: enrichment?.publicName ?: caller?.displayName ?: displayIdentifier.ifBlank { "" }
+                    // Saved-name first, caller-ID name second; show both when they differ
+                    // (original never hidden). Every non-name field always renders from
+                    // enrichment/caller; nothing stays hidden because it can't go into
+                    // ContactsContract. Do not mutate the phonebook name.
+                    val savedName = contact?.displayName
+                    val callerIdName = enrichment?.publicName ?: caller?.displayName
+                    val displayName = savedName ?: callerIdName ?: displayIdentifier.ifBlank { "" }
+                    val extraName = when {
+                        !savedName.isNullOrBlank() && !callerIdName.isNullOrBlank() && !savedName.equals(callerIdName, ignoreCase = true) -> callerIdName
+                        else -> null
+                    }
                     Spacer(modifier = Modifier.height(24.dp))
                     Box(modifier = Modifier.size(140.dp).glassy(radius = 70.dp).shadow(24.dp, CircleShape), contentAlignment = Alignment.Center) {
                         val photoUrl = contact?.photoUri ?: enrichment?.profileImageUrl
@@ -292,7 +311,16 @@ fun DetailsScreen(
                         Text(text = displayName, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, color = Color.White, modifier = Modifier.padding(horizontal = 24.dp))
                         SourceBadge(enrichment?.publicNameSource)
                     }
-                    if (!enrichment?.alternateName.isNullOrBlank() && enrichment?.alternateName != displayName) {
+                    extraName?.let {
+                        Text(
+                            text = "Caller ID: $it",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier.padding(top = 6.dp),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    if (!enrichment?.alternateName.isNullOrBlank() && enrichment?.alternateName != displayName && enrichment?.alternateName != extraName) {
                         Text(text = "aka ${enrichment!!.alternateName}", style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.6f), modifier = Modifier.padding(top = 4.dp))
                     }
                     Text(text = if (isNonPhoneScan) displayIdentifier else com.infocaller.app.util.PhoneNumberUtils.formatAsYouType(phoneNumber), style = MaterialTheme.typography.titleLarge, color = Primary, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
@@ -307,10 +335,44 @@ fun DetailsScreen(
                             }
                         }
                     }
+                    // Village resolver: when the display name embeds a place token,
+                    // show its BD administrative location disambiguated via Maps.
+                    val placeToken = remember(callerIdName, displayName) {
+                        VillageResolver.extractPlaceToken(callerIdName ?: displayName)
+                    }
+                    var village by remember(placeToken) { mutableStateOf<com.infocaller.app.util.VillageResolver.ResolvedVillage?>(null) }
+                    LaunchedEffect(placeToken) {
+                        val t = placeToken ?: return@LaunchedEffect
+                        val key = VillageResolver.cacheKey(callerIdName ?: displayName ?: "", t)
+                        if (VillageResolver.wasSeen(context, key)) return@LaunchedEffect
+                        VillageResolver.markSeen(context, key)
+                        village = VillageResolver.resolve(context, t)
+                    }
+                    village?.let { v ->
+                        DetailSection("Possible Location From Name") {
+                            DetailRow(Icons.Default.Place, "Village token: \"${v.query}\"", v.display, "Maps (Nominatim)")
+                            val mapsUrl = "https://www.google.com/maps/search/?api=1&query=${java.net.URLEncoder.encode(v.display + ", Bangladesh", "UTF-8")}"
+                            DetailRow(
+                                Icons.Default.Map, "Open in Maps", v.display,
+                                trailingContent = {
+                                    TextButton(onClick = {
+                                        try { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(mapsUrl))) } catch (_: Exception) { }
+                                    }) { Text("View") }
+                                }
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(32.dp))
                     DetailSection("Public Information") {
+                        val cachedLoc = remember { com.infocaller.app.util.UserLocationResolver.cached(context) }
                         val location = LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
-                        if (location.isNotBlank()) DetailRow(Icons.Default.LocationOn, "Location", location)
+                        // User's own location (if granted) shown so callees can see it.
+                        val myLoc = cachedLoc?.display()?.takeIf { it.isNotBlank() }
+                        if (!myLoc.isNullOrBlank()) DetailRow(Icons.Default.MyLocation, "Your location (on this device)", myLoc, "SIM / IP")
+                        if (village != null && location.isNotBlank()) {
+                            // Keep both: derived village + device-derived location
+                            DetailRow(Icons.Default.LocationOn, "Caller location", location)
+                        } else if (location.isNotBlank()) DetailRow(Icons.Default.LocationOn, "Location", location)
                         enrichment?.timezone?.let { DetailRow(Icons.Default.Schedule, "Timezone", it) }
 
                         val carrierName = enrichment?.carrier ?: caller?.carrier
@@ -397,6 +459,46 @@ fun DetailsScreen(
                             }
                         }
                     }
+                    DetailSection("Deep OSINT Links") {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val links = remember(displayIdentifier, phoneNumber, isNonPhoneScan, isEmailScan) {
+                                when {
+                                    isEmailScan -> com.infocaller.app.util.OSINTManager.generateEmailDorkLinks(displayIdentifier)
+                                    isUsernameScan -> com.infocaller.app.util.OSINTManager.generateUsernameDorkLinks(displayIdentifier)
+                                    else -> com.infocaller.app.util.OSINTManager.generateExtendedDorkLinks(phoneNumber.ifBlank { displayIdentifier })
+                                }
+                            }
+                            links.filter {
+                                it.title.contains("Lens", true) || it.title.contains("Pimeyes", true) ||
+                                    it.title.contains("FaceCheck", true) || it.title.contains("Perplexity", true)
+                            }.take(4).forEach { link ->
+                                Surface(
+                                    onClick = {
+                                        try {
+                                            context.startActivity(
+                                                android.content.Intent(
+                                                    android.content.Intent.ACTION_VIEW,
+                                                    android.net.Uri.parse(link.url)
+                                                )
+                                            )
+                                        } catch (_: Exception) { }
+                                    },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = Color.White.copy(alpha = 0.06f)
+                                ) {
+                                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        link.icon?.let { Icon(it, null, tint = Primary, modifier = Modifier.size(20.dp)) }
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(link.title, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                            Text(link.description, color = Color.White.copy(alpha = 0.55f), style = MaterialTheme.typography.labelSmall)
+                                        }
+                                        Icon(Icons.AutoMirrored.Filled.OpenInNew, null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(40.dp))
                 }
             }
@@ -466,7 +568,14 @@ fun SocialIcon(profile: SocialProfile) {
     val context = LocalContext.current
     Surface(onClick = { SocialUtils.openSocialProfile(context, profile) }, modifier = Modifier.size(48.dp), shape = CircleShape, color = Color.White.copy(alpha = 0.1f), border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))) {
         Box(contentAlignment = Alignment.Center) {
-            AsyncImage(model = SocialUtils.getLogoUrl(profile.platform), contentDescription = profile.platform, modifier = Modifier.size(28.dp).clip(CircleShape), contentScale = ContentScale.Fit)
+            AsyncImage(
+                model = SocialUtils.getLogoUrl(profile.platform),
+                contentDescription = "${profile.platform} — open account",
+                modifier = Modifier.size(28.dp).clip(CircleShape),
+                contentScale = ContentScale.Fit,
+                placeholder = rememberVectorPainter(Icons.Default.Share),
+                error = rememberVectorPainter(Icons.AutoMirrored.Filled.OpenInNew)
+            )
         }
     }
 }

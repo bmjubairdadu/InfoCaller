@@ -22,7 +22,8 @@ class PublicLookupEngine(
         type: String,
         requiredCapabilities: Set<Capability>,
         alreadyCompletedProviders: Set<String>,
-        onPartialResult: suspend (PartialResult) -> Unit
+        onPartialResult: suspend (PartialResult) -> Unit,
+        onProviderStep: suspend (providerId: String, providerName: String, stepIndex: Int, stepTotal: Int, status: StepStatus) -> Unit
     ): LookupResult = coroutineScope {
         val finalResults = mutableListOf<PartialResult>()
         val normalized = if (type == IdentifierType.PHONE) PhoneNumberUtils.normalize(identifier) else identifier
@@ -77,16 +78,23 @@ class PublicLookupEngine(
                 IdentifierType.EMAIL -> setOf(
                     "email_lookup", "holehe_email", "xposedornot_breach",
                     "email_social_bridge", "github_osint", "grepapp_code_search",
-                    "sherlock_osint", "disify_email_validation"
+                    "sherlock_osint", "disify_email_validation",
+                    "hudsonrock_email_intel", "multi_avatar_harvester",
+                    "reverse_image_search", "maigret_sweep",
+                    "ai_assist_deep_search"
                 )
                 IdentifierType.USERNAME -> setOf(
                     "sherlock_osint", "github_osint", "whatsmyname",
                     "facebook_profile", "tiktok_profile", "instagram_deep",
-                    "grepapp_code_search"
+                    "grepapp_code_search", "maigret_sweep",
+                    "multi_avatar_harvester", "reverse_image_search",
+                    "pimeyes_photo_pivot", "ai_assist_deep_search"
                 )
                 IdentifierType.FULL_NAME -> setOf(
                     "whatsmyname", "facebook_profile", "tiktok_profile",
-                    "instagram_deep", "name_social_verifier", "grepapp_code_search"
+                    "instagram_deep", "name_social_verifier", "grepapp_code_search",
+                    "maigret_sweep", "reverse_image_search",
+                    "ai_assist_deep_search"
                 )
                 // No NID scan path exists (search is phone-number only) — this
                 // ordering is dead but kept so a future caller fails safe.
@@ -103,9 +111,13 @@ class PublicLookupEngine(
         var photoFound = false
         var nameFound = false
         var attempts = 0
-        for (provider in executionPlan) {
+        val planTotal = executionPlan.size.coerceAtMost(MAX_PROVIDERS_PER_SCAN).coerceAtLeast(1)
+        for ((planIndex, provider) in executionPlan.withIndex()) {
             if (attempts >= MAX_PROVIDERS_PER_SCAN) break
-            if (alreadyCompletedProviders.contains(provider.id)) continue
+            if (alreadyCompletedProviders.contains(provider.id)) {
+                try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.SKIPPED) } catch (_: Exception) { }
+                continue
+            }
             val caps = provider.capabilities.toMutableSet()
             if (photoFound) caps.remove(Capability.PROFILE_PHOTO)
             if (nameFound) { caps.remove(Capability.PUBLIC_SEARCH); caps.remove(Capability.ALTERNATE_NAME); caps.remove(Capability.PUBLIC_PROFILE) }
@@ -117,12 +129,14 @@ class PublicLookupEngine(
 
             attempts++
             try {
+                try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.RUNNING) } catch (_: Exception) { }
                 val start = System.currentTimeMillis()
                 val result = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
                     provider.lookup(normalized, type = type)
                 }
 
                 if (result != null) {
+                    try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.SUCCESS) } catch (_: Exception) { }
                     val duration = System.currentTimeMillis() - start
                     val finalRes = result.copy(durationMs = duration, identifier = normalized, identifierType = type)
                     providerManager.reportResult(provider.id, true, duration)
@@ -142,11 +156,14 @@ class PublicLookupEngine(
                     if (isSufficientlyDetailed(finalResults)) break
 
                     if (remainingCapabilities.isEmpty()) break
+                } else {
+                    try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.FAILED) } catch (_: Exception) { }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Never swallow cancellation — the call path must stay cancellable.
                 throw e
             } catch (e: Exception) {
+                try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.FAILED) } catch (_: Exception) { }
                 providerManager.reportResult(provider.id, false, PROVIDER_TIMEOUT_MS)
             }
         }
@@ -217,10 +234,15 @@ class PublicLookupEngine(
         onPartialResult: suspend (PartialResult) -> Unit = {}
     ): List<PartialResult> = coroutineScope {
         val results = mutableListOf<PartialResult>()
-        performLookup(identifier, type, requiredCapabilities) {
-            results.add(it)
-            onPartialResult(it)
-        }
+        performLookup(
+            identifier = identifier,
+            type = type,
+            requiredCapabilities = requiredCapabilities,
+            onPartialResult = {
+                results.add(it)
+                onPartialResult(it)
+            }
+        )
         results
     }
 }

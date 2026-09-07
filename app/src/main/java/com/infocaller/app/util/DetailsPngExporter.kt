@@ -215,28 +215,48 @@ object DetailsPngExporter {
         drawCircularPhoto(canvas, photo, cx, cy, photoD, card.name)
         y += photoD + 56f
 
-        // Name.
+        // Name block: name lines first, THEN the cursor advances past them,
+        // THEN the number pill draws below — never drawn over the name.
         val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = NAME_COLOR.toInt(); textSize = 68f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
         }
         val shownName = card.name.ifBlank { "Unknown" }
-        drawCenteredWrapped(canvas, shownName, cx, y, namePaint, 2, 72f)
-        y += wrappedHeight(shownName, namePaint, 2, 72f)
+        val nameLines = wrap(shownName, Paint(namePaint).apply { textAlign = Paint.Align.CENTER }, (WIDTH - 200).toFloat()).take(2)
+        val nameLineH = 76f
+        var nameY = y
+        for (line in nameLines) {
+            nameY += nameLineH
+            canvas.drawText(line, cx, nameY, Paint(namePaint).apply { textAlign = Paint.Align.CENTER })
+        }
+        y = nameY + 28f
 
-        // Identifier.
+        // Identifier pill: number sits INSIDE its own rounded pill below the
+        // name — own background, own padding, own vertical slot.
         if (card.identifier.isNotBlank()) {
-            y += 18f
             val idPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = ACCENT.toInt(); textSize = 40f
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+                color = ACCENT.toInt(); textSize = 38f
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                 textAlign = Paint.Align.CENTER
             }
-            canvas.drawText(card.identifier.take(48), cx, y, idPaint)
-            y += 60f
+            val idText = card.identifier.take(48)
+            val idW = idPaint.measureText(idText)
+            val pillW = (idW + 96f).coerceAtMost(WIDTH - 220f)
+            val pillH = 76f
+            val pillLeft = cx - pillW / 2f
+            val pillRect = RectF(pillLeft, y, pillLeft + pillW, y + pillH)
+            val pillBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x1EFFFFFF }
+            canvas.drawRoundRect(pillRect, 38f, 38f, pillBg)
+            val pillEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = ACCENT.toInt(); style = Paint.Style.STROKE; strokeWidth = 2.5f; alpha = 160
+            }
+            canvas.drawRoundRect(pillRect, 38f, 38f, pillEdge)
+            val textY = y + pillH / 2f + 13f
+            canvas.drawText(idText, cx, textY, idPaint)
+            y += pillH + 28f
         } else {
-            y += 24f
+            y += 12f
         }
 
         // About quote pill.
@@ -393,14 +413,14 @@ object DetailsPngExporter {
     ) {
         var cy = y
         val centered = Paint(paint).apply { textAlign = Paint.Align.CENTER }
-        for (line in wrap(text, centered, (WIDTH - 200).toFloat()).take(maxLines)) {
+        for (line in wrap(text, centered, (WIDTH - 260).toFloat()).take(maxLines)) {
             cy += lineH
             canvas.drawText(line, cx, cy, centered)
         }
     }
 
     private fun wrappedHeight(text: String, paint: Paint, maxLines: Int, lineH: Float): Float {
-        val n = wrap(text, paint, (WIDTH - 200).toFloat()).take(maxLines).size.coerceAtLeast(1)
+        val n = wrap(text, paint, (WIDTH - 260).toFloat()).take(maxLines).size.coerceAtLeast(1)
         return n * lineH
     }
 

@@ -2,7 +2,13 @@ package com.infocaller.app.ui.screens
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.core.content.edit
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContactPhone
@@ -19,7 +25,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.infocaller.app.ui.theme.Background
-import com.infocaller.app.ui.theme.glassy
 import com.infocaller.app.ui.viewmodel.CallerViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,10 +95,20 @@ fun MainScreen(
                     .padding(bottom = 12.dp)
             ) {
                 NavigationBar(
-                    containerColor = Color.Transparent,
+                    containerColor = Color(0xFF0B1322),
                     modifier = Modifier
                         .height(80.dp)
-                        .glassy(radius = 40.dp, blur = 20.dp),
+                        .clip(RoundedCornerShape(40.dp))
+                        .border(
+                            width = 1.dp,
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = 0.25f),
+                                    Color.White.copy(alpha = 0.05f)
+                                )
+                            ),
+                            shape = RoundedCornerShape(40.dp)
+                        ),
                     windowInsets = WindowInsets(0, 0, 0, 0)
                 ) {
                     tabs.forEach { item ->

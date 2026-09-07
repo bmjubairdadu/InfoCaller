@@ -121,15 +121,28 @@ class CallBroadcastReceiver : BroadcastReceiver() {
                 withTimeoutOrNull(9000) {
                     val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
                     val normalized = PhoneNumberUtils.normalize(phoneNumber)
+                    val online = try { app.enrichmentEngine.isOnline.value } catch (_: Exception) { true }
                     // ContentResolver on IO, not onReceive's main thread.
                     val known = PhoneNumberUtils.getContactName(context, phoneNumber) != null
-                    if (!known) {
+                    val startedAt = System.currentTimeMillis()
+                    if (online && !known) {
+                        // Online: scan, then notify with the found identity.
                         app.enrichmentEngine.enqueue(normalized, priority = com.infocaller.app.data.local.entity.QueuePriority.HIGH)
                         app.enrichmentEngine.getEnrichment(normalized).collect { enrichment ->
                             if (enrichment != null && !enrichment.publicName.isNullOrBlank()) {
-                                showMissedCallNotification(context, phoneNumber, enrichment)
+                                showMissedCallNotification(context, phoneNumber, enrichment, startedAt, scanned = true)
                                 cancel()
                             }
+                        }
+                    } else {
+                        // Offline (or known contact): notify from cache only —
+                        // no scan, no API calls, no crash. Shows "scan
+                        // successful" when the cache hit, else time-since-call.
+                        val cached = try {
+                            app.database.enrichmentDao().getEnrichmentSync(normalized)
+                        } catch (_: Exception) { null }
+                        if (!known || cached != null) {
+                            showMissedCallNotification(context, phoneNumber, cached, startedAt, scanned = online)
                         }
                     }
                 }
@@ -140,19 +153,45 @@ class CallBroadcastReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun showMissedCallNotification(context: Context, number: String, enrichment: com.infocaller.app.data.local.entity.ContactEnrichmentEntity) {
+    private fun showMissedCallNotification(
+        context: Context,
+        number: String,
+        enrichment: com.infocaller.app.data.local.entity.ContactEnrichmentEntity?,
+        startedAt: Long = System.currentTimeMillis(),
+        scanned: Boolean = false,
+    ) {
         val channelId = "missed_calls"
         val manager = context.getSystemService(android.app.NotificationManager::class.java)
         val channel = android.app.NotificationChannel(channelId, "Missed Calls", android.app.NotificationManager.IMPORTANCE_DEFAULT)
         manager.createNotificationChannel(channel)
-        val displayName = enrichment.publicName ?: number
-        val carrier = enrichment.carrier ?: ""
+        val displayName = enrichment?.publicName ?: number
+        val carrier = enrichment?.carrier ?: ""
+        val elapsedSec = ((System.currentTimeMillis() - startedAt) / 1000).coerceAtLeast(0)
+        val detail = when {
+            scanned && enrichment?.publicName != null -> "Scan successful · ${elapsedSec}s · Number: $number${if (carrier.isNotEmpty()) " - $carrier" else ""}"
+            else -> "Called ${elapsedSec}s ago · Number: $number${if (carrier.isNotEmpty()) " - $carrier" else ""}"
+        }
+        // Tapping opens the scan popup for this number (live steps when
+        // online, cached result when offline).
+        val detailsIntent = android.content.Intent(context, com.infocaller.app.MainActivity::class.java).apply {
+            action = android.content.Intent.ACTION_VIEW
+            data = android.net.Uri.parse("infocaller://details/${android.net.Uri.encode(number)}")
+            flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val contentIntent = try {
+            android.app.PendingIntent.getActivity(
+                context, number.hashCode(), detailsIntent,
+                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            )
+        } catch (_: Exception) { null }
         val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.stat_notify_missed_call)
             .setContentTitle("Missed call from $displayName")
-            .setContentText("Number: $number ${if(carrier.isNotEmpty()) "- $carrier" else ""}")
+            .setContentText(detail)
+            .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(detail))
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
+        if (contentIntent != null) builder.setContentIntent(contentIntent)
         manager.notify(number.hashCode(), builder.build())
     }
 }

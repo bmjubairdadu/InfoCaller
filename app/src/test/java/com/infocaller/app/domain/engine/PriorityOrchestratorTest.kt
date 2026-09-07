@@ -22,7 +22,8 @@ class PriorityOrchestratorTest {
             type: String,
             requiredCapabilities: Set<Capability>,
             alreadyCompletedProviders: Set<String>,
-            onPartialResult: suspend (PartialResult) -> Unit
+            onPartialResult: suspend (PartialResult) -> Unit,
+            onProviderStep: suspend (String, String, Int, Int, StepStatus) -> Unit
         ): LookupResult {
             lastAlreadyCompleted = alreadyCompletedProviders
             if (delayMs > 0) delay(delayMs)

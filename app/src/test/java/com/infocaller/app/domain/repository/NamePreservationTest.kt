@@ -20,7 +20,7 @@ class NamePreservationTest {
     private val enrichmentDao: EnrichmentDao = mock()
     
     private class SimpleMockLookupEngine : IPublicLookupEngine {
-        override suspend fun performLookup(identifier: String, type: String, requiredCapabilities: Set<Capability>, alreadyCompletedProviders: Set<String>, onPartialResult: suspend (PartialResult) -> Unit): LookupResult = LookupResult(phoneNumber = identifier)
+        override suspend fun performLookup(identifier: String, type: String, requiredCapabilities: Set<Capability>, alreadyCompletedProviders: Set<String>, onPartialResult: suspend (PartialResult) -> Unit, onProviderStep: suspend (String, String, Int, Int, StepStatus) -> Unit): LookupResult = LookupResult(phoneNumber = identifier)
     }
     
     private class SimpleMockOrchestrator : IScanOrchestrator {

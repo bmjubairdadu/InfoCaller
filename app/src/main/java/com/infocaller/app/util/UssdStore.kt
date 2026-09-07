@@ -4,8 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.core.net.toUri
-import org.json.JSONArray
-import org.json.JSONObject
 
 data class UssdEntry(
     val code: String,
@@ -14,45 +12,8 @@ data class UssdEntry(
 )
 
 object UssdStore {
-    private const val PREFS = "ussd_prefs"
-    private const val KEY_ENTRIES = "ussd_entries_v1"
-
     fun defaultEntries(): List<UssdEntry> = OSINTManager.getCommonUssdCodes().map {
         UssdEntry(code = it.url, label = it.title)
-    }
-
-    fun load(context: Context): List<UssdEntry> {
-        return try {
-            val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(KEY_ENTRIES, null) ?: return defaultEntries()
-            if (raw.isBlank()) return defaultEntries()
-            val arr = JSONArray(raw)
-            val out = ArrayList<UssdEntry>(arr.length())
-            for (i in 0 until arr.length()) {
-                val o = arr.optJSONObject(i) ?: continue
-                val code = o.optString("code", "").trim()
-                if (code.isEmpty()) continue
-                out += UssdEntry(code = code, label = o.optString("label", ""), id = o.optLong("id", System.currentTimeMillis() + i))
-            }
-            if (out.isEmpty()) defaultEntries() else out
-        } catch (_: Exception) {
-            defaultEntries()
-        }
-    }
-
-    fun save(context: Context, entries: List<UssdEntry>) {
-        try {
-            val arr = JSONArray()
-            entries.forEach {
-                val o = JSONObject()
-                o.put("code", it.code.trim())
-                o.put("label", it.label.trim())
-                o.put("id", it.id)
-                arr.put(o)
-            }
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putString(KEY_ENTRIES, arr.toString()).apply()
-        } catch (_: Exception) { }
     }
 
     fun isUssd(input: String): Boolean {
@@ -64,13 +25,13 @@ object UssdStore {
     fun run(context: Context, rawCode: String) {
         val code = rawCode.trim()
         if (code.isEmpty()) return
+        // USSD must go through ACTION_CALL with the SAME encoding the dialer
+        // uses for '#'. The old path here encoded '#' but bypassed the SIM /
+        // permission flow in MainActivity.makeCall, so a *# code fell into a
+        // plain voice call instead of the USSD session. Route through the
+        // shared placeCall so USSD hits the telephony stack correctly.
         try {
-            val encoded = code.replace("#", Uri.encode("#"))
-            val intent = Intent(Intent.ACTION_CALL).apply {
-                data = "tel:$encoded".toUri()
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(intent)
+            com.infocaller.app.util.SimManager.placeCall(context, code)
         } catch (_: Exception) {
             try {
                 val encoded = code.replace("#", Uri.encode("#"))

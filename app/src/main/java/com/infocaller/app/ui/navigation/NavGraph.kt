@@ -104,11 +104,18 @@ fun NavGraph(
                     try { android.net.Uri.decode(it) } catch (_: Exception) { it }
                 }.orEmpty()
                 androidx.compose.runtime.LaunchedEffect(argNumber) {
+                    // Clear the previous contact's result BEFORE starting the
+                    // new scan — otherwise the old Success stays visible
+                    // (greyed) under the new Loading state on re-open.
+                    viewModel.clearSearch()
                     if (argNumber.isNotBlank()) viewModel.searchNumber(argNumber)
                 }
                 DetailsScreen(
                     viewModel = viewModel,
                     onBack = {
+                        // Reset on exit too, so a fast re-open never flashes
+                        // the previous contact before the new scan starts.
+                        try { viewModel.clearSearch() } catch (_: Exception) { }
                         navController.popBackStack()
                     },
                     onMakeCall = onMakeCall

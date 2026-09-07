@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -61,7 +62,7 @@ fun LoginScreen(
 
     val tcPhone by viewModel.tcPhone.collectAsState()
     val tcAuthResult by viewModel.tcAuthResult.collectAsState()
-    var tcOtp by remember { mutableStateOf("") }
+    var tcOtp by rememberSaveable { mutableStateOf("") }
     var tcLoading by remember { mutableStateOf(false) }
 
     // SMS auto-fill is opt-in from the OTP screen itself. We deliberately NEVER
@@ -401,9 +402,23 @@ fun LoginScreen(
 
                                 TextButton(
                                     onClick = {
-                                        val text = clipboardManager.getText()?.text
-                                        if (text != null && text.length == 6 && text.all { it.isDigit() }) {
-                                            tcOtp = text
+                                        // Accept a bare code OR pull digits out of a
+                                        // copied message ("Your code is 123456").
+                                        val raw = clipboardManager.getText()?.text?.toString().orEmpty()
+                                        val digits = raw.filter { it.isDigit() }
+                                        val code = when {
+                                            raw.length == 6 && raw.all { it.isDigit() } -> raw
+                                            digits.length == 6 -> digits
+                                            digits.length > 6 -> digits.takeLast(6)
+                                            else -> null
+                                        }
+                                        if (code != null) {
+                                            tcOtp = code
+                                            verifyError = null
+                                        } else {
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar("Clipboard has no 6-digit code — type it manually")
+                                            }
                                         }
                                     },
                                     modifier = Modifier.padding(top = 8.dp)

@@ -20,8 +20,23 @@ sealed class ScanState {
     object Idle : ScanState()
     data class Started(val phoneNumber: String) : ScanState()
     data class Progress(val phoneNumber: String, val result: LookupResult, val lastProvider: String) : ScanState()
+    data class ProviderStep(
+        val phoneNumber: String,
+        val providerId: String,
+        val providerName: String,
+        val stepIndex: Int,
+        val stepTotal: Int,
+        val status: StepStatus,
+    ) : ScanState()
     data class Completed(val phoneNumber: String, val result: LookupResult) : ScanState()
     data class Error(val phoneNumber: String, val message: String) : ScanState()
+}
+
+enum class StepStatus {
+    RUNNING,
+    SUCCESS,
+    FAILED,
+    SKIPPED,
 }
 
 
@@ -93,11 +108,11 @@ class ScanOrchestrator(
                 val satisfiedCaps = parseCaps(savedState?.satisfiedCapabilities)
 
                 lookupEngine.performLookup(
-                    normalized, 
+                    normalized,
                     type = type,
                     alreadyCompletedProviders = completedProviders,
-                    requiredCapabilities = Capability.entries.toSet() - satisfiedCaps
-                ) { partial ->
+                    requiredCapabilities = Capability.entries.toSet() - satisfiedCaps,
+                    onPartialResult = { partial ->
                     partial.providerId?.let { id ->
                         completedProviders.add(id)
                     }
@@ -124,7 +139,7 @@ class ScanOrchestrator(
                     }
 
                     currentResult = IntelligenceResultMerger.merge(currentResult, analyzedPartials)
-                    
+
                     resultSaver?.invoke(currentResult)
 
                     updateLocalSatisfiedCaps(currentResult, satisfiedCaps)
@@ -139,7 +154,15 @@ class ScanOrchestrator(
                     val progress = ScanState.Progress(normalized, currentResult, partial.providerId ?: "unknown")
                     scanFlow.value = progress
                     updateGlobalState(normalized, progress)
-                }
+                    },
+                    onProviderStep = { providerId, providerName, stepIndex, stepTotal, status ->
+                        val step = ScanState.ProviderStep(
+                            normalized, providerId, providerName, stepIndex, stepTotal, status
+                        )
+                        scanFlow.value = step
+                        updateGlobalState(normalized, step)
+                    }
+                )
                 
                 scanJobDao.deleteState(normalized)
                 

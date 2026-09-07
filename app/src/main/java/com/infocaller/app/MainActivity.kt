@@ -111,17 +111,39 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent, viewModel: CallerViewModel) {
-        val uri = intent.data
-        if (uri != null && uri.scheme == "tel") {
+        val uri = intent.data ?: return
+        if (uri.scheme == "tel") {
             val number = uri.schemeSpecificPart
             if (number.isNotBlank()) {
                 viewModel.updateDialerInput(number)
+            }
+        } else if (uri.scheme == "infocaller" && uri.host == "details") {
+            // Missed-call notification tap: path holds the number.
+            val raw = (uri.path ?: "").trimStart('/').takeIf { it.isNotBlank() }
+                ?: uri.getQueryParameter("number")
+            val number = try {
+                android.net.Uri.decode(raw ?: "")
+            } catch (_: Exception) { raw } ?: return
+            if (number.isNotBlank()) {
+                viewModel.searchNumber(number)
             }
         }
     }
 
 
     private fun makeCall(viewModel: CallerViewModel, phoneNumber: String) {
+        // USSD codes (*#...) go straight to the telephony stack — SIM picker
+        // and lookup both break them (a *# code is a session, not a call).
+        if (com.infocaller.app.util.UssdStore.isUssd(phoneNumber)) {
+            val needCall = com.infocaller.app.permissions.PermissionManager.DIALER_PERMISSIONS
+            if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(this, needCall)) {
+                androidx.core.app.ActivityCompat.requestPermissions(this, needCall, 1001)
+                getSharedPreferences("pending_call", MODE_PRIVATE).edit().putString("number", phoneNumber).apply()
+                return
+            }
+            com.infocaller.app.util.UssdStore.run(this, phoneNumber)
+            return
+        }
         val needCall = com.infocaller.app.permissions.PermissionManager.DIALER_PERMISSIONS
         if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(this, needCall)) {
             androidx.core.app.ActivityCompat.requestPermissions(this, needCall, 1001)

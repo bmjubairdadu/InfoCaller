@@ -399,85 +399,120 @@ fun SocialActionCircle(profile: com.infocaller.app.domain.model.SocialProfile) {
 
 @Composable
 fun SwipeToAnswer(onAccept: () -> Unit, onDecline: () -> Unit) {
+    // Vertical swipe: drag UP to answer, DOWN to decline. A bouncing chevron
+    // hint above the handle teaches the gesture on first sight.
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
-    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
-    val sliderWidth = screenWidth - 64.dp
-    val sliderWidthPx = with(density) { sliderWidth.toPx() }
-    var offsetX by remember { mutableFloatStateOf(0f) }
+    val sliderHeight = 240.dp
+    val sliderHeightPx = with(density) { sliderHeight.toPx() }
+    var offsetY by remember { mutableFloatStateOf(0f) }
     val handleSize = 80.dp
     val handleSizePx = with(density) { handleSize.toPx() }
-    val maxOffset = (sliderWidthPx - handleSizePx) / 2
+    val maxOffset = (sliderHeightPx - handleSizePx) / 2
+    val hintAlpha by rememberInfiniteTransition(label = "SwipeHint").animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "HintAlpha"
+    )
+    val hintOffset by rememberInfiniteTransition(label = "SwipeHintMove").animateFloat(
+        initialValue = 0f,
+        targetValue = -12f,
+        animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "HintOffset"
+    )
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(100.dp)
-            .padding(horizontal = 16.dp)
-            .glassy(radius = 50.dp, blur = 20.dp)
-            .background(Color.White.copy(alpha = 0.05f), CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.alpha(hintAlpha).offset { IntOffset(0, hintOffset.roundToInt()) }
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.alpha(0.6f)) {
-                Icon(Icons.Default.Close, null, tint = Error, modifier = Modifier.size(20.dp))
-                Text("DECLINE", color = Error, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.alpha(0.6f)) {
-                Icon(Icons.Default.Check, null, tint = Success, modifier = Modifier.size(20.dp))
-                Text("ANSWER", color = Success, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-            }
+            Icon(Icons.Default.KeyboardArrowUp, null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(28.dp))
+            Text(
+                "SWIPE UP TO ANSWER · DOWN TO DECLINE",
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp
+            )
         }
-
+        Spacer(modifier = Modifier.height(8.dp))
         Box(
             modifier = Modifier
-                .offset { IntOffset(offsetX.roundToInt(), 0) }
-                .size(handleSize)
-                .padding(4.dp)
-                .shadow(16.dp, CircleShape)
-                .background(
-                    brush = Brush.linearGradient(
-                        colors = when {
-                            offsetX > 50f -> listOf(Success, Color(0xFF00C853))
-                            offsetX < -50f -> listOf(Error, Color(0xFFD50000))
-                            else -> listOf(Color.White, Color.White.copy(alpha = 0.8f))
-                        }
-                    ),
-                    shape = CircleShape
-                )
-                .draggable(
-                    orientation = Orientation.Horizontal,
-                    state = rememberDraggableState { delta ->
-                        offsetX = (offsetX + delta).coerceIn(-maxOffset, maxOffset)
-                    },
-                    onDragStarted = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
-                    onDragStopped = {
-                        if (offsetX >= maxOffset * 0.8f) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onAccept()
-                        } else if (offsetX <= -maxOffset * 0.8f) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onDecline()
-                        }
-                        offsetX = 0f
-                    }
-                ),
+                .height(sliderHeight)
+                .width(100.dp)
+                .glassy(radius = 50.dp, blur = 20.dp)
+                .background(Color.White.copy(alpha = 0.05f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = when {
-                    offsetX > 50f -> Icons.Default.Call
-                    offsetX < -50f -> Icons.Default.CallEnd
-                    else -> Icons.Default.UnfoldMoreDouble
-                },
-                contentDescription = null,
-                tint = if (abs(offsetX) < 50f) Color.Black else Color.White,
-                modifier = Modifier.size(32.dp)
-            )
+            Column(
+                modifier = Modifier.fillMaxHeight().padding(vertical = 16.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.alpha(0.6f)) {
+                    Icon(Icons.Default.Check, null, tint = Success, modifier = Modifier.size(20.dp))
+                    Text("ANSWER", color = Success, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.alpha(0.6f)) {
+                    Icon(Icons.Default.Close, null, tint = Error, modifier = Modifier.size(20.dp))
+                    Text("DECLINE", color = Error, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            val answered = offsetY < -50f
+            val declined = offsetY > 50f
+            Box(
+                modifier = Modifier
+                    .offset { IntOffset(0, offsetY.roundToInt()) }
+                    .size(handleSize)
+                    .padding(4.dp)
+                    .shadow(16.dp, CircleShape)
+                    .background(
+                        brush = Brush.linearGradient(
+                            colors = when {
+                                answered -> listOf(Success, Color(0xFF00C853))
+                                declined -> listOf(Error, Color(0xFFD50000))
+                                else -> listOf(Color.White, Color.White.copy(alpha = 0.8f))
+                            }
+                        ),
+                        shape = CircleShape
+                    )
+                    .draggable(
+                        orientation = Orientation.Vertical,
+                        state = rememberDraggableState { delta ->
+                            offsetY = (offsetY + delta).coerceIn(-maxOffset, maxOffset)
+                        },
+                        onDragStarted = { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+                        onDragStopped = {
+                            if (offsetY <= -maxOffset * 0.7f) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onAccept()
+                            } else if (offsetY >= maxOffset * 0.7f) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onDecline()
+                            }
+                            offsetY = 0f
+                        }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                val chevronBounce by rememberInfiniteTransition(label = "HandlePulse").animateFloat(
+                    initialValue = 1f, targetValue = 1.25f,
+                    animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+                    label = "HandleScale"
+                )
+                Icon(
+                    imageVector = when {
+                        answered -> Icons.Default.Call
+                        declined -> Icons.Default.CallEnd
+                        else -> Icons.Default.SwipeUp
+                    },
+                    contentDescription = null,
+                    tint = if (!answered && !declined) Color.Black else Color.White,
+                    modifier = Modifier.size(32.dp).scale(chevronBounce)
+                )
+            }
         }
     }
 }
