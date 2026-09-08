@@ -12,12 +12,11 @@ import com.infocaller.app.data.local.entity.ContactEnrichmentEntity
 import com.infocaller.app.data.remote.PhoneHash
 import com.infocaller.app.permissions.PermissionManager
 import com.infocaller.app.util.PhoneNumberUtils
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
-import java.util.concurrent.TimeUnit
 
 /**
  * Community auto-sync:
@@ -32,11 +31,7 @@ class CommunitySyncWorker(
     workerParams: WorkerParameters
 ) : CoroutineWorker(context, workerParams) {
 
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        .build()
+    private val http = (applicationContext as InfoCallerApplication).commonHttpClient
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
@@ -132,7 +127,7 @@ class CommunitySyncWorker(
         } catch (_: Exception) { null }
     }
 
-    private fun fetchCommunityRows(baseUrl: String, anonKey: String, since: Long): List<Row> {
+    private suspend fun fetchCommunityRows(baseUrl: String, anonKey: String, since: Long): List<Row> {
         // Order by updated_at desc, cap page size. First sync caps to 2000.
         val limit = 2000
         val url = if (since > 0) {
@@ -148,9 +143,10 @@ class CommunitySyncWorker(
             .addHeader("Authorization", "Bearer $anonKey")
             .addHeader("Accept", "application/json")
             .build()
-        val resp = http.newCall(req).execute()
-        if (!resp.isSuccessful) return emptyList()
-        val body = resp.body?.string() ?: return emptyList()
+        val body = http.newCall(req).await().use { resp ->
+            if (!resp.isSuccessful) return emptyList()
+            resp.body?.string()
+        } ?: return emptyList()
         val arr = JSONArray(body)
         val out = ArrayList<Row>(arr.length())
         for (i in 0 until arr.length()) {

@@ -19,6 +19,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.infocaller.app.ui.theme.Primary
+import com.infocaller.app.ui.theme.contentPrimary
+import com.infocaller.app.ui.theme.contentSecondary
+import com.infocaller.app.ui.theme.faintTint
 import com.infocaller.app.ui.viewmodel.ScanStepUi
 
 @Composable
@@ -33,7 +36,7 @@ fun ScanProgressPopup(
         Card(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF141E33))
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(20.dp),
@@ -46,7 +49,7 @@ fun ScanProgressPopup(
                     "Scanning",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.ExtraBold,
-                    color = Color.White
+                    color = contentPrimary
                 )
                 Text(
                     identifier,
@@ -63,13 +66,13 @@ fun ScanProgressPopup(
                         progress = { (done.coerceAtMost(total)).toFloat() / total.toFloat() },
                         modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                         color = Primary,
-                        trackColor = Color.White.copy(alpha = 0.12f),
+                        trackColor = faintTint(0.12f),
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         "$done of $total tools",
                         style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.6f)
+                        color = contentSecondary(0.6f)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                 }
@@ -84,7 +87,7 @@ fun ScanProgressPopup(
                         Text(
                             "Preparing lookup tools…",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.75f)
+                            color = contentSecondary(0.75f)
                         )
                     }
                 } else {
@@ -120,7 +123,7 @@ private fun ScanStepRow(step: ScanStepUi) {
         "RUNNING" -> Icons.Default.Sync to Primary
         "SUCCESS" -> Icons.Default.CheckCircle to Color(0xFF22C55E)
         "FAILED" -> Icons.Default.Error to Color(0xFFEF4444)
-        else -> Icons.Default.RemoveCircle to Color.White.copy(alpha = 0.35f)
+        else -> Icons.Default.RemoveCircle to faintTint(0.35f)
     }
     val statusText = when (step.status) {
         "RUNNING" -> "Scanning…"
@@ -130,7 +133,7 @@ private fun ScanStepRow(step: ScanStepUi) {
     }
     Row(
         modifier = Modifier.fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+            .background(faintTint(0.05f), RoundedCornerShape(12.dp))
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -149,12 +152,12 @@ private fun ScanStepRow(step: ScanStepUi) {
                 step.providerName,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = Color.White
+                color = contentPrimary
             )
             Text(
                 "Tool ${step.stepIndex} of ${step.stepTotal} · $statusText",
                 style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.55f)
+                color = contentSecondary(0.55f)
             )
         }
         if (step.status == "RUNNING") {

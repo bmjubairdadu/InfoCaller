@@ -2,6 +2,7 @@ package com.infocaller.app.data.remote
 
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.domain.model.PhotoCandidate
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -22,11 +23,11 @@ class MultiAvatarHarvesterProviderImpl(private val httpClient: OkHttpClient) : L
     override val priority = 55
     override val costClass = CostClass.FREE
 
-    private fun headOk(url: String): Boolean {
+    private suspend fun headOk(url: String): Boolean {
         return try {
             val req = Request.Builder().url(url)
                 .header("User-Agent", "Mozilla/5.0 (Linux; Android 14)").head().build()
-            httpClient.newCall(req).execute().use { r -> r.isSuccessful }
+            httpClient.newCall(req).await().use { r -> r.isSuccessful }
         } catch (_: Exception) { false }
     }
 

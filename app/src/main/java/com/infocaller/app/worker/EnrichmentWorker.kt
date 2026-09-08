@@ -36,6 +36,21 @@ class EnrichmentWorker(
 
             importSystemContacts(localContactDao)
 
+            // 24/7 identity sweep: recents + full phonebook through the
+            // parallel bulk engine (Truecaller bulk + Eyecon fan-out), with
+            // every hit permanently mirrored into the phonebook. Runs on
+            // launch, hourly (MainActivity schedule) and on boot.
+            try {
+                val enriched = com.infocaller.app.data.repository.BulkIdentityEngine.runFullPass(applicationContext)
+                if (isFullScanNeeded && enriched >= 0) {
+                    prefs.edit { putLong("last_full_contact_scan", System.currentTimeMillis()) }
+                }
+                if (enriched > 0) {
+                    Log.i("EnrichmentWorker", "Bulk identity pass enriched $enriched numbers")
+                    return@withContext Result.success()
+                }
+            } catch (_: Exception) { }
+
             val callerLogNumbers = try { deviceRepo.fetchRecentCallsSync().map { it.number } } catch (_: Exception) { emptyList() }
             val recentNumbers = callerLogNumbers
             
@@ -68,12 +83,25 @@ class EnrichmentWorker(
                 if (shouldEnqueue) app.enrichmentEngine.enqueue(number, priority = QueuePriority.LOW)
             }
 
-            app.enrichmentEngine.processNextOneByOne()
+            // Drain the queue continuously while online (up to 25 items per
+            // worker run): each pass scans one number, saves to the app DB,
+            // and mirrors to the phonebook when a row exists. Stops early
+            // when offline so no API calls fire without connectivity.
+            var drained = 0
+            while (drained < 25) {
+                if (!app.enrichmentEngine.isOnline.value) break
+                val before = System.currentTimeMillis()
+                app.enrichmentEngine.processNextOneByOne()
+                drained++
+                // processNextOneByOne no-ops when the queue is empty; detect
+                // the idle pass and stop instead of spinning 25 times.
+                if (System.currentTimeMillis() - before < 200) break
+            }
 
             if (isFullScanNeeded) {
                 prefs.edit { putLong("last_full_contact_scan", System.currentTimeMillis()) }
             }
-            
+
             Result.success()
         } catch (e: Exception) {
             Log.e("EnrichmentWorker", "Work failed", e)

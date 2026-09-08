@@ -3,6 +3,7 @@ package com.infocaller.app.data.remote
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.domain.model.SocialLookupStatus
 import com.infocaller.app.domain.model.SocialProfile
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -33,7 +34,7 @@ class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvid
             var gravPhoto: String? = null
             // Responses must be closed (use{}) or connections leak; string()
             // self-closes only when called on the body inside use{}.
-            client.newCall(gravReq).execute().use { gravResp ->
+            client.newCall(gravReq).await().use { gravResp ->
                 if (gravResp.isSuccessful) {
                     val j = gravResp.body?.string() ?: ""
                     if (j.contains("\"entry\"")) {
@@ -48,7 +49,7 @@ class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvid
             }
             try {
                 val ghReq = Request.Builder().url("https://github.com/$prefix").header("User-Agent","Mozilla/5.0").build()
-                client.newCall(ghReq).execute().use { ghResp ->
+                client.newCall(ghReq).await().use { ghResp ->
                     if (ghResp.code == 200) {
                         val b = ghResp.body?.string()?.lowercase() ?: ""
                         if (!b.contains("page not found") && !b.contains("not found") && ghResp.request.url.toString().contains(prefix, true)) {

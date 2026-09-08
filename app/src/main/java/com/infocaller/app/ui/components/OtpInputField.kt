@@ -19,6 +19,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.infocaller.app.ui.theme.Primary
 import com.infocaller.app.ui.theme.TruecallerBlue
+import com.infocaller.app.ui.theme.contentPrimary
+import com.infocaller.app.ui.theme.faintTint
 
 @Composable
 fun OtpInputField(
@@ -49,13 +51,13 @@ fun OtpInputField(
                         modifier = Modifier
                             .size(width = 45.dp, height = 55.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White.copy(alpha = 0.05f))
+                            .background(faintTint(0.05f))
                             .border(
                                 width = 1.dp,
                                 color = when {
                                     isFocused -> TruecallerBlue
                                     char.isNotEmpty() -> TruecallerBlue.copy(alpha = 0.5f)
-                                    else -> Color.White.copy(alpha = 0.1f)
+                                    else -> faintTint(0.1f)
                                 },
                                 shape = RoundedCornerShape(12.dp)
                             ),
@@ -64,7 +66,7 @@ fun OtpInputField(
                         Text(
                             text = char,
                             style = MaterialTheme.typography.headlineMedium,
-                            color = Color.White,
+                            color = contentPrimary,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center
                         )

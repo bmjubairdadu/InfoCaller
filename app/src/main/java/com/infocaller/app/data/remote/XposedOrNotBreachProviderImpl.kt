@@ -2,6 +2,7 @@ package com.infocaller.app.data.remote
 
 import com.google.gson.JsonParser
 import com.infocaller.app.domain.engine.*
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -36,9 +37,8 @@ class XposedOrNotBreachProviderImpl(
                     .header("User-Agent", "InfoCaller-OSINT/2.0")
                     .header("Accept", "application/json")
                     .build()
-                val resp = httpClient.newCall(req).execute()
                 // Response must be closed (use{}) or connections leak.
-                val body = resp.use { it.body?.string() } ?: return@withContext null
+                val body = httpClient.newCall(req).await().use { it.body?.string() } ?: return@withContext null
                 val root = try { JsonParser.parseString(body).asJsonObject } catch (_: Exception) { return@withContext null }
                 if (root.has("Error")) return@withContext null // "Not found" = clean
                 val breachesEl = root.get("breaches") ?: return@withContext null

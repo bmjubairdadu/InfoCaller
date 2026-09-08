@@ -10,12 +10,22 @@ class PublicLookupEngine(
     private val providerManager: ProviderManager
 ) : IPublicLookupEngine {
     companion object {
-        /** Per-provider network timeout (was 15s — radio held open too long). */
-        const val PROVIDER_TIMEOUT_MS = 8000L
-        /** Max providers tried per scan — bounds radio/CPU per lookup. */
-        const val MAX_PROVIDERS_PER_SCAN = 8
-        /** Max deep-discovery pivots per scan (was 5 + NID + email/handle mining). */
-        const val MAX_PIVOTS = 1
+        /** Fast-scan budget: each tool gets at most 5s. The old 7-15s budget
+         *  let a single slow scraper stall the whole serial chain, so every
+         *  scan felt like "many time". 5s is enough for Truecaller/Eyecon
+         *  and local DB hits (the common case) while slow pages fail fast. */
+        const val PROVIDER_TIMEOUT_MS = 5000L
+        /** Only the highest-signal tools run in the foreground pass:
+         *  Truecaller + Eyecon + NID + the next best 1-2 providers. Anything
+         *  deeper continues as background enrichment instead of blocking UI. */
+        const val MAX_PROVIDERS_PER_SCAN = 5
+        /** Recursive username pivots re-ran the WHOLE provider set per hit
+         *  (7 providers x 7s = ~49s per pivot) inside the foreground scan.
+         *  Disabled here (0): pivots now belong to background enrichment. */
+        const val MAX_PIVOTS = 0
+        /** Minimal radio gap between tools: 120ms keeps sockets clean
+         *  without adding seconds of pure waiting to every scan. */
+        const val BETWEEN_PROVIDER_DELAY_MS = 120L
     }
     override suspend fun performLookup(
         identifier: String,
@@ -63,36 +73,51 @@ class PublicLookupEngine(
         // Fix: for non-phone scans, run the providers that actually handle that
         // type first (verified per-file: which IdentifierType each lookup accepts).
         if (type == IdentifierType.PHONE) {
-            tc?.let { executionPlan.add(it) }
-            eyecon?.let { executionPlan.add(it) }
-            // NID providers run immediately after Truecaller/Eyecon on PHONE
-            // scans: search is phone-number only, so the local database.json
-            // match (NID + DOB display) must surface before generic scrapers
-            // consume the 8-attempt budget.
+            // Explicit phone-first ordering: Truecaller and Eyecon must run before
+            // the rest of the providers so the strongest phone identity sources are
+            // attempted first, then NID, then the remaining scrapers.
+            val phonePrimary = mutableListOf<LookupProvider>()
+            tc?.let { phonePrimary.add(it) }
+            eyecon?.let { phonePrimary.add(it) }
             val nidFirst = others.filter { it.id == "bd_nid_database" || it.id == "nid_gov_enrichment" }
                 .sortedByDescending { it.priority }
-            executionPlan.addAll(nidFirst)
-            executionPlan.addAll(others.filter { it.id != "bd_nid_database" && it.id != "nid_gov_enrichment" })
+            phonePrimary.addAll(nidFirst)
+            // Multi-account social enumeration runs right after identity: one
+            // number/email can own many accounts and the old plan often
+            // stopped at WhatsApp-only rows before reaching these.
+            val enumerator = others.filter { it.id == "social_account_enumerator" }
+            phonePrimary.addAll(enumerator)
+            executionPlan.addAll(phonePrimary)
+            executionPlan.addAll(others.filter { it.id != "bd_nid_database" && it.id != "nid_gov_enrichment" && it.id != "social_account_enumerator" })
         } else {
             val typeFirstIds: Set<String> = when (type) {
                 IdentifierType.EMAIL -> setOf(
                     "email_lookup", "holehe_email", "xposedornot_breach",
-                    "email_social_bridge", "github_osint", "grepapp_code_search",
-                    "sherlock_osint", "disify_email_validation",
+                    "email_social_bridge", "email_deep_social", "github_osint",
+                    "social_account_enumerator",
+                    "grepapp_code_search", "sherlock_osint", "disify_email_validation",
                     "hudsonrock_email_intel", "multi_avatar_harvester",
                     "reverse_image_search", "maigret_sweep",
+                    "linkedin_profile", "x_profile", "reddit_profile",
+                    "telegram_deep", "gaming_profiles",
                     "ai_assist_deep_search"
                 )
                 IdentifierType.USERNAME -> setOf(
                     "sherlock_osint", "github_osint", "whatsmyname",
                     "facebook_profile", "tiktok_profile", "instagram_deep",
+                    "linkedin_profile", "x_profile", "youtube_profile",
+                    "reddit_profile", "telegram_deep", "gaming_profiles",
+                    "pinterest_medium_profiles", "music_creator",
                     "grepapp_code_search", "maigret_sweep",
                     "multi_avatar_harvester", "reverse_image_search",
                     "pimeyes_photo_pivot", "ai_assist_deep_search"
                 )
                 IdentifierType.FULL_NAME -> setOf(
                     "whatsmyname", "facebook_profile", "tiktok_profile",
-                    "instagram_deep", "name_social_verifier", "grepapp_code_search",
+                    "instagram_deep", "linkedin_profile", "x_profile",
+                    "youtube_profile", "reddit_profile", "telegram_deep",
+                    "gaming_profiles", "pinterest_medium_profiles",
+                    "name_social_verifier", "grepapp_code_search",
                     "maigret_sweep", "reverse_image_search",
                     "ai_assist_deep_search"
                 )
@@ -112,6 +137,10 @@ class PublicLookupEngine(
         var nameFound = false
         var attempts = 0
         val planTotal = executionPlan.size.coerceAtMost(MAX_PROVIDERS_PER_SCAN).coerceAtLeast(1)
+        // STRICTLY ONE-BY-ONE: this loop awaits each provider's lookup fully
+        // before the next one starts. No async{} fan-out anywhere in the scan
+        // path — simultaneous API bursts were crashing release builds, so one
+        // tool completes (success/timeout/error) before the next begins.
         for ((planIndex, provider) in executionPlan.withIndex()) {
             if (attempts >= MAX_PROVIDERS_PER_SCAN) break
             if (alreadyCompletedProviders.contains(provider.id)) {
@@ -119,7 +148,12 @@ class PublicLookupEngine(
                 continue
             }
             val caps = provider.capabilities.toMutableSet()
-            if (photoFound) caps.remove(Capability.PROFILE_PHOTO)
+            // Photo pivots (reverse-image / face-search) run BECAUSE a photo was
+            // found — never prune them as "photo already covered". All other
+            // photo providers are pruned once a photo exists.
+            val isPhotoPivot = provider.id == "reverse_image_search" ||
+                provider.id == "pimeyes_photo_pivot"
+            if (photoFound && !isPhotoPivot) caps.remove(Capability.PROFILE_PHOTO)
             if (nameFound) { caps.remove(Capability.PUBLIC_SEARCH); caps.remove(Capability.ALTERNATE_NAME); caps.remove(Capability.PUBLIC_PROFILE) }
             val usefulCapabilities = caps.intersect(remainingCapabilities)
             if (usefulCapabilities.isEmpty()) {
@@ -130,9 +164,27 @@ class PublicLookupEngine(
             attempts++
             try {
                 try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.RUNNING) } catch (_: Exception) { }
+                // Settle pause: the previous tool's connection fully closes and
+                // the radio idles before the next API starts — cleaner responses,
+                // no half-open socket reuse. Skipped before the first attempt.
+                if (attempts > 1) {
+                    try { kotlinx.coroutines.delay(BETWEEN_PROVIDER_DELAY_MS) } catch (_: Exception) { }
+                }
                 val start = System.currentTimeMillis()
+                // Deep-photo context: every provider sees the photos found so
+                // far (primary urls + candidates + social avatars), so
+                // reverse-image / face-search / avatar tools auto-run against
+                // the real photo the moment ANY api finds one.
+                val photoCtx = finalResults
+                    .flatMap { r ->
+                        listOfNotNull(r.imageUrl) + r.photoCandidates.map { it.url } +
+                            r.socialProfiles.mapNotNull { it.avatarUrl }
+                    }
+                    .filter { it.startsWith("http") }.distinct().take(5)
+                val nameCtx = finalResults.firstNotNullOfOrNull { it.name?.takeIf { n -> n.isNotBlank() } }
+                val ctx = LookupContext(foundPhotos = photoCtx, foundName = nameCtx)
                 val result = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
-                    provider.lookup(normalized, type = type)
+                    provider.lookup(normalized, type = type, context = ctx)
                 }
 
                 if (result != null) {
@@ -144,7 +196,9 @@ class PublicLookupEngine(
                     finalResults.add(finalRes)
                     onPartialResult(finalRes)
                     if (!finalRes.name.isNullOrBlank()) nameFound = true
-                    if (!finalRes.imageUrl.isNullOrBlank() || finalRes.photoCandidates.isNotEmpty()) photoFound = true
+                    if (!finalRes.imageUrl.isNullOrBlank() || finalRes.photoCandidates.isNotEmpty() ||
+                        finalRes.socialProfiles.any { !it.avatarUrl.isNullOrBlank() }
+                    ) photoFound = true
 
                     // Deep-discovery pivots run under the same cooperative cancellation
                     // so a cancelled call-path scan stops promptly.
@@ -168,7 +222,76 @@ class PublicLookupEngine(
             }
         }
 
+        try {
+            ensureActive()
+            runAutoPhotoOsint(normalized, type, finalResults, onPartialResult, onProviderStep)
+        } catch (_: Exception) { }
+
         ConfidenceEngine.merge(normalized, finalResults)
+    }
+
+    private suspend fun runAutoPhotoOsint(
+        normalized: String,
+        type: String,
+        finalResults: MutableList<PartialResult>,
+        onPartialResult: suspend (PartialResult) -> Unit,
+        onProviderStep: suspend (providerId: String, providerName: String, stepIndex: Int, stepTotal: Int, status: StepStatus) -> Unit
+    ) {
+        val photos = finalResults
+            .flatMap { r ->
+                listOfNotNull(r.imageUrl) + r.photoCandidates.map { it.url } +
+                    r.socialProfiles.mapNotNull { it.avatarUrl }
+            }
+            .filter { it.startsWith("http") }.distinct().take(5)
+        if (photos.isEmpty()) return
+        // Skip when the face-matched pass already ran (it subsumes the
+        // legacy link-only pivots with verified HD photos).
+        val pivotDone = finalResults.any { r ->
+            r.providerId == "face_matched_reverse_search" ||
+                ((r.providerId == "reverse_image_search" || r.providerId == "pimeyes_photo_pivot") &&
+                    (r.about?.contains("lens.google.com/uploadbyurl", true) == true))
+        }
+        if (pivotDone) return
+        val nameCtx = finalResults.firstNotNullOfOrNull { it.name?.takeIf { n -> n.isNotBlank() } }
+        val ctx = LookupContext(foundPhotos = photos, foundName = nameCtx)
+        // Face-matched HD pass FIRST (verifies faces on-device, upgrades to
+        // full-HD, emits Lens/TinEye/Bing links); legacy link-only pivots
+        // only run when it finds no face.
+        val pivots = providerManager.getAllProviders().filter {
+            (it.id == "face_matched_reverse_search" || it.id == "reverse_image_search" || it.id == "pimeyes_photo_pivot") &&
+                providerManager.getHealth(it.id)?.status != ProviderStatus.BROKEN
+        }.sortedWith(
+            compareBy<LookupProvider> { if (it.id == "face_matched_reverse_search") 0 else 1 }
+                .thenByDescending { it.priority }
+        ).take(3)
+        var faceMatched = false
+        pivots.forEachIndexed { i, pivot ->
+            try {
+                try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.RUNNING) } catch (_: Exception) { }
+                val res = withTimeoutOrNull(if (pivot.id == "face_matched_reverse_search") 20_000L else PROVIDER_TIMEOUT_MS) {
+                    pivot.lookup(normalized, type = type, context = ctx)
+                }
+                if (res != null) {
+                    try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.SUCCESS) } catch (_: Exception) { }
+                    val finalRes = res.copy(durationMs = 0L, identifier = normalized, identifierType = type)
+                    finalResults.add(finalRes)
+                    onPartialResult(finalRes)
+                    if (pivot.id == "face_matched_reverse_search" &&
+                        (res.photoCandidates.any { it.faceCount > 0 } || res.confidence >= 0.8f)
+                    ) {
+                        // Faces verified + HD links emitted: legacy link-only
+                        // pivots would only duplicate the same Lens URLs.
+                        faceMatched = true
+                        return
+                    }
+                } else {
+                    try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.FAILED) } catch (_: Exception) { }
+                }
+            } catch (_: Exception) {
+                try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.FAILED) } catch (_: Exception) { }
+            }
+            if (faceMatched) return
+        }
     }
 
     private suspend fun performDeepDiscovery(
@@ -199,9 +322,21 @@ class PublicLookupEngine(
     }
 
     private fun isSufficientlyDetailed(results: List<PartialResult>): Boolean {
-        val hasName = results.any { it.name != null && it.confidence >= 0.85f }
-        val hasPhoto = results.any { it.imageUrl != null && it.confidence >= 0.8f }
-        return hasName && hasPhoto
+        // Fast-scan exit: a confident name (Truecaller/Eyecon hit) is enough
+        // to show the caller immediately — BUT only when social enumeration
+        // has also run (or definitively failed). The old rule exited on name
+        // alone, which is exactly why scans showed WhatsApp-only rows while
+        // Facebook/Instagram/TikTok matches never got attempted.
+        val hasName = results.any { !it.name.isNullOrBlank() && it.confidence >= 0.8f }
+        val hasPhoto = results.any { !it.imageUrl.isNullOrBlank() && it.confidence >= 0.8f }
+        val socials = results.flatMap { it.socialProfiles }.distinctBy { (it.platform.lowercase() + "|" + (it.profileUrl?.lowercase().orEmpty())) }
+        val realSocials = socials.count {
+            !it.platform.equals("WhatsApp", true) && !it.platform.equals("Telegram", true)
+        }
+        val enumeratorRan = results.any { it.providerId == "social_account_enumerator" }
+        if (hasName && (enumeratorRan || realSocials >= 1)) return true
+        if (hasPhoto && realSocials >= 1) return true
+        return hasPhoto && socials.size >= 3
     }
 
     private fun updateRemainingCapabilities(result: PartialResult, remaining: MutableSet<Capability>) {

@@ -80,7 +80,8 @@ class ScanningService : Service() {
         }
     }
 
-    private suspend fun processQueueOneByOne(app: InfoCallerApplication, orchestrator: ScanOrchestrator) {
+    private suspend fun processQueueOneByOne(app: InfoCallerApplication, orchestrator: ScanOrchestrator) 
+    {
         while (app.enrichmentEngine.isOnline.value && !orchestrator.isPriorityScanActive.value) {
             try {
                 app.enrichmentEngine.processNextOneByOne()

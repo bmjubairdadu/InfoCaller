@@ -2,10 +2,9 @@ package com.infocaller.app.data.remote
 
 import com.google.gson.JsonParser
 import com.infocaller.app.domain.engine.*
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -35,13 +34,10 @@ class HackerTargetDomainReconProviderImpl(
             val target = identifier.trim().lowercase()
             if (target.isBlank() || target.length > 120) return@withContext null
             try {
-                val parts: List<Any?> = coroutineScope {
-                    val a = async { reverseIp(target) }
-                    val b = async { ipIntel(target) }
-                    awaitAll(a, b)
-                }
-                val cohosted = parts[0] as? String
-                val intel = parts[1] as? PartialResult
+                // Strictly one-by-one: reverse-IP finishes, then IP intel.
+                val cohosted: String? = try { reverseIp(target) } catch (_: Exception) { null }
+                try { kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.ensureActive() } catch (_: Exception) { }
+                val intel: PartialResult? = try { ipIntel(target) } catch (_: Exception) { null }
                 if (cohosted == null && intel == null) return@withContext null
                 val about = buildString {
                     if (!cohosted.isNullOrBlank()) append("Co-hosted: $cohosted. ")
@@ -59,17 +55,18 @@ class HackerTargetDomainReconProviderImpl(
             } catch (_: Exception) { null }
         }
 
-    private fun getText(url: String): String? {
+    private suspend fun getText(url: String): String? {
         return try {
             val req = Request.Builder().url(url)
                 .header("User-Agent", "InfoCaller-OSINT/2.0").build()
-            val resp = httpClient.newCall(req).execute()
-            if (!resp.isSuccessful) return null
-            resp.body?.string()?.take(4000)
+            httpClient.newCall(req).await().use { resp ->
+                if (!resp.isSuccessful) return null
+                resp.body?.string()?.take(4000)
+            }
         } catch (_: Exception) { null }
     }
 
-    private fun reverseIp(target: String): String? {
+    private suspend fun reverseIp(target: String): String? {
         val body = getText("https://api.hackertarget.com/reverseiplookup/?q=$target") ?: return null
         if (body.contains("error", true) || body.contains("No records", true)) return null
         val lines = body.lines().map { it.trim() }.filter { it.isNotEmpty() && it.contains(".") }.take(8)
@@ -77,7 +74,7 @@ class HackerTargetDomainReconProviderImpl(
         return lines.joinToString(", ").take(300)
     }
 
-    private fun ipIntel(target: String): PartialResult? {
+    private suspend fun ipIntel(target: String): PartialResult? {
         // Only for literal IPs (v4 heuristic); domains resolve via reverse lookup text
         if (!Regex("^\\d{1,3}(\\.\\d{1,3}){3}$").matches(target)) return null
         val body = getText(

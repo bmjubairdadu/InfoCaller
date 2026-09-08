@@ -6,6 +6,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
 import com.infocaller.app.domain.model.PhotoCandidate
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
@@ -17,7 +18,9 @@ import java.io.InputStream
 class ImageAnalysisService(private val context: Context) : IImageAnalysisService {
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .connectTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
         .build()
 
     private val detectorOptions = FaceDetectorOptions.Builder()
@@ -80,10 +83,10 @@ class ImageAnalysisService(private val context: Context) : IImageAnalysisService
         }
     }
 
-    private fun downloadBitmap(url: String): Bitmap? {
+    private suspend fun downloadBitmap(url: String): Bitmap? {
         return try {
             val request = Request.Builder().url(url).build()
-            httpClient.newCall(request).execute().use { response ->
+            httpClient.newCall(request).await().use { response ->
                 if (!response.isSuccessful) return null
                 // Byte-stream path must close the response (string()/bytes() self-close,
                 // but byteStream() does not) or connections leak.

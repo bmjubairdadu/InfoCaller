@@ -13,8 +13,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.infocaller.app.ui.theme.Background
 import com.infocaller.app.ui.theme.Primary
+import com.infocaller.app.ui.theme.contentPrimary
+import com.infocaller.app.ui.theme.contentSecondary
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -22,16 +23,16 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Privacy Policy", color = Color.White) },
+                title = { Text("Privacy Policy", color = contentPrimary) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = contentPrimary)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Background)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
         },
-        containerColor = Background
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(
             modifier = Modifier
@@ -59,7 +60,7 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
                 "InfoCaller requires access to Contacts, Phone, and Call Logs to function as a dialer and caller ID service. These permissions are used strictly for app features.")
             
             Spacer(modifier = Modifier.height(32.dp))
-            Text("Last Updated: September 2026", color = Color.White.copy(alpha = 0.4f), fontSize = 12.sp)
+            Text("Last Updated: September 2026", color = contentSecondary(0.4f), fontSize = 12.sp)
         }
     }
 }
@@ -69,6 +70,6 @@ fun PolicySection(title: String, content: String) {
     Column(modifier = Modifier.padding(bottom = 24.dp)) {
         Text(title, style = MaterialTheme.typography.titleMedium, color = Primary, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(8.dp))
-        Text(content, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.7f), lineHeight = 22.sp)
+        Text(content, style = MaterialTheme.typography.bodyMedium, color = contentSecondary(0.7f), lineHeight = 22.sp)
     }
 }

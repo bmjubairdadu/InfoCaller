@@ -4,6 +4,7 @@ import com.infocaller.app.domain.engine.*
 import com.infocaller.app.domain.model.PhotoCandidate
 import com.infocaller.app.domain.model.SocialLookupStatus
 import com.infocaller.app.domain.model.SocialProfile
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -38,7 +39,7 @@ class SocialSearcherPhoneProviderImpl(private val httpClient: OkHttpClient) : Lo
             try {
                 val req = Request.Builder().url("https://sync.me/search/?number=${java.net.URLEncoder.encode(e164, "UTF-8")}")
                     .header("User-Agent", ua()).build()
-                httpClient.newCall(req).execute().use { r ->
+                httpClient.newCall(req).await().use { r ->
                     if (r.isSuccessful) {
                         val body = r.body?.string().orEmpty()
                         val m = Regex("""<title>(.*?)</title>""", RegexOption.IGNORE_CASE).find(body)

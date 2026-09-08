@@ -2,7 +2,9 @@ package com.infocaller.app.data.remote
 
 import com.infocaller.app.domain.engine.*
 import com.google.gson.Gson
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -36,23 +38,25 @@ class NominatimGeocodingProviderImpl(
                 .addHeader("User-Agent", "InfoCaller/1.0 (Android)")
                 .build()
             
-            val response = httpClient.newCall(request).execute()
-            if (response.isSuccessful) {
-                val body = response.body?.string()
-                val jsonArray = gson.fromJson(body, com.google.gson.JsonArray::class.java)
-                if (jsonArray != null && jsonArray.size() > 0) {
-                    val first = jsonArray.get(0).asJsonObject
-                    val address = first.get("address").asJsonObject
-                    
-                    return@withContext PartialResult(
-                        city = address.get("city")?.asString ?: address.get("town")?.asString ?: address.get("village")?.asString,
-                        region = address.get("state")?.asString,
-                        country = address.get("country")?.asString,
-                        confidence = 0.8f,
-                        source = "OpenStreetMap",
-                        providerId = id,
-                        providerVersion = version
-                    )
+            val response = httpClient.newCall(request).await()
+            response.use { 
+                if (it.isSuccessful) {
+                    val body = it.body?.string()
+                    val jsonArray = gson.fromJson(body, JsonArray::class.java)
+                    if (jsonArray != null && jsonArray.size() > 0) {
+                        val first = jsonArray.get(0).asJsonObject
+                        val address = first.get("address").asJsonObject
+                        
+                        return@withContext PartialResult(
+                            city = address.get("city")?.asString ?: address.get("town")?.asString ?: address.get("village")?.asString,
+                            region = address.get("state")?.asString,
+                            country = address.get("country")?.asString,
+                            confidence = 0.8f,
+                            source = "OpenStreetMap",
+                            providerId = id,
+                            providerVersion = version
+                        )
+                    }
                 }
             }
         } catch (_: Exception) {

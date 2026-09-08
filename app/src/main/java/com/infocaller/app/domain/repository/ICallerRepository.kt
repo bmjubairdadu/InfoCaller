@@ -18,6 +18,7 @@ interface ICallerRepository {
     fun getScanStates(): StateFlow<Map<String, ScanState>>
     fun startScan(identifier: String, priority: ScanPriority, type: String = IdentifierType.PHONE): Flow<ScanState>
     fun cancelScan(identifier: String)
+    fun cancelAllScans()
 
     fun getBlocklist(): Flow<List<String>>
     suspend fun blockNumber(phoneNumber: String)

@@ -1,10 +1,12 @@
 package com.infocaller.app.data.remote
 
 import android.content.Context
+import android.provider.Settings
 import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.infocaller.app.util.PhoneNumberUtils
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -39,13 +41,20 @@ class TruecallerAuthManager(
     )
 
     private fun deviceIdReal(): String {
-        return android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
-            ?: context.getSharedPreferences("app_settings", Context.MODE_PRIVATE).getString("tc_device_id", null)
-            ?: java.util.UUID.randomUUID().toString().replace("-", "").take(16).also { context.getSharedPreferences("app_settings", Context.MODE_PRIVATE).edit().putString("tc_device_id", it).apply() }
+        val prefs = context.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+        var did = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+        if (did.isNullOrBlank() || did == "9774d56d682e549c") {
+            did = prefs.getString("tc_device_id", null)
+            if (did.isNullOrBlank()) {
+                did = rnd(16)
+                prefs.edit().putString("tc_device_id", did).apply()
+            }
+        }
+        return did
     }
     private fun rnd(len:Int): String { val c="abcdefghijklmnopqrstuvwxyz0123456789"; return (1..len).map{ c.random() }.joinToString("") }
 
-    // Exactly Benojir: single endpoint asia-south1, ANDROID_ID, osVersion "10", gzip handling via OkHttp auto
+    // Exactly Benojir: multiple endpoints, ANDROID_ID, osVersion "10", gzip handling via OkHttp auto
     suspend fun requestOtp(phone: String): OtpRequestResult? = withContext(Dispatchers.IO) {
         val norm = PhoneNumberUtils.normalize(phone)
         val cc = PhoneNumberUtils.getCountryCode(norm) ?: "BD"
@@ -53,6 +62,7 @@ class TruecallerAuthManager(
         val dial = PhoneNumberUtils.getDialingCode(norm) ?: 880
         val secret = "lvc22mp3l1sfv6ujg83rd17btt"
         val deviceId = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: deviceIdReal()
+        
         val body = JsonObject().apply {
             addProperty("countryCode", cc); addProperty("dialingCode", dial)
             add("installationDetails", JsonObject().apply {
@@ -65,42 +75,66 @@ class TruecallerAuthManager(
             })
             addProperty("phoneNumber", sig); addProperty("region","region-2"); addProperty("sequenceNo",2)
         }
-        val url = "https://account-asia-south1.truecaller.com/v2/sendOnboardingOtp"
-        try {
-            val req = Request.Builder().url(url)
-                .addHeader("clientsecret", secret)
-                .addHeader("user-agent","Truecaller/11.75.5 (Android;10)")
-                .addHeader("content-type","application/json; charset=UTF-8")
-                .addHeader("accept-encoding","gzip")
-                .post(body.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())).build()
-            val resp = client.newCall(req).execute()
-            // bytes() self-closes, but only when called inside use{} — the old
-            // code called bytes() then close() outside use{}, leaking on throw.
-            val rawBytes = resp.use { it.body?.bytes() } ?: return@withContext null
-            val txt = if (rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else String(rawBytes)
-            val j = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ return@withContext OtpRequestResult("", "", 0, -1, txt.take(200)) }
-            val status = j.get("status")?.asInt ?: 0
-            val msg = j.get("message")?.asString
-            if (status==1 || status==9) {
-                val rid = j.get("requestId")?.asString ?: ""
-                val method = j.get("method")?.asString?.lowercase() ?: "sms"
-                val ttl = j.get("tokenTtl")?.asInt ?: 300
-                context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).edit()
-                    .putString("last_tc_request_id", rid)
-                    .putString("last_tc_phone", PhoneNumberUtils.normalize(phone))
-                    .apply()
-                return@withContext OtpRequestResult(rid, method, ttl, status, msg)
-            }
-            if (status==3) {
-                val token = j.get("installationId")?.asString ?: j.get("accessToken")?.asString
-                if (token!=null) {
-                    TruecallerCloudStore.saveInstallationId(context, token)
-                    return@withContext OtpRequestResult(token, "already_logged_in", 0, 3, msg)
+
+        val endpoints = listOf(
+            "https://account-asia-south1.truecaller.com/v2/sendOnboardingOtp",
+            "https://account-noneu.truecaller.com/v2/sendOnboardingOtp"
+        )
+
+        var lastError: String? = null
+        for (url in endpoints) {
+            try {
+                Log.d("TruecallerAuth", "Attempting requestOtp at $url")
+                val req = Request.Builder().url(url)
+                    .addHeader("clientsecret", secret)
+                    .addHeader("user-agent","Truecaller/11.75.5 (Android;10)")
+                    .addHeader("content-type","application/json; charset=UTF-8")
+                    .addHeader("accept-encoding","gzip")
+                    .post(body.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())).build()
+                
+                val resp = client.newCall(req).await()
+                val rawBytes = resp.use { it.body?.bytes() } ?: continue
+                val txt = if (rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else String(rawBytes)
+                
+                Log.d("TruecallerAuth", "Response from $url: $txt")
+                val j = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ 
+                    lastError = "Invalid JSON: ${txt.take(100)}"
+                    continue 
                 }
+                
+                val status = j.get("status")?.asInt ?: 0
+                val msg = j.get("message")?.asString
+                
+                if (status == 1 || status == 9) {
+                    val rid = j.get("requestId")?.asString ?: ""
+                    val method = j.get("method")?.asString?.lowercase() ?: "sms"
+                    val ttl = j.get("tokenTtl")?.asInt ?: 300
+                    context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).edit()
+                        .putString("last_tc_request_id", rid)
+                        .putString("last_tc_phone", PhoneNumberUtils.normalize(phone))
+                        .apply()
+                    return@withContext OtpRequestResult(rid, method, ttl, status, msg)
+                }
+                
+                if (status == 3) {
+                    val token = j.get("installationId")?.asString ?: j.get("accessToken")?.asString
+                    if (token != null) {
+                        TruecallerCloudStore.saveInstallationId(context, token)
+                        return@withContext OtpRequestResult(token, "already_logged_in", 0, 3, msg)
+                    }
+                }
+                
+                if (status == 5 || status == 6) {
+                    return@withContext OtpRequestResult("", "", 0, status, msg ?: "Too many requests. Try again after 1 hour.")
+                }
+                
+                lastError = msg ?: txt.take(200)
+            } catch (e: Exception) {
+                Log.w("TruecallerAuth", "Failed endpoint $url: ${e.message}")
+                lastError = e.message
             }
-            if (status==5 || status==6) return@withContext OtpRequestResult("", "", 0, status, msg ?: "Too many requests. Try again after 1 hour.")
-            return@withContext OtpRequestResult("", "", 0, status, msg ?: txt.take(300))
-        } catch(e:Exception){ Log.w("TruecallerAuth","requestOtp: ${e.message}"); return@withContext OtpRequestResult("", "", 0, -1, e.message) }
+        }
+        return@withContext OtpRequestResult("", "", 0, -1, lastError ?: "All endpoints failed")
     }
 
     private fun decompressGzip(compressed: ByteArray): String {
@@ -110,10 +144,6 @@ class TruecallerAuthManager(
         while (gis.read(buf).also { len = it } != -1) out.append(String(buf, 0, len))
         return out.toString()
     }
-
-    // Benojir verify: POST https://account-asia-south1.truecaller.com/v1/verifyOnboardingOtp
-    // body must be {countryCode,dialingCode,phoneNumber,requestId,token} from requestOtp's data
-    // status 2 = success (installationId), 11/40101 invalid, 7 retries exceeded, 17 -> completeOnboarding
     suspend fun verifyOtp(phone: String, requestId: String, otp: String): VerifyResult = withContext(Dispatchers.IO) {
         if (otp.length !in 4..10 || otp.any { !it.isDigit() }) {
             return@withContext VerifyResult(false, null, 11, "Invalid OTP")
@@ -139,10 +169,11 @@ class TruecallerAuthManager(
                 .addHeader("user-agent","Truecaller/11.75.5 (Android;10)")
                 .addHeader("clientsecret", secret)
                 .post(postData.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())).build()
-            val resp = client.newCall(req).execute()
-            val rawBytes = resp.body?.bytes()
-            val txt = if (rawBytes != null && rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else rawBytes?.let { String(it) }
-            try { resp.close() } catch (_: Exception) { }
+            val (txt, code, isSuccessful) = client.newCall(req).await().use { resp ->
+                val rawBytes = resp.body?.bytes()
+                val t = if (rawBytes != null && rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else rawBytes?.let { String(it) }
+                Triple(t, resp.code, resp.isSuccessful)
+            }
             if (txt!=null) {
                 val j = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ null }
                 if (j!=null && j.has("status")) {
@@ -163,11 +194,11 @@ class TruecallerAuthManager(
                     return@withContext VerifyResult(false, null, status, j.get("message")?.asString ?: txt)
                 }
                 // Non-JSON success (rare) still try installationId
-                if (resp.isSuccessful && txt.contains("installationId")) {
+                if (isSuccessful && txt.contains("installationId")) {
                     val j2 = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ null }
                     val iid = j2?.get("installationId")?.asString; if (iid != null) { TruecallerCloudStore.saveInstallationId(context, iid); return@withContext VerifyResult(true, iid, 2, "Verified") }
                 }
-                return@withContext VerifyResult(false, null, resp.code, txt.take(500))
+                return@withContext VerifyResult(false, null, code, txt.take(500))
             }
         } catch(e:Exception){ Log.e("TruecallerAuth","verify error: ${e.message}", e) }
         VerifyResult(false, null, -1, "Network error")
@@ -178,10 +209,6 @@ class TruecallerAuthManager(
         val cc = PhoneNumberUtils.getCountryCode(norm) ?: "BD"
         val sig = PhoneNumberUtils.getSignificantNumber(norm) ?: norm.filter{it.isDigit()}
         val dial = PhoneNumberUtils.getDialingCode(norm) ?: 880
-        // Benojir VerifyOTPHelper.completeOnboarding reuses the exact verify JSON
-        // (countryCode/dialingCode/phoneNumber/requestId/token) with no extra
-        // fields — match it exactly so status-17 onboarding can't be rejected
-        // for an unexpected body shape.
         val body = JsonObject().apply {
             addProperty("countryCode",cc); addProperty("dialingCode",dial); addProperty("phoneNumber",sig)
             addProperty("requestId",requestId); addProperty("token",otp.filter{it.isDigit()})
@@ -193,14 +220,16 @@ class TruecallerAuthManager(
                 .addHeader("user-agent","Truecaller/11.75.5 (Android;10)")
                 .addHeader("clientsecret","lvc22mp3l1sfv6ujg83rd17btt")
                 .post(body.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())).build()
-            val resp = client.newCall(req).execute()
-            val rawBytes = resp.body?.bytes() ?: return@withContext VerifyResult(false, null, -1, "Empty response")
-            try { resp.close() } catch (_: Exception) { }
-            val txt = if (rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else String(rawBytes)
+            val (txt, code) = client.newCall(req).await().use { resp ->
+                val rawBytes = resp.body?.bytes()
+                val t = if (rawBytes != null && rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else rawBytes?.let { String(it) }
+                t to resp.code
+            }
+            if (txt == null) return@withContext VerifyResult(false, null, -1, "Empty response")
             val j = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ return@withContext VerifyResult(false, null, -1, txt.take(500)) }
             val installationId = j.get("installationId")?.takeIf{!it.isJsonNull}?.asString ?: j.get("accessToken")?.takeIf{!it.isJsonNull}?.asString
             if (installationId!=null) { TruecallerCloudStore.saveInstallationId(context, installationId); return@withContext VerifyResult(true, installationId, 2, "Onboarded") }
-            return@withContext VerifyResult(false, null, resp.code, j.get("message")?.asString ?: txt.take(500))
+            return@withContext VerifyResult(false, null, code, j.get("message")?.asString ?: txt.take(500))
         } catch(e:Exception){ Log.e("TruecallerAuth","completeOnboarding error: ${e.message}", e); VerifyResult(false, null, -1, e.message) }
     }
 }

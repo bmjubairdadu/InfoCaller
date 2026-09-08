@@ -26,6 +26,33 @@ class ReverseImageSearchProviderImpl(private val httpClient: OkHttpClient) : Loo
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         try {
+            // Auto-photo mode: when an earlier provider already found a profile
+            // photo (Truecaller/Eyecon/Gravatar/GitHub...), build reverse-image
+            // links against THAT real photo — not a guessed seed. This is what
+            // makes deep OSINT "work automatically when any profile pic is found".
+            val autoPhotos = context.foundPhotos.filter { it.startsWith("http") }.distinct().take(3)
+            if (autoPhotos.isNotEmpty()) {
+                val links = autoPhotos.flatMap { photo ->
+                    val enc = URLEncoder.encode(photo, StandardCharsets.UTF_8.toString())
+                    listOf(
+                        "Google Lens: https://lens.google.com/uploadbyurl?url=$enc",
+                        "TinEye: https://tineye.com/search?url=$enc",
+                        "Bing Visual: https://www.bing.com/images/searchbyimage/upload?imgurl=$enc"
+                    )
+                }
+                val about = buildString {
+                    append("Reverse-image the caller's found photo (${autoPhotos.size} photo${if (autoPhotos.size > 1) "s" else ""}) to find more accounts. ")
+                    append(links.joinToString(" • "))
+                }
+                return@withContext PartialResult(
+                    imageUrl = autoPhotos.first(),
+                    photoCandidates = autoPhotos.map { PhotoCandidate(provider = "ReverseImage", url = it, sourcePriority = 55) },
+                    about = about.take(900),
+                    confidence = 0.65f,
+                    source = "Reverse Image Search (Lens/TinEye/Bing — auto photo)",
+                    providerId = id, providerVersion = version
+                )
+            }
             var seedPhoto: String? = null
             var name: String? = null
             when (type) {

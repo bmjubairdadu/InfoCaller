@@ -26,7 +26,11 @@ data class SimInfo(
 object SimManager {
 
     fun buildBrandfetchLogoUrl(officialDomain: String): String {
-        val id = try { com.infocaller.app.BuildConfig.BRANDFETCH_CLIENT_ID } catch(_:Exception) { "1idt4fOOzudt9xCz11q" }
+        // Release builds ship an empty BRANDFETCH_CLIENT_ID (see app/build.gradle.kts),
+        // which makes Brandfetch return 400 and every operator logo blank. Fall back
+        // to the bundled demo key so logos load in both debug and release.
+        val raw = try { com.infocaller.app.BuildConfig.BRANDFETCH_CLIENT_ID } catch(_:Exception) { "" }
+        val id = if (raw.isNullOrBlank()) "1idt4fOOzudt9xCz11q" else raw
         return "https://cdn.brandfetch.io/domain/$officialDomain?c=$id"
     }
 

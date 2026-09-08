@@ -80,8 +80,16 @@ object IntelligenceResultMerger {
     }
 
     private fun mergePhotos(current: LookupResult, next: PartialResult): Triple<String?, String?, List<PhotoCandidate>> {
-        val newCandidates = (current.photoCandidates + next.photoCandidates).distinctBy { it.url }
-        
+        // Auto-photo fix: many providers set only imageUrl (NID/owner-verified/
+        // Truecaller) with no photoCandidates. Synthesize candidates from bare
+        // http imageUrls so the founded photo is never dropped before the
+        // Lens uploadbyurl link is built.
+        val synthetics = listOfNotNull(
+            current.imageUrl?.takeIf { it.startsWith("http") }?.let { PhotoCandidate(provider = current.imageSource ?: "photo", url = it) },
+            next.imageUrl?.takeIf { it.startsWith("http") }?.let { PhotoCandidate(provider = next.source ?: next.providerId ?: "photo", url = it) }
+        )
+        val newCandidates = (current.photoCandidates + next.photoCandidates + synthetics).distinctBy { it.url }
+            .filter { it.url.startsWith("http") }
         if (newCandidates.isEmpty()) {
             return Triple(current.imageUrl, current.imageSource, emptyList())
         }
@@ -105,6 +113,11 @@ object IntelligenceResultMerger {
         
         if (c.provider.lowercase().contains("truecaller") || c.provider.lowercase().contains("eyecon")) {
             score += 50f
+        }
+        // Verified profile scrapers (LinkedIn/X/Reddit/GitHub...) outrank
+        // generic sweep hits: their photos are confirmed account avatars.
+        if (c.provider.lowercase() in setOf("linkedin", "x", "reddit", "github", "gitlab", "instagram", "telegram")) {
+            score += 30f
         }
         
         return score

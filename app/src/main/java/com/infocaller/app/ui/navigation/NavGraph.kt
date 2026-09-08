@@ -147,11 +147,15 @@ fun NavGraph(
                     onBack = { navController.popBackStack() },
                     viewModel = viewModel,
                     onNavigateToPrivacy = { navController.navigate("privacy") },
+                    onNavigateToNidPortal = { navController.navigate("nid_portal") },
                     onNavigateToDetails = { number ->
                         viewModel.searchNumber(number)
                         navController.navigate("details/" + android.net.Uri.encode(number))
                     }
                 )
+            }
+            composable("nid_portal") {
+                NidPortalScreen(onBack = { navController.popBackStack() })
             }
             composable("privacy") {
                 PrivacyPolicyScreen(onBack = { navController.popBackStack() })
@@ -163,7 +167,10 @@ fun NavGraph(
             com.infocaller.app.ui.dialogs.SimSelectionBottomSheet(
                 phoneNumber = simSelectionPhone!!,
                 onSimSelected = { sim ->
-                    com.infocaller.app.util.SimManager.placeCall(context, simSelectionPhone!!, sim.phoneAccountHandle)
+                    // USSD sessions need the chosen SIM's account handle too —
+                    // plain placeCall would drop it into a voice call.
+                    if (com.infocaller.app.util.UssdStore.isUssd(simSelectionPhone!!)) com.infocaller.app.util.UssdStore.run(context, simSelectionPhone!!, sim.phoneAccountHandle)
+                    else com.infocaller.app.util.SimManager.placeCall(context, simSelectionPhone!!, sim.phoneAccountHandle)
                     viewModel.dismissSimSelection()
                 },
                 onDismiss = { viewModel.dismissSimSelection() }

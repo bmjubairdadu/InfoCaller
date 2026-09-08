@@ -71,6 +71,14 @@ object DetailsPngExporter {
             val photo = loadPhoto(
                 context,
                 contactPhotoUri,
+                // Auto-photo fix: same founded-photo resolution as Details so the
+                // export never misses a candidates/avatar-only picture.
+                SocialUtils.bestHttpPhoto(
+                    enrichment?.profileImageUrl,
+                    enrichment?.photoCandidatesJson,
+                    enrichment?.socialProfilesJson,
+                    caller?.photoUrl
+                ),
                 enrichment?.profileImageUrl,
                 caller?.photoUrl,
             )

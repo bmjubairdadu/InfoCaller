@@ -27,7 +27,7 @@ object OSINTManager {
         )
     }
 
-    fun generateExtendedDorkLinks(phoneNumber: String): List<DorkLink> {
+    fun generateExtendedDorkLinks(phoneNumber: String, foundPhoto: String? = null): List<DorkLink> {
         val e164 = PhoneNumberUtils.normalize(phoneNumber)
         val clean = e164.replace("+", "")
         
@@ -229,25 +229,77 @@ object OSINTManager {
             )
         ))
 
+        // Auto-photo fix: when the scan already found a real photo, embed THAT photo
+        // into Lens/TinEye/Bing so one tap scans the founded photo (no manual upload).
+        val autoPhoto = foundPhoto?.trim()?.takeIf { it.startsWith("http") }
+        if (autoPhoto != null) {
+            val encPhoto = urlEncode(autoPhoto)
+            val autoLinks = listOf(
+                DorkLink(
+                    "Google Lens (photo)",
+                    "Reverse-image the found photo automatically",
+                    "https://lens.google.com/uploadbyurl?url=$encPhoto",
+                    Icons.Default.ImageSearch
+                ),
+                DorkLink(
+                    "TinEye (photo)",
+                    "Reverse-image the found photo automatically",
+                    "https://tineye.com/search?url=$encPhoto",
+                    Icons.Default.ImageSearch
+                ),
+                DorkLink(
+                    "Bing Visual (photo)",
+                    "Reverse-image the found photo automatically",
+                    "https://www.bing.com/images/searchbyimage/upload?imgurl=$encPhoto",
+                    Icons.Default.ImageSearch
+                )
+            )
+            val lensIdx = links.indexOfFirst { it.title.startsWith("Google Lens") }
+            if (lensIdx >= 0) {
+                links.removeAt(lensIdx)
+                links.addAll(lensIdx, autoLinks)
+            } else {
+                links.addAll(autoLinks)
+            }
+        }
+
         return links
     }
 
-    fun generateEmailDorkLinks(email: String): List<DorkLink> {
+    fun generateEmailDorkLinks(email: String, foundPhoto: String? = null): List<DorkLink> {
         val e = email.trim()
-        return listOf(
+        val autoPhoto = foundPhoto?.trim()?.takeIf { it.startsWith("http") }
+        val lensUrl = if (autoPhoto != null) "https://lens.google.com/uploadbyurl?url=${urlEncode(autoPhoto)}" else "https://lens.google.com/v3/upload"
+        val lensDesc = if (autoPhoto != null) "Reverse-image the found photo automatically" else "Reverse-image the Gravatar photo"
+        val links = mutableListOf(
             DorkLink("Perplexity AI (email)", "AI-mode lookup with sources", "https://www.perplexity.ai/search?q=${urlEncode("\"$e\"")}", Icons.Default.AutoAwesome),
-            DorkLink("Google Lens (photo)", "Reverse-image the Gravatar photo", "https://lens.google.com/v3/upload", Icons.Default.ImageSearch),
+            DorkLink("Google Lens (photo)", lensDesc, lensUrl, Icons.Default.ImageSearch),
             DorkLink("HudsonRock Lookup", "Free breach/paste domain intel", "https://www.xposedornot.com/?${urlEncode(e)}", Icons.Default.Security),
         )
+        if (autoPhoto != null) {
+            val encPhoto = urlEncode(autoPhoto)
+            links.add(DorkLink("TinEye (photo)", "Reverse-image the found photo automatically", "https://tineye.com/search?url=$encPhoto", Icons.Default.ImageSearch))
+            links.add(DorkLink("Bing Visual (photo)", "Reverse-image the found photo automatically", "https://www.bing.com/images/searchbyimage/upload?imgurl=$encPhoto", Icons.Default.ImageSearch))
+        }
+        return links
     }
 
-    fun generateUsernameDorkLinks(username: String): List<DorkLink> {
+    fun generateUsernameDorkLinks(username: String, foundPhoto: String? = null): List<DorkLink> {
         val u = username.trim()
-        return listOf(
+        val autoPhoto = foundPhoto?.trim()?.takeIf { it.startsWith("http") }
+        val lensUrl = if (autoPhoto != null) "https://lens.google.com/uploadbyurl?url=${urlEncode(autoPhoto)}" else "https://lens.google.com/v3/upload"
+        val lensDesc = if (autoPhoto != null) "Reverse-image the found photo automatically" else "Reverse-image the avatar"
+        val links = mutableListOf(
             DorkLink("Perplexity AI (handle)", "AI-mode social lookup", "https://www.perplexity.ai/search?q=${urlEncode("\"$u\"")}", Icons.Default.AutoAwesome),
-            DorkLink("Google Lens (avatar)", "Reverse-image the avatar", "https://lens.google.com/v3/upload", Icons.Default.ImageSearch),
+            DorkLink("Google Lens (avatar)", lensDesc, lensUrl, Icons.Default.ImageSearch),
             DorkLink("Maigret-style sweep", "Open the handle on 120 sites via Sherlock scan", "https://github.com/$u", Icons.Default.Group),
         )
+        if (autoPhoto != null) {
+            val encPhoto = urlEncode(autoPhoto)
+            links.add(DorkLink("TinEye (photo)", "Reverse-image the found photo automatically", "https://tineye.com/search?url=$encPhoto", Icons.Default.ImageSearch))
+            links.add(DorkLink("Bing Visual (photo)", "Reverse-image the found photo automatically", "https://www.bing.com/images/searchbyimage/upload?imgurl=$encPhoto", Icons.Default.ImageSearch))
+        }
+        return links
     }
 
     private fun urlEncode(value: String): String {

@@ -2,6 +2,7 @@ package com.infocaller.app.data.remote
 
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.util.PhoneNumberUtils
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -47,14 +48,14 @@ class CommunitySpamCsvProviderImpl(
         val name: String?
     )
 
-    private fun loadFeed(): Map<String, CsvRow>? {
+    private suspend fun loadFeed(): Map<String, CsvRow>? {
         val now = System.currentTimeMillis()
         cached?.let { if (now - cacheAt < ttlMs) return it }
         return try {
             val req = Request.Builder().url(feedUrl)
                 .header("User-Agent", "InfoCaller/1.0 (Android)")
                 .build()
-            client.newCall(req).execute().use { resp ->
+            client.newCall(req).await().use { resp ->
                 if (!resp.isSuccessful) return cached
                 val body = resp.body?.string() ?: return cached
                 val map = HashMap<String, CsvRow>(1024)

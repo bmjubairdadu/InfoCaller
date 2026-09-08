@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Plain dark backdrop only: the Compose launcher owns the animated
+         logo + app name, so the window must NOT show a second static logo. -->
+    <item android:drawable="@android:color/black" />
+</layer-list>

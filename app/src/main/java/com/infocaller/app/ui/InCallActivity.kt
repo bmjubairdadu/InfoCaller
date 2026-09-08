@@ -138,11 +138,8 @@ fun InCallScreen(onDismiss: () -> Unit) {
         }
     }
 
-    DisposableEffect(callState, isSpeakerOn) {
-        // Proximity screen-off: held ONLY during an active earpiece call —
-        // sensor blanks the screen at the ear and wakes it when pulled away.
-        // Released while ringing (user needs answer buttons), on speaker
-        // (phone is away from the face), or when the call ends.
+    DisposableEffect(callState, isSpeakerOn) 
+    {
         val hold = com.infocaller.app.util.ProximityPolicy.shouldHold(callState, isSpeakerOn)
         try {
             (activity as? InCallActivity)?.setProximityHeld(hold)
@@ -379,12 +376,21 @@ fun SocialActionCircle(profile: com.infocaller.app.domain.model.SocialProfile) {
             border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
         ) {
             Box(contentAlignment = Alignment.Center) {
-                AsyncImage(
-                    model = SocialUtils.getLogoUrl(profile.platform),
-                    contentDescription = profile.platform,
-                    modifier = Modifier.size(32.dp).clip(CircleShape),
-                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
-                )
+                var logoFailed by remember(profile.platform) { mutableStateOf(false) }
+                if (!logoFailed) {
+                    AsyncImage(
+                        model = SocialUtils.getLogoUrl(profile.platform),
+                        contentDescription = profile.platform,
+                        modifier = Modifier.size(32.dp).clip(CircleShape),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                        error = rememberVectorPainter(Icons.Default.Share),
+                        placeholder = rememberVectorPainter(Icons.Default.Share),
+                        onError = { logoFailed = true }
+                    )
+                }
+                if (logoFailed) {
+                    Text(profile.platform.firstOrNull()?.uppercase() ?: "?", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
             }
         }
         Text(
@@ -579,14 +585,21 @@ fun SocialBrandIcon(
                     modifier = Modifier.matchParentSize().clip(CircleShape)
                         .background(Brush.radialGradient(listOf(brand.copy(alpha = 0.35f), Color.Transparent)))
                 )
-                AsyncImage(
-                    model = SocialUtils.getLogoUrl(profile.platform),
-                    contentDescription = profile.platform,
-                    modifier = Modifier.size(iconSize).clip(CircleShape),
-                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-                    error = rememberVectorPainter(Icons.Default.Share),
-                    placeholder = rememberVectorPainter(Icons.Default.Share)
-                )
+                var logoFailed by remember(profile.platform) { mutableStateOf(false) }
+                if (!logoFailed) {
+                    AsyncImage(
+                        model = SocialUtils.getLogoUrl(profile.platform),
+                        contentDescription = profile.platform,
+                        modifier = Modifier.size(iconSize).clip(CircleShape),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                        error = rememberVectorPainter(Icons.Default.Share),
+                        placeholder = rememberVectorPainter(Icons.Default.Share),
+                        onError = { logoFailed = true }
+                    )
+                }
+                if (logoFailed) {
+                    Text(profile.platform.firstOrNull()?.uppercase() ?: "?", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
             }
         }
         if (showLabel) {

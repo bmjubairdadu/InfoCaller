@@ -146,7 +146,7 @@ fun ContactsScreen(
             containerColor = Color.Transparent,
             topBar = {
                 Surface(
-                    color = Color.Black.copy(alpha = 0.3f),
+                    color = topBarScrim(),
                     modifier = Modifier.glassy(blur = 20.dp, radius = 0.dp)
                 ) {
                     Column {
@@ -156,7 +156,7 @@ fun ContactsScreen(
                                     "Contacts",
                                     style = MaterialTheme.typography.headlineMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                                    color = contentPrimary
                                 )
                             },
                             actions = {
@@ -180,26 +180,26 @@ fun ContactsScreen(
                         OutlinedTextField(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },
-                            placeholder = { Text("Search by name or number", color = Color.White.copy(alpha = 0.4f)) },
+                            placeholder = { Text("Search by name or number", color = contentSecondary(0.4f)) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
                             shape = RoundedCornerShape(16.dp),
-                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.White.copy(alpha = 0.6f)) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = contentSecondary(0.6f)) },
                             trailingIcon = if (searchQuery.isNotEmpty()) {
                                 {
                                     IconButton(onClick = { searchQuery = "" }) {
-                                        Icon(Icons.Default.Close, contentDescription = "Clear", tint = Color.White)
+                                        Icon(Icons.Default.Close, contentDescription = "Clear", tint = contentPrimary)
                                     }
                                 }
                             } else null,
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
+                                focusedTextColor = contentPrimary,
+                                unfocusedTextColor = contentPrimary,
                                 focusedBorderColor = Primary.copy(alpha = 0.6f),
-                                unfocusedBorderColor = Color.White.copy(alpha = 0.1f),
-                                focusedContainerColor = Color.White.copy(alpha = 0.05f),
-                                unfocusedContainerColor = Color.White.copy(alpha = 0.05f)
+                                unfocusedBorderColor = faintTint(0.1f),
+                                focusedContainerColor = faintTint(0.05f),
+                                unfocusedContainerColor = faintTint(0.05f)
                             ),
                             singleLine = true
                         )
@@ -225,7 +225,7 @@ fun ContactsScreen(
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Dialpad, contentDescription = "Dial Pad", tint = Color.Black)
+                    Icon(Icons.Default.Dialpad, contentDescription = "Dial Pad", tint = Color.White)
                 }
             }
         }
@@ -265,14 +265,14 @@ fun ContactsScreen(
                                 Text(
                                     if (searchQuery.isEmpty()) "No contacts yet" else "No matches for \"$searchQuery\"",
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = Color.White
+                                    color = contentPrimary
                                 )
                                 Spacer(Modifier.height(8.dp))
                                 Text(
                                     if (searchQuery.isEmpty()) "Contacts you add will appear here."
                                     else "Try a different name or number.",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = 0.6f)
+                                    color = contentSecondary(0.6f)
                                 )
                             }
                         }
@@ -302,9 +302,9 @@ fun ContactsScreen(
                                 )
                                 
                                 DropdownMenu(
-                                    expanded = showMenu, 
+                                    expanded = showMenu,
                                     onDismissRequest = { showMenu = false },
-                                    modifier = Modifier.background(Surface).border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                                    modifier = Modifier.background(MaterialTheme.colorScheme.surface).border(1.dp, faintTint(0.1f), RoundedCornerShape(8.dp))
                                 ) {
                                     DropdownMenuItem(
                                         text = { Text("View Details") },
@@ -351,7 +351,7 @@ fun ContactsScreen(
                                         },
                                         leadingIcon = { Icon(Icons.Default.Share, null) }
                                     )
-                                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = Color.White.copy(alpha = 0.1f))
+                                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = faintTint(0.1f))
                                     DropdownMenuItem(
                                         text = { Text("Delete Contact", color = Error) },
                                         onClick = { 
@@ -436,7 +436,7 @@ fun ContactItem(enriched: com.infocaller.app.data.local.model.EnrichedContact, m
                 modifier = Modifier
                     .size(52.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.1f)),
+                    .background(faintTint(0.1f)),
                 contentAlignment = Alignment.Center
             ) {
                 if (photoUrl != null) {
@@ -466,13 +466,13 @@ fun ContactItem(enriched: com.infocaller.app.data.local.model.EnrichedContact, m
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = displayName,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold, color = Color.White)
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold, color = contentPrimary)
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = contact.phoneNumber,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.5f)
+                    color = contentSecondary(0.5f)
                 )
                 // Automatic NID match: any contact number present in
                 // database.json shows its NID here with no manual step.

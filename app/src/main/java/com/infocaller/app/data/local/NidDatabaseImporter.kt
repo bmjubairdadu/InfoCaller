@@ -7,6 +7,9 @@ import com.infocaller.app.data.local.database.AppDatabase
 import com.infocaller.app.data.local.entity.NidEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.BufferedInputStream
+import java.io.IOException
+import java.io.Reader
 
 
 object NidDatabaseImporter {
@@ -26,6 +29,7 @@ object NidDatabaseImporter {
             val reader = openLocalDatabaseReader(context) ?: run { Log.w("NidImport", "No local database.json found in assets"); return@withContext }
             val gson = Gson()
             val jsonReader = com.google.gson.stream.JsonReader(reader)
+            jsonReader.isLenient = true
             jsonReader.beginArray()
             val dao = db.nidDao()
             var imported = 0
@@ -47,13 +51,27 @@ object NidDatabaseImporter {
     fun isImported(context: Context): Boolean = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_IMPORTED, false)
     fun getCount(context: Context): Int = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_COUNT, 0)
 
-    private fun openLocalDatabaseReader(context: Context): java.io.Reader? {
-        val assetList = context.assets.list("")
-        if (assetList?.contains("database.json") == true) {
-            Log.i("NidImport", "Loading database.json from local assets")
-            return context.assets.open("database.json").bufferedReader()
+    private fun openLocalDatabaseReader(context: Context): Reader? {
+        return try {
+            val inputStream = context.assets.open("database.json")
+            val bufferedStream = BufferedInputStream(inputStream)
+            
+            // Robustly skip UTF-8 BOM if present (EF BB BF)
+            bufferedStream.mark(3)
+            val bom = ByteArray(3)
+            if (bufferedStream.read(bom) == 3 &&
+                bom[0] == 0xEF.toByte() &&
+                bom[1] == 0xBB.toByte() &&
+                bom[2] == 0xBF.toByte()) {
+                Log.d("NidImport", "UTF-8 BOM detected and skipped")
+            } else {
+                bufferedStream.reset()
+            }
+            
+            bufferedStream.bufferedReader()
+        } catch (e: IOException) {
+            Log.w("NidImport", "database.json not found in assets or could not be opened", e)
+            null
         }
-        Log.w("NidImport", "database.json not found in assets")
-        return null
     }
 }

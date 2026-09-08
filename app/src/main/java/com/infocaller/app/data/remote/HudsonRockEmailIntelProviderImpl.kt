@@ -4,6 +4,7 @@ import com.google.gson.JsonParser
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.domain.model.SocialLookupStatus
 import com.infocaller.app.domain.model.SocialProfile
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -39,7 +40,7 @@ class HudsonRockEmailIntelProviderImpl(private val httpClient: OkHttpClient) : L
                 .header("User-Agent", "InfoCaller-OSINT/2.0")
                 .header("Accept", "application/json").build()
             var domainBreaches = 0
-            httpClient.newCall(req).execute().use { r ->
+            httpClient.newCall(req).await().use { r ->
                 if (r.isSuccessful) {
                     val root = try { JsonParser.parseString(r.body?.string()).asJsonObject } catch (_: Exception) { null }
                     domainBreaches = try {

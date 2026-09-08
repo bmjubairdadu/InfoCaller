@@ -143,7 +143,11 @@ class DeviceDataRepositoryImpl(
                 ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
                 ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
                 ContactsContract.CommonDataKinds.Phone.NUMBER,
-                ContactsContract.CommonDataKinds.Phone.PHOTO_URI
+                ContactsContract.CommonDataKinds.Phone.PHOTO_URI,
+                ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI,
+                ContactsContract.CommonDataKinds.Phone.STARRED,
+                ContactsContract.CommonDataKinds.Phone.TIMES_CONTACTED,
+                ContactsContract.CommonDataKinds.Phone.LAST_TIME_CONTACTED
             )
 
             val cursor = contentResolver.query(
@@ -159,19 +163,39 @@ class DeviceDataRepositoryImpl(
                 val nameIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
                 val numberIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
                 val photoIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_URI)
+                val thumbIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI)
+                val starredIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.STARRED)
+                val timesIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.TIMES_CONTACTED)
+                val lastIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.LAST_TIME_CONTACTED)
 
                 val seenNumbers = mutableSetOf<String>()
 
                 while (it.moveToNext()) {
                     val number = it.getString(numberIdx)
                     if (number != null && number !in seenNumbers) {
+                        val contactId = it.getString(idIdx) ?: ""
                         contacts.add(
                             Contact(
-                                id = it.getString(idIdx) ?: "",
+                                id = contactId,
                                 displayName = it.getString(nameIdx)?.ifBlank { null }
                                     ?: "Unknown",
                                 phoneNumber = number,
-                                photoUri = it.getString(photoIdx)
+                                photoUri = it.getString(photoIdx),
+                                photoThumbnailUri = thumbIdx.takeIf { i -> i >= 0 }?.let { i -> it.getString(i) },
+                                isFavorite = starredIdx.takeIf { i -> i >= 0 }?.let { i -> it.getInt(i) == 1 } ?: false,
+                                timesContacted = timesIdx.takeIf { i -> i >= 0 }?.let { i -> it.getInt(i) } ?: 0,
+                                lastContacted = lastIdx.takeIf { i -> i >= 0 }?.let { i -> it.getLong(i) } ?: 0L,
+                                alternateNumbers = alternateNumbersFor(contactId, number),
+                                email = firstEmailFor(contactId),
+                                emails = emailsFor(contactId),
+                                organization = organizationFor(contactId)?.first,
+                                jobTitle = organizationFor(contactId)?.second,
+                                address = addressFor(contactId),
+                                website = websiteFor(contactId),
+                                birthday = birthdayFor(contactId),
+                                nickname = nicknameFor(contactId),
+                                bio = noteFor(contactId),
+                                notes = noteFor(contactId)
                             )
                         )
                         seenNumbers.add(number)
@@ -181,6 +205,142 @@ class DeviceDataRepositoryImpl(
         } catch (e: Exception) {
         }
         return contacts
+    }
+
+    private fun emailsFor(contactId: String): List<String> {
+        return try {
+            contentResolver.query(
+                ContactsContract.CommonDataKinds.Email.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Email.ADDRESS),
+                "${ContactsContract.CommonDataKinds.Email.CONTACT_ID} = ?",
+                arrayOf(contactId),
+                null
+            )?.use { c ->
+                val idx = c.getColumnIndex(ContactsContract.CommonDataKinds.Email.ADDRESS)
+                val out = mutableListOf<String>()
+                while (c.moveToNext()) {
+                    c.getString(idx)?.trim()?.takeIf { s -> s.isNotBlank() }?.let { out.add(it) }
+                }
+                out.distinct()
+            } ?: emptyList()
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun firstEmailFor(contactId: String): String? = emailsFor(contactId).firstOrNull()
+
+    private fun alternateNumbersFor(contactId: String, primary: String?): List<String> {
+        return try {
+            contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                arrayOf(contactId),
+                null
+            )?.use { c ->
+                val idx = c.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                val out = mutableListOf<String>()
+                while (c.moveToNext()) {
+                    val n = c.getString(idx)?.trim()
+                    if (!n.isNullOrBlank() && n != primary) out.add(n)
+                }
+                out.distinct()
+            } ?: emptyList()
+        } catch (_: Exception) { emptyList() }
+    }
+
+    private fun organizationFor(contactId: String): Pair<String?, String?>? {
+        return try {
+            contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(
+                    ContactsContract.CommonDataKinds.Organization.COMPANY,
+                    ContactsContract.CommonDataKinds.Organization.TITLE
+                ),
+                "${ContactsContract.Data.CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ?",
+                arrayOf(contactId, ContactsContract.CommonDataKinds.Organization.CONTENT_ITEM_TYPE),
+                null
+            )?.use { c ->
+                if (c.moveToFirst()) {
+                    val org = c.getString(0)?.trim()?.takeIf { it.isNotBlank() }
+                    val title = c.getString(1)?.trim()?.takeIf { it.isNotBlank() }
+                    if (org == null && title == null) null else org to title
+                } else null
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun addressFor(contactId: String): String? {
+        return try {
+            contentResolver.query(
+                ContactsContract.CommonDataKinds.StructuredPostal.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.StructuredPostal.FORMATTED_ADDRESS),
+                "${ContactsContract.CommonDataKinds.StructuredPostal.CONTACT_ID} = ?",
+                arrayOf(contactId),
+                null
+            )?.use { c ->
+                if (c.moveToFirst()) c.getString(0)?.trim()?.takeIf { it.isNotBlank() } else null
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun websiteFor(contactId: String): String? {
+        return try {
+            contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Website.URL),
+                "${ContactsContract.CommonDataKinds.Website.CONTACT_ID} = ? AND ${ContactsContract.CommonDataKinds.Website.MIMETYPE} = ?",
+                arrayOf(contactId, ContactsContract.CommonDataKinds.Website.CONTENT_ITEM_TYPE),
+                null
+            )?.use { c ->
+                if (c.moveToFirst()) c.getString(0)?.trim()?.takeIf { it.isNotBlank() } else null
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun birthdayFor(contactId: String): String? {
+        return try {
+            contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Event.START_DATE),
+                "${ContactsContract.Data.CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ? AND ${ContactsContract.CommonDataKinds.Event.TYPE} = ?",
+                arrayOf(
+                    contactId,
+                    ContactsContract.CommonDataKinds.Event.CONTENT_ITEM_TYPE,
+                    ContactsContract.CommonDataKinds.Event.TYPE_BIRTHDAY.toString()
+                ),
+                null
+            )?.use { c ->
+                if (c.moveToFirst()) c.getString(0)?.trim()?.takeIf { it.isNotBlank() } else null
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun nicknameFor(contactId: String): String? {
+        return try {
+            contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Nickname.NAME),
+                "${ContactsContract.Data.CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ?",
+                arrayOf(contactId, ContactsContract.CommonDataKinds.Nickname.CONTENT_ITEM_TYPE),
+                null
+            )?.use { c ->
+                if (c.moveToFirst()) c.getString(0)?.trim()?.takeIf { it.isNotBlank() } else null
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun noteFor(contactId: String): String? {
+        return try {
+            contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Note.NOTE),
+                "${ContactsContract.Data.CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ?",
+                arrayOf(contactId, ContactsContract.CommonDataKinds.Note.CONTENT_ITEM_TYPE),
+                null
+            )?.use { c ->
+                if (c.moveToFirst()) c.getString(0)?.trim()?.takeIf { it.isNotBlank() } else null
+            }
+        } catch (_: Exception) { null }
     }
 
     override suspend fun deleteCallLogEntry(number: String, date: Long) {

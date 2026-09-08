@@ -6,7 +6,6 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.rememberNavController
@@ -22,11 +21,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
         super.onCreate(savedInstanceState)
-        
-        // WorkManager may not be initialized on some devices/ROMs — a throw here
-        // would crash onCreate ("keeps stopping" on launch), so never let it escape.
         try {
             val workRequest = androidx.work.PeriodicWorkRequestBuilder<com.infocaller.app.worker.EnrichmentWorker>(
                 1, java.util.concurrent.TimeUnit.HOURS
@@ -45,10 +40,6 @@ class MainActivity : ComponentActivity() {
                 workRequest
             )
         } catch (_: Exception) { }
-
-        // Provider registry was a dead path (no live endpoint) — removed.
-        // Community DB auto-download: periodic (KEEP = idempotent) + one immediate
-        // sync only on cold start — NOT on every rotation/recreation.
         try {
             com.infocaller.app.worker.CommunitySyncWorker.schedulePeriodic(this)
             if (savedInstanceState == null) {
@@ -75,15 +66,17 @@ class MainActivity : ComponentActivity() {
             
             LaunchedEffect(Unit) {
                 val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-                val stored = if (prefs.contains("dark_theme")) prefs.getBoolean("dark_theme", true) else true
+                val stored = if (prefs.contains("dark_theme")) prefs.getBoolean("dark_theme", true) else null
                 viewModel.setThemeMode(stored, context)
             }
 
             val themeMode by viewModel.themeMode.collectAsState()
+            // null = follow system; Light must apply everywhere (all screens
+            // below read MaterialTheme, never hard-coded black/white).
             val darkTheme = when (themeMode) {
                 true -> true
                 false -> false
-                null -> true
+                null -> androidx.compose.foundation.isSystemInDarkTheme()
             }
 
             InfoCallerTheme(darkTheme = darkTheme) {
@@ -132,18 +125,6 @@ class MainActivity : ComponentActivity() {
 
 
     private fun makeCall(viewModel: CallerViewModel, phoneNumber: String) {
-        // USSD codes (*#...) go straight to the telephony stack — SIM picker
-        // and lookup both break them (a *# code is a session, not a call).
-        if (com.infocaller.app.util.UssdStore.isUssd(phoneNumber)) {
-            val needCall = com.infocaller.app.permissions.PermissionManager.DIALER_PERMISSIONS
-            if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(this, needCall)) {
-                androidx.core.app.ActivityCompat.requestPermissions(this, needCall, 1001)
-                getSharedPreferences("pending_call", MODE_PRIVATE).edit().putString("number", phoneNumber).apply()
-                return
-            }
-            com.infocaller.app.util.UssdStore.run(this, phoneNumber)
-            return
-        }
         val needCall = com.infocaller.app.permissions.PermissionManager.DIALER_PERMISSIONS
         if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(this, needCall)) {
             androidx.core.app.ActivityCompat.requestPermissions(this, needCall, 1001)
@@ -153,8 +134,14 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val simInfos = try { SimManager.getSimInfos(this@MainActivity) } catch (_: Exception) { emptyList() }
             if (simInfos.size > 1) viewModel.showSimSelection(phoneNumber)
-            else if (simInfos.size == 1) SimManager.placeCall(this@MainActivity, phoneNumber, simInfos[0].phoneAccountHandle)
-            else SimManager.placeCall(this@MainActivity, phoneNumber)
+            else if (simInfos.size == 1) {
+                if (com.infocaller.app.util.UssdStore.isUssd(phoneNumber)) com.infocaller.app.util.UssdStore.run(this@MainActivity, phoneNumber, simInfos[0].phoneAccountHandle)
+                else SimManager.placeCall(this@MainActivity, phoneNumber, simInfos[0].phoneAccountHandle)
+            }
+            else {
+                if (com.infocaller.app.util.UssdStore.isUssd(phoneNumber)) com.infocaller.app.util.UssdStore.run(this@MainActivity, phoneNumber)
+                else SimManager.placeCall(this@MainActivity, phoneNumber)
+            }
         }
     }
 

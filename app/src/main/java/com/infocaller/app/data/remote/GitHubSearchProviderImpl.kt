@@ -4,6 +4,7 @@ import com.infocaller.app.domain.engine.*
 import com.infocaller.app.domain.model.SocialProfile
 import com.infocaller.app.domain.model.SocialLookupStatus
 import com.google.gson.JsonParser
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -30,9 +31,8 @@ class GitHubSearchProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                         .header("User-Agent","InfoCaller-OSINT")
                         .header("Accept","application/vnd.github+json")
                         .build()
-                    val resp = httpClient.newCall(req).execute()
                     // Responses must be closed (use{}) or connections leak.
-                    val items = resp.use { r ->
+                    val items = httpClient.newCall(req).await().use { r ->
                         if (!r.isSuccessful) return@withContext null
                         val json = try {
                             JsonParser.parseString(r.body?.string()).asJsonObject
@@ -54,7 +54,7 @@ class GitHubSearchProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                         val first = items[0].asJsonObject
                         val userUrl = first.get("url")?.asString
                         if (userUrl != null) {
-                            httpClient.newCall(Request.Builder().url(userUrl).header("User-Agent","InfoCaller").build()).execute().use { r2 ->
+                            httpClient.newCall(Request.Builder().url(userUrl).header("User-Agent","InfoCaller").build()).await().use { r2 ->
                                 if (r2.isSuccessful) {
                                     val u = try {
                                         JsonParser.parseString(r2.body?.string()).asJsonObject

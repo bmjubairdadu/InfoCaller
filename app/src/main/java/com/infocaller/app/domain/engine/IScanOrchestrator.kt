@@ -8,4 +8,5 @@ interface IScanOrchestrator {
     fun startScan(identifier: String, priority: ScanPriority = ScanPriority.FOREGROUND, type: String = IdentifierType.PHONE): Flow<ScanState>
     fun getScanState(identifier: String): ScanState
     fun cancelScan(identifier: String)
+    fun cancelAllScans()
 }

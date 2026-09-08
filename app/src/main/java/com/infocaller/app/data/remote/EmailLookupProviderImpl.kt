@@ -4,6 +4,7 @@ import com.infocaller.app.domain.engine.*
 import com.infocaller.app.domain.model.SocialProfile
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -39,12 +40,12 @@ class EmailLookupProviderImpl(
         gravatarResult
     }
 
-    private fun fetchGravatar(email: String): PartialResult? {
+    private suspend fun fetchGravatar(email: String): PartialResult? {
         try {
             val hash = md5(email.trim().lowercase())
             val url = "https://www.gravatar.com/$hash.json"
             val request = Request.Builder().url(url).build()
-            httpClient.newCall(request).execute().use { response ->
+            httpClient.newCall(request).await().use { response ->
                 if (!response.isSuccessful) return null
                 val json = try {
                     gson.fromJson(response.body?.string(), JsonObject::class.java)

@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.infocaller.app.util.await
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -70,32 +71,32 @@ class OperatorLogoManager(private val context: Context, private val database: Ap
                     .addHeader("Accept", "image/png,image/jpeg,image/*")
                     .build()
                 
-                val response = httpClient.newCall(request).execute()
-                
-                if (response.isSuccessful) {
-                    val contentType = response.header("Content-Type")
-                    if (contentType?.startsWith("image/") == true) {
-                        val bytes = response.body?.bytes() ?: throw Exception("Empty body")
-                        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                        
-                        if (options.outWidth > 0 && options.outHeight > 0) {
-                            val file = saveLogoLocally(key, bytes)
-                            if (file != null) {
-                                dao.insertLogo(OperatorLogoEntity(
-                                    operatorKey = key,
-                                    operatorName = sim.carrierName,
-                                    country = sim.countryIso,
-                                    mcc = sim.mcc,
-                                    mnc = sim.mnc,
-                                    officialDomain = domain,
-                                    localFilePath = file.absolutePath,
-                                    source = sourceName,
-                                    verified = true,
-                                    updatedAt = System.currentTimeMillis()
-                                ))
-                                Log.i("OperatorLogoManager", "Success: Saved $sourceName logo for $key ($domain)")
-                                return 
+                httpClient.newCall(request).await().use { response ->
+                    if (response.isSuccessful) {
+                        val contentType = response.header("Content-Type")
+                        if (contentType?.startsWith("image/") == true) {
+                            val bytes = response.body?.bytes() ?: throw Exception("Empty body")
+                            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                            
+                            if (options.outWidth > 0 && options.outHeight > 0) {
+                                val file = saveLogoLocally(key, bytes)
+                                if (file != null) {
+                                    dao.insertLogo(OperatorLogoEntity(
+                                        operatorKey = key,
+                                        operatorName = sim.carrierName,
+                                        country = sim.countryIso,
+                                        mcc = sim.mcc,
+                                        mnc = sim.mnc,
+                                        officialDomain = domain,
+                                        localFilePath = file.absolutePath,
+                                        source = sourceName,
+                                        verified = true,
+                                        updatedAt = System.currentTimeMillis()
+                                    ))
+                                    Log.i("OperatorLogoManager", "Success: Saved $sourceName logo for $key ($domain)")
+                                    return 
+                                }
                             }
                         }
                     }

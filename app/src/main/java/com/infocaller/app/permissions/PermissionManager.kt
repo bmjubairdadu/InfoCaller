@@ -23,13 +23,13 @@ object PermissionManager {
         Manifest.permission.ANSWER_PHONE_CALLS,
         Manifest.permission.MANAGE_OWN_CALLS
     )
-
-    val CORE_PERMISSIONS get() = CALLER_ID_PERMISSIONS
-
-    /** Dangerous runtime permissions every default-dialer user needs.
-     *  Covers placing/answering calls, reading the ringing number, managing
-     *  the call UI, plus the call log + contacts the dialer shows natively.
-     *  MANAGE_OWN_CALLS is install-time; the rest are runtime prompts. */
+    val CORE_PERMISSIONS get() = arrayOf(
+        Manifest.permission.CALL_PHONE,
+        Manifest.permission.READ_PHONE_STATE,
+        Manifest.permission.READ_PHONE_NUMBERS,
+        Manifest.permission.ANSWER_PHONE_CALLS,
+        Manifest.permission.MANAGE_OWN_CALLS
+    )
     val REQUIRED_RUNTIME_CALL_PERMISSIONS = arrayOf(
         Manifest.permission.CALL_PHONE,
         Manifest.permission.READ_PHONE_STATE,
@@ -38,45 +38,23 @@ object PermissionManager {
         Manifest.permission.READ_CALL_LOG,
         Manifest.permission.READ_CONTACTS
     )
-
-    /**
-     * Extra runtime permissions for Caller ID + spam detection:
-     * call history (screening, missed-call lookup) and contacts
-     * (unknown-not-in-contacts check). Only the READ sides are requested
-     * contextually — call log on the Recent tab, contacts on the Contacts
-     * tab — never bulk up front, never the WRITE sides.
-     */
     val CALLER_ID_EXTRA_PERMISSIONS = arrayOf(
         Manifest.permission.READ_CALL_LOG,
         Manifest.permission.READ_CONTACTS
     )
-
-    /** Full set for reference only — never requested as one batch. */
     val ALL_CALLER_ID_PERMISSIONS: Array<String>
         get() = REQUIRED_RUNTIME_CALL_PERMISSIONS + CALLER_ID_EXTRA_PERMISSIONS
-
     fun hasAllCallerIdPermissions(context: Context): Boolean =
         hasPermissions(context, ALL_CALLER_ID_PERMISSIONS)
-
-    /**
-     * Only the permissions from [wanted] that are not yet granted.
-     * Screens launch exactly this subset so the system dialog never lists
-     * already-granted or unrelated permissions.
-     */
     fun missingPermissions(context: Context, wanted: Array<String>): Array<String> =
         wanted.filter { !hasPermission(context, it) }.toTypedArray()
-
     val CONTACTS_PERMISSIONS = arrayOf(
         Manifest.permission.READ_CONTACTS
     )
-
-    /** Requested only when the user taps Save/Update in AddContactBottomSheet. */
     val WRITE_CONTACTS_PERMISSION = arrayOf(
         Manifest.permission.WRITE_CONTACTS
     )
-
     val CALL_LOG_PERMISSIONS = arrayOf(Manifest.permission.READ_CALL_LOG)
-    /** Requested only when the user taps Clear All in Recents. */
     val WRITE_CALL_LOG_PERMISSION = arrayOf(Manifest.permission.WRITE_CALL_LOG)
 
     val NOTIFICATION_PERMISSION = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -84,23 +62,15 @@ object PermissionManager {
     } else {
         emptyArray<String>()
     }
-
     val RECORD_AUDIO_PERMISSION = arrayOf(Manifest.permission.RECORD_AUDIO)
-
-    /** SMS OTP auto-read: opt-in ONLY from the OTP screen (see LoginScreen).
-     *  No history permission: the app never reads SMS history, only the
-     *  incoming verification code via BROADCAST_SMS delivery. */
     val SMS_PERMISSION = arrayOf(Manifest.permission.RECEIVE_SMS)
-
     val LOCATION_PERMISSIONS = arrayOf(
         Manifest.permission.ACCESS_COARSE_LOCATION,
         Manifest.permission.ACCESS_FINE_LOCATION,
     )
-
     fun canDrawOverlays(context: Context): Boolean {
         return Settings.canDrawOverlays(context)
     }
-
     fun openOverlaySettings(context: Context) {
         val intent = Intent(
             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -110,7 +80,6 @@ object PermissionManager {
         }
         context.startActivity(intent)
     }
-
     fun isDefaultDialer(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val roleManager = context.getSystemService(RoleManager::class.java)
@@ -120,13 +89,6 @@ object PermissionManager {
             context.packageName == telecomManager?.defaultDialerPackage
         }
     }
-
-    /**
-     * Caller ID & spam role (Android 10+). The CallScreeningService is only
-     * invoked by the system when this role is held — the dialer role alone
-     * does NOT enable spam screening. Pre-Q there is no separate role, so the
-     * dialer default covers it.
-     */
     fun isCallScreeningRoleHeld(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
@@ -137,7 +99,18 @@ object PermissionManager {
             isDefaultDialer(context)
         }
     }
-
+    fun createDefaultDialerIntent(context: Context): Intent? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                context.getSystemService(RoleManager::class.java)
+                    ?.createRequestRoleIntent(RoleManager.ROLE_DIALER)
+            } catch (_: Exception) { null }
+        } else {
+            Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
+                putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
+            }
+        }
+    }
     fun createCallScreeningRoleIntent(context: Context): Intent? {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
@@ -146,24 +119,20 @@ object PermissionManager {
             } catch (_: Exception) { null }
         } else null
     }
-
     fun hasPermissions(context: Context, permissions: Array<String>): Boolean {
         if (permissions.isEmpty()) return true
         return permissions.all {
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
         }
     }
-
     fun hasPermission(context: Context, permission: String): Boolean {
         return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
     }
-
     fun shouldShowRationale(activity: Activity, permissions: Array<String>): Boolean {
         return permissions.any {
             ActivityCompat.shouldShowRequestPermissionRationale(activity, it)
         }
     }
-
     fun openAppSettings(context: Context) {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.fromParts("package", context.packageName, null)

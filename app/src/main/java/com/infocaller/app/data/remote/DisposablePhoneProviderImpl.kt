@@ -1,6 +1,7 @@
 package com.infocaller.app.data.remote
 
 import com.infocaller.app.domain.engine.*
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -23,14 +24,15 @@ class DisposablePhoneProviderImpl : LookupProvider {
     @Volatile private var cacheAt = 0L
     private val TTL = 24*3600*1000L
 
-    private fun getSet(): Set<String>? {
+    private suspend fun getSet(): Set<String>? {
         if (cachedSet != null && System.currentTimeMillis()-cacheAt < TTL) return cachedSet
         return try {
             val url = "https://raw.githubusercontent.com/ip1sms/disposable-phone-numbers/master/number-list.json"
             val request = Request.Builder().url(url).build()
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) return cachedSet
-            val body = response.body?.string() ?: return cachedSet
+            val body = client.newCall(request).await().use { response ->
+                if (!response.isSuccessful) return cachedSet
+                response.body?.string()
+            } ?: return cachedSet
             val set = Regex("\"(\\d{6,15})\"").findAll(body).map { it.groupValues[1] }.toSet()
             cachedSet = set; cacheAt = System.currentTimeMillis(); set
         } catch (_: Exception) { cachedSet }

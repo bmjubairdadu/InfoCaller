@@ -17,31 +17,42 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+// Theme-aware glass: white tint on dark theme, dark tint on light theme, so
+// cards/borders stay visible in BOTH modes. Must be @Composable to read the
+// scheme — all call sites are composable.
+@Composable
 fun Modifier.glassy(
     radius: Dp = 16.dp,
     borderWidth: Dp = 1.dp,
     blur: Dp = 0.dp
-) = this
-    .clip(RoundedCornerShape(radius))
-    .then(if (blur > 0.dp && android.os.Build.VERSION.SDK_INT >= 31) Modifier.blur(blur) else Modifier)
-    .background(
-        Brush.verticalGradient(
-            colors = listOf(
-                Color.White.copy(alpha = 0.12f),
-                Color.White.copy(alpha = 0.06f)
+): Modifier {
+    // Derive from the actual scheme background luminance so an explicit
+    // Light/Dark override is honored, not just the system setting.
+    val schemeBg = androidx.compose.material3.MaterialTheme.colorScheme.background
+    val dark = schemeBg.red * 0.299f + schemeBg.green * 0.587f + schemeBg.blue * 0.114f < 0.5f
+    val tint = if (dark) Color.White else Color.Black
+    return this
+        .clip(RoundedCornerShape(radius))
+        .then(if (blur > 0.dp && android.os.Build.VERSION.SDK_INT >= 31) Modifier.blur(blur) else Modifier)
+        .background(
+            Brush.verticalGradient(
+                colors = listOf(
+                    tint.copy(alpha = if (dark) 0.12f else 0.05f),
+                    tint.copy(alpha = if (dark) 0.06f else 0.02f)
+                )
             )
         )
-    )
-    .border(
-        width = borderWidth,
-        brush = Brush.verticalGradient(
-            colors = listOf(
-                Color.White.copy(alpha = 0.25f),
-                Color.White.copy(alpha = 0.05f)
-            )
-        ),
-        shape = RoundedCornerShape(radius)
-    )
+        .border(
+            width = borderWidth,
+            brush = Brush.verticalGradient(
+                colors = listOf(
+                    tint.copy(alpha = if (dark) 0.25f else 0.14f),
+                    tint.copy(alpha = if (dark) 0.05f else 0.06f)
+                )
+            ),
+            shape = RoundedCornerShape(radius)
+        )
+}
 
 @Composable
 fun GlassyBackground(
@@ -51,7 +62,7 @@ fun GlassyBackground(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Background)
+            .background(androidx.compose.material3.MaterialTheme.colorScheme.background)
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawCircle(

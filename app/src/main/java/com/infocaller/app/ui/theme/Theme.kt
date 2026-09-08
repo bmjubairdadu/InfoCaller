@@ -18,12 +18,14 @@ private val DarkColorScheme = darkColorScheme(
     secondary = Secondary,
     onSecondary = Color.Black,
     tertiary = Tertiary,
-    background = Background,
-    surface = Surface,
-    onBackground = TextPrimary,
-    onSurface = TextPrimary,
-    surfaceVariant = CardBackground,
-    onSurfaceVariant = TextSecondary,
+    // Inlined (NOT the composable Background/Surface getters below): scheme
+    // construction runs outside composition, so it cannot read MaterialTheme.
+    background = Color(0xFF000000),
+    surface = Color(0xFF121212),
+    onBackground = Color(0xFFFFFFFF),
+    onSurface = Color(0xFFFFFFFF),
+    surfaceVariant = Color(0xFF1E1E1E),
+    onSurfaceVariant = Color(0xFFA1A1AA),
     error = Error,
     onError = Color.White
 )

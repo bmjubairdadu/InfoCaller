@@ -3,9 +3,7 @@ package com.infocaller.app.data.remote
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.util.PhoneNumberUtils
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 
@@ -40,13 +38,14 @@ class SpamReputationScraperProviderImpl : LookupProvider {
             // shouldianswer/whocallsme index by national significant number; try full + last-10
             val candidates = listOf(digits, digits.takeLast(10)).distinct().filter { it.length >= 7 }
 
+            // Strictly one-by-one: each spam board completes before the next
+            // starts — no simultaneous fan-out.
             val hits: List<BoardHit> = try {
-                coroutineScope {
-                    val a = async { checkShouldIAnswer(candidates) }
-                    val b = async { checkWhoCallsMe(candidates) }
-                    val c = async { checkSpamCalls(candidates) }
-                    awaitAll(a, b, c).filterNotNull()
-                }
+                val out = mutableListOf<BoardHit>()
+                try { checkShouldIAnswer(candidates)?.let { out.add(it) } } catch (_: Exception) { }
+                try { kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.ensureActive(); checkWhoCallsMe(candidates)?.let { out.add(it) } } catch (_: Exception) { }
+                try { kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.ensureActive(); checkSpamCalls(candidates)?.let { out.add(it) } } catch (_: Exception) { }
+                out
             } catch (_: Exception) { emptyList() }
             if (hits.isEmpty()) return@withContext null
 

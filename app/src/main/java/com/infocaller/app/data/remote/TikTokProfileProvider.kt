@@ -7,12 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 
-/**
- * TikTok public profile extractor (no password required, based on drawrowfly/tiktok-scraper).
- * Uses web API via Jsoup: https://www.tiktok.com/@{username} -> extracts og:title, og:description, og:image.
- * Also tries TikTok webapp API variant if needed.
- * Extracts: nickname, bio, avatar, verified, follower-like hints.
- */
 class TikTokProfileProvider : LookupProvider {
     override val id = "tiktok_profile"
     override val name = "TikTok Profile"

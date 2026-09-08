@@ -1,8 +1,11 @@
 package com.infocaller.app.ui.screens
 
+import android.Manifest
 import android.app.role.RoleManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.provider.Settings
 import android.telecom.TelecomManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -10,6 +13,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -19,27 +24,44 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.infocaller.app.permissions.PermissionManager
-import com.infocaller.app.ui.theme.Background
 import com.infocaller.app.ui.theme.Primary
+import com.infocaller.app.ui.theme.contentPrimary
+import com.infocaller.app.ui.theme.contentSecondary
+import com.infocaller.app.util.UserLocationResolver
+import kotlinx.coroutines.delay
 
 @Composable
 fun OnboardingScreen(onComplete: () -> Unit) {
     val context = LocalContext.current
-    // Contextual-permission model: onboarding secures ONLY what is needed to
-    // place/answer calls and screen spam (dialer role, spam role, call
-    // permissions, overlay). Call log + contacts are requested lazily on the
-    // Recent / Contacts tabs; nothing is bulk-requested up front.
-    // Stages: 1 = dialer role, 1b (10) = Caller ID & spam role,
-    // 2 = essential call permissions, 3 = overlay, 5 = notifications, 6 = done.
-    // -1 is the settings escape hatch.
-    var currentStage by rememberSaveable { mutableIntStateOf(1) }
+    // Popup sequence (single scaffold, system dialogs in order):
+    // 0 = Caller-ID & spam role popup -> 1 = basic-permissions popup (OK
+    // grants each runtime permission sequentially) -> 2 = default-dialer
+    // popup -> 3 = overlay -> 4 = location -> 5 = notifications -> 6 = done.
+    var currentStage by rememberSaveable { mutableIntStateOf(0) }
     var permanentlyDenied by rememberSaveable { mutableStateOf(false) }
     var roleAttempted by rememberSaveable { mutableStateOf(false) }
     var roleError by rememberSaveable { mutableStateOf<String?>(null) }
     var spamRoleError by rememberSaveable { mutableStateOf<String?>(null) }
     var spamRoleAttempted by rememberSaveable { mutableStateOf(false) }
     var callPermsError by rememberSaveable { mutableStateOf(false) }
+    // Sequential basic-permissions queue, granted one group at a time after
+    // the popup's OK: call-logs -> contacts -> phone-state bundle -> SMS ->
+    // write-contacts (phonebook mirror). Each fires only after the previous
+    // resolves, so no two system dialogs stack.
+    val basicPermQueue = remember {
+        listOf(
+            PermissionManager.CALL_LOG_PERMISSIONS.toList() to "Call logs",
+            PermissionManager.CONTACTS_PERMISSIONS.toList() to "Contacts",
+            (PermissionManager.DIALER_PERMISSIONS + PermissionManager.CALLER_ID_PERMISSIONS).toList() to "Phone & call management",
+            PermissionManager.WRITE_CONTACTS_PERMISSION.toList() to "Save caller photos",
+            PermissionManager.SMS_PERMISSION.toList() to "SMS verification",
+        )
+    }
+    var permQueueIndex by rememberSaveable { mutableIntStateOf(-1) }
+    var showBasicPermsPopup by rememberSaveable { mutableStateOf(false) }
 
 
     val roleLauncher = rememberLauncherForActivityResult(
@@ -47,14 +69,8 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     ) { _ ->
         if (PermissionManager.isDefaultDialer(context)) {
             roleError = null
-            // Pre-Q the dialer default covers screening; Q+ needs the
-            // separate Caller ID & spam role next.
-            currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                !PermissionManager.isCallScreeningRoleHeld(context)
-            ) 10 else 2
+            currentStage = 3
         } else if (roleAttempted) {
-            // User dismissed or picked another app: say so instead of stalling silently.
-            // Keep the retry button visible — one tap re-fires the system picker.
             roleError = "Still not set — pick InfoCaller in the system list, then tap \"Check again\"."
         }
     }
@@ -64,11 +80,40 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     ) { _ ->
         if (PermissionManager.isCallScreeningRoleHeld(context)) {
             spamRoleError = null
-            currentStage = 2
+            // Next: basic-permissions popup (OK -> sequential grants).
+            showBasicPermsPopup = true
+            currentStage = 1
         } else if (spamRoleAttempted) {
             spamRoleError = "Still not set — pick InfoCaller as the Caller ID & spam app, then tap \"Check again\"."
         }
     }
+
+    // Fires one permission group; on resolve, advances to the next queued
+    // group until the queue is done, then moves to the dialer popup.
+    // Nullable-var pattern: the callback references the launcher itself, so
+    // a plain val would be a forward reference at init time.
+    var onePermLauncherRef: androidx.activity.result.ActivityResultLauncher<Array<String>>? by remember { mutableStateOf(null) }
+    val onePermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        val next = permQueueIndex + 1
+        if (next < basicPermQueue.size) {
+            permQueueIndex = next
+            try {
+                onePermLauncherRef?.launch(basicPermQueue[next].first.toTypedArray())
+            } catch (_: Exception) {
+                currentStage = 2
+            }
+        } else {
+            permQueueIndex = -1
+            callPermsError = PermissionManager.missingPermissions(
+                context, PermissionManager.REQUIRED_RUNTIME_CALL_PERMISSIONS
+            ).isNotEmpty()
+            // Next popup: default phone app.
+            currentStage = 2
+        }
+    }
+    LaunchedEffect(onePermLauncher) { onePermLauncherRef = onePermLauncher }
 
     val callPermsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -77,136 +122,100 @@ fun OnboardingScreen(onComplete: () -> Unit) {
             callPermsError = false
             currentStage = 3
         } else {
-            // Partial grant: advance past the stuck permission step but keep
-            // the error visible on the NEXT screen instead of trapping the
-            // user here. Missing grants are re-asked contextually later
-            // (Recents/Contacts/Dialer), so nothing is lost by moving on.
             callPermsError = true
             currentStage = 3
         }
     }
 
-    // Poll role state while the role steps are visible: role pickers often
-    // return RESULT_CANCELED even when the user DID pick us, and the role
-    // only lands a moment later. Without polling, the UI sits on an error
-    // until the user manually taps "Check again".
     LaunchedEffect(currentStage) {
-        if (currentStage == 1 || currentStage == 10) {
-            while (currentStage == 1 || currentStage == 10) {
-                kotlinx.coroutines.delay(1500)
+        // Watchdog only for the two role stages: if the user completes the
+        // system role picker without our launcher callback firing, advance.
+        if (currentStage == 0 || currentStage == 2) {
+            while (currentStage == 0 || currentStage == 2) {
+                delay(1500)
                 try {
-                    if (currentStage == 1 && PermissionManager.isDefaultDialer(context)) {
-                        roleError = null
-                        currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                            !PermissionManager.isCallScreeningRoleHeld(context)
-                        ) 10 else 2
-                    } else if (currentStage == 10 && PermissionManager.isCallScreeningRoleHeld(context)) {
+                    if (currentStage == 0 && PermissionManager.isCallScreeningRoleHeld(context)) {
                         spamRoleError = null
-                        currentStage = 2
+                        showBasicPermsPopup = true
+                        currentStage = 1
+                    } else if (currentStage == 2 && PermissionManager.isDefaultDialer(context)) {
+                        roleError = null
+                        currentStage = 3
                     }
                 } catch (_: Exception) { }
             }
         }
     }
 
-    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-        // Re-evaluate on return from system Settings: role granted -> permissions stage;
-        // overlay granted while on stage 3 -> notifications/done.
-        if (PermissionManager.isDefaultDialer(context) && currentStage == 1) {
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (currentStage == 2 && PermissionManager.isDefaultDialer(context)) {
             roleError = null
-            currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                !PermissionManager.isCallScreeningRoleHeld(context)
-            ) 10 else 2
+            currentStage = 3
         }
-        if (currentStage == 10 && PermissionManager.isCallScreeningRoleHeld(context)) {
+        if (currentStage == 0 && PermissionManager.isCallScreeningRoleHeld(context)) {
             spamRoleError = null
-            currentStage = 2
+            showBasicPermsPopup = true
+            currentStage = 1
         }
         if (currentStage == 3 && PermissionManager.canDrawOverlays(context)) {
             currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 5 else 6
         }
     }
+
+    LaunchedEffect(Unit) {
+        // Resume mid-flow after process death: skip stages already granted.
+        try {
+            val screeningHeld = PermissionManager.isCallScreeningRoleHeld(context)
+            val dialerHeld = PermissionManager.isDefaultDialer(context)
+            if (screeningHeld && dialerHeld) {
+                currentStage = 3
+            } else if (screeningHeld) {
+                currentStage = 1
+                showBasicPermsPopup = false
+            } else {
+                currentStage = 0
+            }
+        } catch (_: Exception) { currentStage = 0 }
+    }
+
     LaunchedEffect(currentStage) {
         if (currentStage == 6) {
             try {
-                context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
                     .edit().putBoolean("onboarding_completed", true).apply()
             } catch (_: Exception) { }
             onComplete()
         }
     }
+
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { _ ->
-        // Notifications are optional: denial still completes onboarding.
         currentStage = 6
     }
+
     val onboardingScope = rememberCoroutineScope()
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         val granted = results.values.all { it }
         if (granted) {
-            // Best-effort: resolve now and cache for callee display.
             onboardingScope.launch(Dispatchers.IO) {
                 try {
-                    val loc = com.infocaller.app.util.UserLocationResolver.resolve(context)
+                    val loc = UserLocationResolver.resolve(context)
                     if (loc != null && !loc.isBlank()) {
-                        com.infocaller.app.util.UserLocationResolver.bindToSimSlots(context, loc)
+                        UserLocationResolver.bindToSimSlots(context, loc)
                     }
                 } catch (_: Exception) { }
             }
         }
-        currentStage = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) 5 else 6
+        currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 5 else 6
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Background).padding(24.dp), contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp), contentAlignment = Alignment.Center) {
         when (currentStage) {
-            1 -> RoleDialerExplanation(
-                error = roleError,
-                onGrant = {
-                    roleAttempted = true
-                    roleError = null
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        try {
-                            val roleManager = context.getSystemService(RoleManager::class.java)
-                            val intent = roleManager?.createRequestRoleIntent(RoleManager.ROLE_DIALER)
-                            if (intent != null) roleLauncher.launch(intent)
-                            else roleError = "Your system didn't return a request screen. Use system settings instead."
-                        } catch (_: Exception) {
-                            roleError = "The system blocked the request. Use system settings instead."
-                        }
-                    } else {
-                        val intent = Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER).apply {
-                            putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
-                        }
-                        try { roleLauncher.launch(intent) } catch (_: Exception) {
-                            roleError = "The system blocked the request. Use system settings instead."
-                        }
-                    }
-                },
-                onOpenDefaultApps = {
-                    try {
-                        context.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        })
-                    } catch (_: Exception) { PermissionManager.openAppSettings(context) }
-                },
-                onCheckAgain = {
-                    // Re-verify after the user returns from system settings.
-                    // If granted, advance; otherwise keep the error visible.
-                    if (PermissionManager.isDefaultDialer(context)) {
-                        roleError = null
-                        currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                            !PermissionManager.isCallScreeningRoleHeld(context)
-                        ) 10 else 2
-                    } else {
-                        roleError = "Still not set — pick InfoCaller in the system list, then tap \"Check again\"."
-                    }
-                },
-                onSkip = { currentStage = 2 }
-            )
-            10 -> SpamRoleExplanation(
+            // 0 FIRST: Caller-ID & spam role popup (was stage 10).
+            0 -> SpamRoleExplanation(
                 error = spamRoleError,
                 onGrant = {
                     spamRoleAttempted = true
@@ -221,7 +230,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 },
                 onOpenDefaultApps = {
                     try {
-                        context.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS).apply {
+                        context.startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         })
                     } catch (_: Exception) { PermissionManager.openAppSettings(context) }
@@ -229,18 +238,51 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 onCheckAgain = {
                     if (PermissionManager.isCallScreeningRoleHeld(context)) {
                         spamRoleError = null
-                        currentStage = 2
+                        showBasicPermsPopup = true
+                        currentStage = 1
                     } else {
                         spamRoleError = "Still not set — pick InfoCaller as the Caller ID & spam app, then tap \"Check again\"."
                     }
                 },
-                onSkip = { currentStage = 2 }
+                onSkip = { showBasicPermsPopup = true; currentStage = 1 }
             )
-            2 -> CallPermissionsExplanation(
+            // 1: basic-permissions popup lives as a dialog below (OK ->
+            // sequential grants). The stage body just explains progress.
+            1 -> BasicPermissionsStageBody(
+                queue = basicPermQueue,
+                queueIndex = permQueueIndex,
                 showError = callPermsError,
+                onStartQueue = { showBasicPermsPopup = true },
+                onSkip = { currentStage = 2 },
+            )
+            // 2 LAST role popup: default phone app, then straight to Recents.
+            2 -> RoleDialerExplanation(
+                error = roleError,
                 onGrant = {
-                    callPermsError = false
-                    callPermsLauncher.launch(PermissionManager.REQUIRED_RUNTIME_CALL_PERMISSIONS)
+                    roleAttempted = true
+                    roleError = null
+                    try {
+                        val intent = PermissionManager.createDefaultDialerIntent(context)
+                        if (intent != null) roleLauncher.launch(intent)
+                        else roleError = "Your system didn't return a request screen. Use system settings instead."
+                    } catch (_: Exception) {
+                        roleError = "The system blocked the request. Use system settings instead."
+                    }
+                },
+                onOpenDefaultApps = {
+                    try {
+                        context.startActivity(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        })
+                    } catch (_: Exception) { PermissionManager.openAppSettings(context) }
+                },
+                onCheckAgain = {
+                    if (PermissionManager.isDefaultDialer(context)) {
+                        roleError = null
+                        currentStage = 3
+                    } else {
+                        roleError = "Still not set — pick InfoCaller in the system list, then tap \"Check again\"."
+                    }
                 },
                 onSkip = { currentStage = 3 }
             )
@@ -255,15 +297,65 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 onSkip = { currentStage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) 5 else 6 }
             )
             5 -> NotificationRationale(onGrant = {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) notificationLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS) else currentStage = 6
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) notificationLauncher.launch(
+                    Manifest.permission.POST_NOTIFICATIONS) else currentStage = 6
             })
             -1 -> BlockingErrorScreen(onOpenSettings = { PermissionManager.openAppSettings(context) })
         }
         if (permanentlyDenied && currentStage != -1) {
             Spacer(modifier = Modifier.height(16.dp))
             TextButton(onClick = { permanentlyDenied = false; currentStage = -1 }) {
-                Text("Trouble continuing? Open app settings", color = Color.White.copy(alpha = 0.7f))
+                Text("Trouble continuing? Open app settings", color = contentSecondary(0.7f))
             }
+        }
+
+        // Basic-permissions popup: lists every required permission with an OK
+        // button; OK starts the sequential grant queue (one system dialog at
+        // a time), Cancel/Skip jumps to the default-dialer popup.
+        if (showBasicPermsPopup && currentStage == 1) {
+            AlertDialog(
+                onDismissRequest = { showBasicPermsPopup = false },
+                icon = { Icon(Icons.Default.VerifiedUser, null, tint = Primary) },
+                title = { Text("Required permissions") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            "InfoCaller needs these to identify callers and protect you from spam. Tap OK and each is requested one after another:",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        basicPermQueue.forEach { (_, label) ->
+                            Text("• $label", style = MaterialTheme.typography.bodySmall, color = contentSecondary(0.85f))
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showBasicPermsPopup = false
+                        callPermsError = false
+                        // Start the sequential queue at the first UNGRANTED
+                        // group so re-entry never re-asks granted ones.
+                        val firstMissing = basicPermQueue.indexOfFirst { (perms, _) ->
+                            PermissionManager.missingPermissions(context, perms.toTypedArray()).isNotEmpty()
+                        }
+                        if (firstMissing < 0) {
+                            currentStage = 2
+                        } else {
+                            permQueueIndex = firstMissing
+                            try {
+                                onePermLauncher.launch(basicPermQueue[firstMissing].first.toTypedArray())
+                            } catch (_: Exception) {
+                                currentStage = 2
+                            }
+                        }
+                    }) { Text("OK", color = Primary) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showBasicPermsPopup = false; currentStage = 2 }) {
+                        Text("Skip", color = contentSecondary(0.7f))
+                    }
+                }
+            )
         }
     }
 }
@@ -277,23 +369,23 @@ fun RoleDialerExplanation(
     onCheckAgain: () -> Unit = {}
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Default Phone App", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Text("Default Phone App", style = MaterialTheme.typography.headlineLarge, color = contentPrimary)
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            "To identify callers and manage your calls, InfoCaller must be set as your default Phone app.",
+            "To identify callers and manage your calls, InfoCaller must be set as your default Phone app. This allows the app to show caller identity and provide dialer features directly on your system permission screens.",
             textAlign = TextAlign.Center,
-            color = Color.White.copy(alpha = 0.7f)
+            color = contentSecondary(0.7f)
         )
         if (error != null) {
             Spacer(modifier = Modifier.height(16.dp))
             Text(error, textAlign = TextAlign.Center, color = Color(0xFFFFB4A9))
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedButton(onClick = onOpenDefaultApps) {
-                Text("Open system settings", color = Color.White)
+                Text("Open system settings", color = contentPrimary)
             }
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedButton(onClick = onCheckAgain) {
-                Text("Check again", color = Color.White)
+                Text("Check again", color = contentPrimary)
             }
         }
         Spacer(modifier = Modifier.height(32.dp))
@@ -301,7 +393,7 @@ fun RoleDialerExplanation(
             Text("Set as Default")
         }
         Spacer(modifier = Modifier.height(12.dp))
-        TextButton(onClick = onSkip) { Text("Skip for now", color = Color.White.copy(alpha = 0.7f)) }
+        TextButton(onClick = onSkip) { Text("Skip for now", color = contentSecondary(0.7f)) }
     }
 }
 
@@ -312,12 +404,12 @@ fun CallPermissionsExplanation(
     onSkip: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Default Phone Permissions", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Text("Default Phone Permissions", style = MaterialTheme.typography.headlineLarge, color = contentPrimary)
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            "As your default Phone app, InfoCaller needs: placing calls, reading the ringing number, answering and managing calls, plus your call history and contacts so the dialer can show recents and names.",
+            "As your default Phone app, InfoCaller needs to place calls, read the ringing number, answer and manage calls, plus access your call history and contacts so the dialer can show recents and names.",
             textAlign = TextAlign.Center,
-            color = Color.White.copy(alpha = 0.7f)
+            color = contentSecondary(0.7f)
         )
         if (showError) {
             Spacer(modifier = Modifier.height(16.dp))
@@ -332,7 +424,58 @@ fun CallPermissionsExplanation(
             Text("Grant Permissions")
         }
         Spacer(modifier = Modifier.height(12.dp))
-        TextButton(onClick = onSkip) { Text("Skip for now", color = Color.White.copy(alpha = 0.7f)) }
+        TextButton(onClick = onSkip) { Text("Skip for now", color = contentSecondary(0.7f)) }
+    }
+}
+
+/**
+ * Stage-1 body: explains the sequential basic-permissions popup while the
+ * dialog (below) does the actual granting. Shows live progress through the
+ * queue so a mid-flow return never looks stuck.
+ */
+@Composable
+fun BasicPermissionsStageBody(
+    queue: List<Pair<List<String>, String>>,
+    queueIndex: Int,
+    showError: Boolean,
+    onStartQueue: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Basic Permissions", style = MaterialTheme.typography.headlineLarge, color = contentPrimary)
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            "InfoCaller needs call logs, contacts, phone state, and message access for caller ID, spam protection, and verification. Tap OK in the popup and each permission is requested one after another.",
+            textAlign = TextAlign.Center,
+            color = contentSecondary(0.7f)
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        queue.forEachIndexed { i, (_, label) ->
+            val state = when {
+                queueIndex > i -> "✓"
+                queueIndex == i -> "…"
+                else -> "○"
+            }
+            Text(
+                "$state $label",
+                color = if (queueIndex == i) contentPrimary else contentSecondary(0.7f),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        if (showError) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                "Some permissions were denied. Caller ID needs them — try again, or continue and grant later when asked.",
+                textAlign = TextAlign.Center,
+                color = Color(0xFFFFB4A9)
+            )
+        }
+        Spacer(modifier = Modifier.height(24.dp))
+        Button(onClick = onStartQueue, colors = ButtonDefaults.buttonColors(containerColor = Primary)) {
+            Text(if (queueIndex >= 0) "Continue Permissions" else "Show Permissions")
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        TextButton(onClick = onSkip) { Text("Skip for now", color = contentSecondary(0.7f)) }
     }
 }
 
@@ -346,23 +489,23 @@ fun SpamRoleExplanation(
     onSkip: () -> Unit
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Caller ID & Spam App", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Text("Caller ID & Spam App", style = MaterialTheme.typography.headlineLarge, color = contentPrimary)
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            "To detect spam and identify unknown callers before the phone rings, InfoCaller must be set as your Caller ID & spam app. This is separate from the default Phone app setting.",
+            "To detect spam and identify unknown callers before the phone rings, InfoCaller must ALSO show as your Caller ID & spam app. InfoCaller helps you block unwanted calls and identify numbers.",
             textAlign = TextAlign.Center,
-            color = Color.White.copy(alpha = 0.7f)
+            color = contentSecondary(0.7f)
         )
         if (error != null) {
             Spacer(modifier = Modifier.height(16.dp))
             Text(error, textAlign = TextAlign.Center, color = Color(0xFFFFB4A9))
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedButton(onClick = onOpenDefaultApps) {
-                Text("Open system settings", color = Color.White)
+                Text("Open system settings", color = contentPrimary)
             }
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedButton(onClick = onCheckAgain) {
-                Text("Check again", color = Color.White)
+                Text("Check again", color = contentPrimary)
             }
         }
         Spacer(modifier = Modifier.height(32.dp))
@@ -370,18 +513,18 @@ fun SpamRoleExplanation(
             Text("Set as Spam App")
         }
         Spacer(modifier = Modifier.height(12.dp))
-        TextButton(onClick = onSkip) { Text("Skip for now", color = Color.White.copy(alpha = 0.7f)) }
+        TextButton(onClick = onSkip) { Text("Skip for now", color = contentSecondary(0.7f)) }
     }
 }
 
 @Composable
 fun NotificationRationale(onGrant: () -> Unit) {    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Notifications", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Text("Notifications", style = MaterialTheme.typography.headlineLarge, color = contentPrimary)
         Spacer(modifier = Modifier.height(16.dp))
         Text(
             "InfoCaller needs notification access to alert you of incoming calls while you're using other apps.",
             textAlign = TextAlign.Center,
-            color = Color.White.copy(alpha = 0.7f)
+            color = contentSecondary(0.7f)
         )
         Spacer(modifier = Modifier.height(32.dp))
         Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) {
@@ -393,42 +536,42 @@ fun NotificationRationale(onGrant: () -> Unit) {    Column(horizontalAlignment =
 @Composable
 fun OverlayPermissionRationale(onGrant: () -> Unit, onSkip: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Display Over Apps", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Text("Display Over Apps", style = MaterialTheme.typography.headlineLarge, color = contentPrimary)
         Spacer(modifier = Modifier.height(16.dp))
-        Text("To show caller ID on top of other apps, we need 'Display over other apps'. You can grant it later when a call arrives.", textAlign = TextAlign.Center, color = Color.White.copy(alpha = 0.7f))
+        Text("To show caller ID on top of other apps, we need 'Display over other apps'. You can grant it later when a call arrives.", textAlign = TextAlign.Center, color = contentSecondary(0.7f))
         Spacer(modifier = Modifier.height(32.dp))
         Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) { Text("Go to Settings") }
         Spacer(modifier = Modifier.height(12.dp))
-        TextButton(onClick = onSkip) { Text("Skip for now", color = Color.White.copy(alpha = 0.7f)) }
+        TextButton(onClick = onSkip) { Text("Skip for now", color = contentSecondary(0.7f)) }
     }
 }
 
 @Composable
 fun LocationRationale(onGrant: () -> Unit, onSkip: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Location Access", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Text("Location Access", style = MaterialTheme.typography.headlineLarge, color = contentPrimary)
         Spacer(modifier = Modifier.height(16.dp))
         Text(
             "To show where you are calling from and to map village names inside caller names, InfoCaller needs your location. It uses your SIM and IP as fallback, so maps still work when precise location is denied.",
             textAlign = TextAlign.Center,
-            color = Color.White.copy(alpha = 0.7f),
+            color = contentSecondary(0.7f),
         )
         Spacer(modifier = Modifier.height(32.dp))
         Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) { Text("Allow Location") }
         Spacer(modifier = Modifier.height(12.dp))
-        TextButton(onClick = onSkip) { Text("Skip for now", color = Color.White.copy(alpha = 0.7f)) }
+        TextButton(onClick = onSkip) { Text("Skip for now", color = contentSecondary(0.7f)) }
     }
 }
 
 @Composable
 fun BlockingErrorScreen(onOpenSettings: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Action Required", style = MaterialTheme.typography.headlineLarge, color = Color.White)
+        Text("Action Required", style = MaterialTheme.typography.headlineLarge, color = contentPrimary)
         Spacer(modifier = Modifier.height(16.dp))
         Text(
             "Essential permissions were permanently denied. Please enable them in App Settings to continue.",
             textAlign = TextAlign.Center,
-            color = Color.White.copy(alpha = 0.7f)
+            color = contentSecondary(0.7f)
         )
         Spacer(modifier = Modifier.height(32.dp))
         Button(onClick = onOpenSettings, colors = ButtonDefaults.buttonColors(containerColor = Primary)) {

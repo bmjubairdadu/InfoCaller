@@ -9,6 +9,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.infocaller.app.ui.theme.Primary
+import com.infocaller.app.ui.theme.contentPrimary
+import com.infocaller.app.ui.theme.contentSecondary
 
 @Composable
 fun PermissionEmptyState(
@@ -23,12 +25,12 @@ fun PermissionEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(title, style = MaterialTheme.typography.headlineSmall, color = Color.White)
+        Text(title, style = MaterialTheme.typography.headlineSmall, color = contentPrimary)
         Spacer(modifier = Modifier.height(16.dp))
         Text(
             description,
             textAlign = TextAlign.Center,
-            color = Color.White.copy(alpha = 0.7f)
+            color = contentSecondary(0.7f)
         )
         Spacer(modifier = Modifier.height(32.dp))
         Button(onClick = onGrant, colors = ButtonDefaults.buttonColors(containerColor = Primary)) {

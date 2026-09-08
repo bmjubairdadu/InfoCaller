@@ -26,8 +26,6 @@ android {
         versionCode = 4
         versionName = "2.1.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        
         androidResources {
             localeFilters += listOf("en", "bn")
         }
@@ -60,9 +58,6 @@ android {
         buildConfig = true
     }
 
-    testOptions {
-        unitTests.isReturnDefaultValues = true
-    }
     lint {
         abortOnError = false
         checkReleaseBuilds = true
@@ -80,7 +75,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.navigation.compose)
-    implementation(libs.androidx.splashscreen)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.room.runtime)
@@ -100,8 +94,4 @@ dependencies {
     implementation(libs.androidx.work.runtime.ktx)
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.1")
-
-    testImplementation(libs.junit)
-    testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
 }

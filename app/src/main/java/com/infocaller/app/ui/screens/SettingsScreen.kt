@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.infocaller.app.data.remote.CommunityConsent
 import com.infocaller.app.permissions.PermissionManager
 import com.infocaller.app.ui.theme.Primary
+import com.infocaller.app.ui.theme.contentPrimary
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -37,6 +38,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     viewModel: com.infocaller.app.ui.viewmodel.CallerViewModel,
     onNavigateToPrivacy: () -> Unit = {},
+    onNavigateToNidPortal: () -> Unit = {},
     onNavigateToDetails: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -51,10 +53,10 @@ fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Settings", color = Color.White) },
+                title = { Text("Settings", color = contentPrimary) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = contentPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
@@ -97,6 +99,10 @@ fun SettingsScreen(
                             if (searchNumber.isNotBlank()) {
                                 // Manual search: pause background work and focus
                                 // exclusively on this number (CRITICAL priority).
+                                // Kill any in-flight search first so a previous
+                                // result can never bleed into the new view.
+                                viewModel.cancelAllSearches()
+                                viewModel.clearSearch()
                                 viewModel.searchNumberManual(searchNumber)
                                 viewModel.triggerThrottledSync(context)
                                 onNavigateToDetails(searchNumber)
@@ -122,7 +128,7 @@ fun SettingsScreen(
                         value = searchEmail,
                         onValueChange = { searchEmail = it; emailError = null },
                         label = { Text("Search Email Address") },
-                        placeholder = { Text("name@example.com") },
+                        placeholder = { Text("Enter email address") },
                         leadingIcon = { Icon(Icons.Default.Email, null) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -147,6 +153,8 @@ fun SettingsScreen(
                             emailError = null
                             // CRITICAL scan over EMAIL providers (Gravatar, GitHub,
                             // breach check, presence). Same focus semantics as NID.
+                            viewModel.cancelAllSearches()
+                            viewModel.clearSearch()
                             viewModel.searchEmailManual(cleaned)
                             onNavigateToDetails(cleaned)
                         },
@@ -195,6 +203,8 @@ fun SettingsScreen(
                             // CRITICAL scan over USERNAME providers (Sherlock 40-site
                             // sweep, WhatsMyName, GitHub, profile extractors).
                             // Same focus semantics as NID/email.
+                            viewModel.cancelAllSearches()
+                            viewModel.clearSearch()
                             viewModel.searchUsernameManual(cleaned)
                             onNavigateToDetails(cleaned)
                         },
@@ -323,6 +333,26 @@ fun SettingsScreen(
                 )
             }
 
+            SettingsSection("NID Portal (services.nidw.gov.bd)") {
+                Text(
+                    "Guided claim-account + smart-card status using your own details and the portal captcha. No bypass, no stored credentials.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp)
+                )
+                SettingsClickRow(
+                    title = "Open NID Portal",
+                    subtitle = "Claim account / card status with captcha",
+                    icon = Icons.Default.Fingerprint,
+                    onClick = onNavigateToNidPortal
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            SettingsSection("Eyecon Caller ID (captured auth)") {
+                EyeconAuthSettingsContent()
+            }
+
             SettingsSection("About") {
                 SettingsInfoRow("Version", "2.1.0", Icons.Default.Info)
                 SettingsClickRow(
@@ -383,6 +413,60 @@ fun SettingsInfoRow(title: String, value: String, icon: ImageVector) {
     )
 }
 
+/**
+ * Eyecon device auth from the user's own Reqable capture: paste the e-auth
+ * values the Eyecon app used on this device (join.jsp answer + the e-auth /
+ * e-auth-c / e-auth-k request headers). Enhances caller-ID name+photo hits.
+ */
+@Composable
+private fun EyeconAuthSettingsContent() {
+    val context = LocalContext.current
+    val store = remember { com.infocaller.app.data.remote.EyeconAuthStore(context.applicationContext) }
+    var cid by remember { mutableStateOf(store.cid() ?: "") }
+    var c by remember { mutableStateOf(store.c() ?: "") }
+    var k by remember { mutableStateOf(store.k() ?: "") }
+    var savedTick by remember { mutableStateOf(0) }
+    val connected = remember(savedTick) { store.hasAuth() }
+    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            "From Reqable eyecon.har: open the join.jsp response (the e-auth client id) and any getnames.jsp request headers (e-auth, e-auth-c, e-auth-k), then paste them here.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(value = cid, onValueChange = { cid = it.trim() }, label = { Text("e-auth (client id)") },
+            placeholder = { Text("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx") },
+            modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(value = c, onValueChange = { c = it.trim() }, label = { Text("e-auth-c") },
+                modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(12.dp))
+            OutlinedTextField(value = k, onValueChange = { k = it.trim() }, label = { Text("e-auth-k") },
+                modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(12.dp))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    if (cid.isNotBlank()) {
+                        store.save(cid, c.ifBlank { "37" }, k.ifBlank { "" })
+                        savedTick++
+                    }
+                },
+                enabled = cid.isNotBlank(),
+                modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
+            ) { Text("SAVE") }
+            OutlinedButton(
+                onClick = { store.clear(); cid = ""; c = ""; k = ""; savedTick++ },
+                modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
+            ) { Text("Clear") }
+        }
+        Text(
+            if (connected) "Status: connected — Eyecon lookups use your captured auth."
+            else "Status: anonymous — Eyecon lookups still try without auth.",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 @Composable
 private fun SoundPreviewChips(
     entries: List<com.infocaller.app.util.SoundboardEntry>,
@@ -411,6 +495,42 @@ private fun SoundPreviewChips(
                     if (isPlaying) Icon(Icons.Default.Stop, null, modifier = Modifier.size(16.dp))
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun EmojiPickerGrid(
+    selected: String,
+    onPick: (String) -> Unit,
+) {
+    // Inline emoji palette: tapping an emoji sets the button icon.
+    // No text box — the picker IS the input, opened from the smiley
+    // on the right of the name field.
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        com.infocaller.app.util.SoundboardStore.EMOJI_CHOICES.chunked(8).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                row.forEach { emoji ->
+                    val isSel = emoji == selected
+                    Surface(
+                        onClick = { onPick(emoji) },
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isSel) Primary.copy(alpha = 0.25f) else Color.Transparent,
+                        border = if (isSel) androidx.compose.foundation.BorderStroke(1.dp, Primary) else null,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Text(emoji, fontSize = 22.sp)
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -454,9 +574,12 @@ private fun SoundboardSettingsContent() {
         onDispose { com.infocaller.app.util.SoundboardPlayer.stop() }
     }
 
+    var showEmojiPicker by remember { mutableStateOf(false) }
+    var emojiTargetIsRename by remember { mutableStateOf(false) }
+
     Column(modifier = Modifier.padding(16.dp)) {
         Text(
-            "Discord-style soundboard for calls. Pick audio or video files — the sound plays through the speaker so the other side hears it. Give each button a name and emoji.",
+            "Discord-style soundboard for calls. Built-ins are real funny sounds; or pick audio/video files — the sound plays through the speaker so the other side hears it. Tap the smiley on the name field to pick an emoji.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -498,18 +621,22 @@ private fun SoundboardSettingsContent() {
             placeholder = { Text("e.g. Laugh, Airhorn, Intro") },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            singleLine = true
+            singleLine = true,
+            // Emoji icon on the right of the name box: tap to open the
+            // inline emoji picker (no separate emoji box).
+            trailingIcon = {
+                IconButton(onClick = { emojiTargetIsRename = false; showEmojiPicker = true }) {
+                    Text(newEmoji.ifBlank { "\uD83D\uDE03" }, fontSize = 22.sp)
+                }
+            }
         )
-        Spacer(modifier = Modifier.height(8.dp))
-        OutlinedTextField(
-            value = newEmoji,
-            onValueChange = { if (it.length <= 4) newEmoji = it },
-            label = { Text("Emoji") },
-            placeholder = { Text("\uD83C\uDFB5") },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            singleLine = true
-        )
+        if (showEmojiPicker && !emojiTargetIsRename) {
+            Spacer(modifier = Modifier.height(8.dp))
+            EmojiPickerGrid(
+                selected = newEmoji,
+                onPick = { newEmoji = it; showEmojiPicker = false }
+            )
+        }
         Spacer(modifier = Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             FilterChip(
@@ -567,6 +694,7 @@ private fun SoundboardSettingsContent() {
                 newFileUri = null
                 newFileLabel = null
                 newIsVideo = false
+                showEmojiPicker = false
                 error = null
             }) { Text("Add sound") }
             Spacer(modifier = Modifier.width(8.dp))
@@ -621,16 +749,20 @@ private fun SoundboardSettingsContent() {
                         onValueChange = { newName = it },
                         label = { Text("Button name") },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        trailingIcon = {
+                            IconButton(onClick = { emojiTargetIsRename = true; showEmojiPicker = true }) {
+                                Text(newEmoji.ifBlank { "\uD83D\uDE03" }, fontSize = 22.sp)
+                            }
+                        }
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = newEmoji,
-                        onValueChange = { v -> if (v.length <= 4) newEmoji = v },
-                        label = { Text("Emoji") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    if (showEmojiPicker && emojiTargetIsRename) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        EmojiPickerGrid(
+                            selected = newEmoji,
+                            onPick = { newEmoji = it; showEmojiPicker = false }
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -646,8 +778,12 @@ private fun SoundboardSettingsContent() {
                 }) { Text("Save") }
             },
             dismissButton = {
-                TextButton(onClick = { editing = null }) { Text("Cancel") }
+                TextButton(onClick = { editing = null; showEmojiPicker = false }) { Text("Cancel") }
             }
         )
+    }
+    // Reset the picker when the dialog closes via Save too.
+    LaunchedEffect(editing) {
+        if (editing == null) showEmojiPicker = false
     }
 }

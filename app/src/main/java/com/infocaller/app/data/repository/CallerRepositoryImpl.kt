@@ -77,15 +77,25 @@ class CallerRepositoryImpl(
         }
         val existing = enrichmentDao.getEnrichmentSync(normalized)
 
+        // INSTANT-PARTIAL rule: never hold back fresh fields. The old
+        // gaps.isComplete gate meant early partials (name-only from
+        // Truecaller, photo-only from Eyecon) were DROPPED when a complete
+        // row already existed — the UI then waited for the final Completed
+        // instead of rendering each hit the moment it arrived. Now every
+        // non-empty incoming field merges over the row immediately, so each
+        // provider's hit displays the instant it is retrieved.
         if (existing != null) {
-            val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(existing)
-            if (gaps.isComplete) {
-                val hasNew = (result.name != null && (existing.publicName.isNullOrBlank() || com.infocaller.app.util.ContactUtils.isPlaceholderName(existing.publicName))) ||
-                        (result.imageUrl != null && existing.profileImageUrl.isNullOrBlank()) ||
-                        (result.city != null && existing.city.isNullOrBlank()) ||
-                        (result.email != null && existing.email.isNullOrBlank())
-                if (!hasNew) return
-            }
+            val hasNew = (result.name != null && (existing.publicName.isNullOrBlank() || com.infocaller.app.util.ContactUtils.isPlaceholderName(existing.publicName))) ||
+                    (result.imageUrl != null && existing.profileImageUrl.isNullOrBlank()) ||
+                    (result.city != null && existing.city.isNullOrBlank()) ||
+                    (result.email != null && existing.email.isNullOrBlank()) ||
+                    (result.about != null && existing.about.isNullOrBlank()) ||
+                    (result.carrier != null && existing.carrier.isNullOrBlank()) ||
+                    (result.country != null && existing.country.isNullOrBlank()) ||
+                    (result.socialProfiles.isNotEmpty()) ||
+                    (result.photoCandidates.isNotEmpty()) ||
+                    (result.alternateName != null && existing.alternateName.isNullOrBlank())
+            if (!hasNew) return
         }
 
         val existingCaller = callerDao.getCallerSync(normalized)
@@ -196,6 +206,10 @@ class CallerRepositoryImpl(
 
     override fun cancelScan(identifier: String) {
         orchestrator.cancelScan(identifier)
+    }
+
+    override fun cancelAllScans() {
+        try { orchestrator.cancelAllScans() } catch (_: Exception) { }
     }
 
     override fun getBlocklist(): Flow<List<String>> {

@@ -2,15 +2,15 @@ package com.infocaller.app.data.remote
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.infocaller.app.InfoCallerApplication
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.util.PhoneNumberUtils
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
 
 object CommunityConsent {
     private const val PREFS = "community_prefs"
@@ -40,8 +40,7 @@ object PhoneHash {
 }
 
 class SupabaseCommunityProvider(
-    private val context: Context,
-    private val httpClient: OkHttpClient? = null
+    private val context: Context
 ) : LookupProvider {
     override val id = "supabase_community"
     override val name = "Community Lookup (Supabase)"
@@ -50,11 +49,7 @@ class SupabaseCommunityProvider(
     override val priority = 850
     override val costClass = CostClass.FREE
 
-    private val client = httpClient ?: OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        .build()
+    private val client = (context.applicationContext as InfoCallerApplication).commonHttpClient
 
     private fun config(): Pair<String, String>? {
         return try {
@@ -81,9 +76,10 @@ class SupabaseCommunityProvider(
                 .addHeader("Authorization", "Bearer $anonKey")
                 .addHeader("Accept", "application/json")
                 .build()
-            val resp = client.newCall(req).execute()
-            if (!resp.isSuccessful) return@withContext null
-            val body = resp.body?.string() ?: return@withContext null
+            val body = client.newCall(req).await().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                resp.body?.string()
+            } ?: return@withContext null
             val arr = JSONArray(body)
             if (arr.length() == 0) return@withContext null
             val obj = arr.getJSONObject(0)

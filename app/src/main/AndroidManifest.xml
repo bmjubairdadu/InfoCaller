@@ -66,7 +66,7 @@
         android:roundIcon="@drawable/app_logo"
         android:supportsRtl="true"
         android:usesCleartextTraffic="false"
-        android:theme="@style/Theme.App.Starting">
+        android:theme="@style/Theme.InfoCaller">
 
         <receiver
             android:name=".receiver.CallBroadcastReceiver"

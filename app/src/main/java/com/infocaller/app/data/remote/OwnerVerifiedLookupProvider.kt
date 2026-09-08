@@ -3,6 +3,7 @@ package com.infocaller.app.data.remote
 import android.content.Context
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.util.PhoneNumberUtils
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -61,10 +62,11 @@ class OwnerVerifiedLookupProvider(
                 .addHeader("Authorization", "Bearer $anonKey")
                 .addHeader("Accept", "application/json")
                 .build()
-            val resp = client.newCall(req).execute()
-            if (resp.code == 404) return@withContext null
-            if (!resp.isSuccessful) return@withContext null
-            val body = resp.body?.string() ?: return@withContext null
+            val body = client.newCall(req).await().use { resp ->
+                if (resp.code == 404) return@withContext null
+                if (!resp.isSuccessful) return@withContext null
+                resp.body?.string()
+            } ?: return@withContext null
             val arr = JSONArray(body)
             if (arr.length() == 0) return@withContext null
             val o = arr.getJSONObject(0)

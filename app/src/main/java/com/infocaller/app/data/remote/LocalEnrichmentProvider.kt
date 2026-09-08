@@ -32,6 +32,7 @@ class LocalEnrichmentProvider(
             name = entity.publicName,
             alternateName = entity.alternateName,
             imageUrl = entity.profileImageUrl,
+            photoCandidates = SocialUtils.photosFromJson(entity.photoCandidatesJson),
             about = entity.about,
             city = entity.city,
             country = entity.country,

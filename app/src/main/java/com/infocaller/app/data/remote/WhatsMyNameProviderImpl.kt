@@ -3,6 +3,7 @@ package com.infocaller.app.data.remote
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.domain.model.SocialLookupStatus
 import com.infocaller.app.domain.model.SocialProfile
+import com.infocaller.app.util.await
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import kotlinx.coroutines.*
@@ -47,11 +48,11 @@ class WhatsMyNameProviderImpl(
         PartialResult(socialProfiles = profiles, confidence = 0.6f, source = "WhatsMyName DB", providerId = id, providerVersion = version)
     }
 
-    private fun loadSites(): List<WmnSite>? {
+    private suspend fun loadSites(): List<WmnSite>? {
         if (cachedSites != null && System.currentTimeMillis() - cacheAt < CACHE_TTL) return cachedSites
         return try {
             val req = Request.Builder().url(DATA_URL).header("User-Agent","Mozilla/5.0").build()
-            httpClient.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).await().use { resp ->
                 if (!resp.isSuccessful) return cachedSites
                 val json = JsonParser.parseString(resp.body?.string()).asJsonObject
                 val arr = json.getAsJsonArray("sites")

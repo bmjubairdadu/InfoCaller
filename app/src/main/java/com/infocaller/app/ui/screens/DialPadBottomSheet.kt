@@ -184,9 +184,13 @@ private fun DialPadContent(
         }
         Box(modifier = Modifier.fillMaxWidth().height(88.dp).clickable { focusRequester.requestFocus() }, contentAlignment = Alignment.Center) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center, modifier = Modifier.fillMaxWidth()) {
-                val defaultSimLogo = simInfos.firstOrNull()?.localLogoPath
-                if (defaultSimLogo != null && textFieldValue.text.isNotEmpty()) {
-                    AsyncImage(model = defaultSimLogo, contentDescription = null, modifier = Modifier.size(28.dp).clip(CircleShape).padding(end = 8.dp), contentScale = ContentScale.Fit)
+                val defaultSim = simInfos.firstOrNull()
+                if (defaultSim != null && textFieldValue.text.isNotEmpty()) {
+                    com.infocaller.app.ui.dialogs.SimLogo(
+                        sim = defaultSim,
+                        modifier = Modifier.size(28.dp).clip(CircleShape).padding(end = 8.dp),
+                        contentScale = ContentScale.Fit
+                    )
                 }
                 SelectionContainer {
                     BasicTextField(value = textFieldValue, onValueChange = { textFieldValue = it; viewModel.updateDialerInput(it.text) }, textStyle = TextStyle(fontSize = if (textFieldValue.text.length > 12) 30.sp else 40.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground, textAlign = androidx.compose.ui.text.style.TextAlign.Center), modifier = Modifier.wrapContentWidth().focusRequester(focusRequester), cursorBrush = SolidColor(Primary), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), singleLine = true, decorationBox = { innerTextField ->
@@ -221,11 +225,10 @@ private fun DialPadContent(
             val isUssdInput = remember(textFieldValue.text) { com.infocaller.app.util.UssdStore.isUssd(textFieldValue.text) }
             Surface(onClick = {
                 if (textFieldValue.text.isEmpty()) return@Surface
-                if (isUssdInput) {
-                    com.infocaller.app.util.UssdStore.run(context, textFieldValue.text)
-                } else {
-                    onCall(textFieldValue.text)
-                }
+                // USSD goes through onCall -> MainActivity.makeCall so the CALL_PHONE
+                // permission check + manual SIM picker run first. Direct UssdStore.run
+                // here would dial immediately with no SIM choice (the reported bug).
+                onCall(textFieldValue.text)
             }, modifier = Modifier.size(72.dp).shadow(12.dp, CircleShape), shape = CircleShape, color = Color.Transparent) {
                 Box(modifier = Modifier.fillMaxSize().background(Brush.linearGradient(colors = listOf(GradientStart, GradientEnd))), contentAlignment = Alignment.Center) {
                     Icon(if (isUssdInput) Icons.AutoMirrored.Filled.SendToMobile else Icons.Default.Call, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(32.dp))
@@ -273,6 +276,6 @@ private fun DialerButton(text: String, onClick: () -> Unit) {
     var isPressed by remember { mutableStateOf(value = false) }
     val scale by androidx.compose.animation.core.animateFloatAsState(if (isPressed) 0.9f else 1f, label = "ButtonScale")
     Surface(onClick = onClick, modifier = Modifier.size(72.dp).scale(scale).glassy(radius = 36.dp, blur = 8.dp), shape = CircleShape, color = Color.Transparent) {
-        Box(contentAlignment = Alignment.Center) { Text(text = text, fontSize = 32.sp, fontWeight = FontWeight.Bold) }
+        Box(contentAlignment = Alignment.Center) { Text(text = text, fontSize = 32.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground) }
     }
 }

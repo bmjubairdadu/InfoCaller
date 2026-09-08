@@ -3,6 +3,7 @@ package com.infocaller.app.util
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.infocaller.app.util.await
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -28,33 +29,100 @@ object VillageResolver {
         val display: String,
     )
 
-    private val HONORIFICS = setOf("vai", "bhai", "apa", "apu", "uncle", "aunty", "sir", "mam", "mama", "chacha", "khalu", "dada", "dadi", "nana", "nani")
-    private val STOP = setOf("and", "or", "the", "a", "an", "of", "for", "in", "on", "at", "to", "with")
+    private val HONORIFICS = setOf("vai", "vaiya", "bhai", "bhaia", "apa", "apu", "dada", "dadi", "nana", "nani", "mama", "mami", "chacha", "chachi", "khalu", "khala", "fupu", "fupa", "uncle", "aunty", "aunt", "sir", "mam", "madam", "boss", "bro", "sis", "dst", "hujur", "office", "store", "shop")
+    private val STOP = setOf("and", "or", "the", "a", "an", "of", "for", "in", "on", "at", "to", "with", "new", "old", "shah", "md", "mohammad", "hossain", "hossen", "ahmed", "rahman", "khan", "ali", "uddin", "islam")
+    // Common BD person-name tokens: never treated as places even when trailing.
+    private val PERSON_TOKENS = setOf(
+        "rahim", "karim", "rahman", "ahmed", "ahmad", "hossain", "hossen", "hassan", "hasan", "khan", "ali", "uddin",
+        "islam", "mohammad", "mohammed", "abdul", "abul", "abu", "mia", "mia", "sheikh", "chowdhury", "choudhury",
+        "sarker", "sarkar", "biswas", "mondal", "mandal", "das", "dass", "roy", "sen", "saha", "paul", "ghosh",
+        "alam", "akter", "begum", "bibi", "khatun", "jahan", "sultana", "parvin", "fatema", "nasrin", "shirin",
+        "habib", "faruk", "faruk", "rakib", "sakib", "tanvir", "nadim", "selim", "alim", "jalal", "kamal", "jamal",
+        "rasel", "rubel", "sohel", "shohel", "mehedi", "mahmud", "mamun", "sumon", "sujon", "rimon", "rimon", "liton"
+    )
+
+    data class PlaceCandidate(val raw: String, val repaired: String, val wasRepaired: Boolean)
+
+    /**
+     * All trailing tokens that could be places, AFTER skipping the person
+     * part: first token (given name) + honorifics are never places. Returns
+     * empty when the name is just a person ("Ashraful vai" -> skipped).
+     * Repair info included per token ("sujansah" -> "sujansaha").
+     */
+    fun extractPlaceCandidates(fullName: String?): List<PlaceCandidate> {
+        if (fullName.isNullOrBlank()) return emptyList()
+        val tokens = fullName.trim()
+            .split(Regex("[\\s,\\-_/()\\[\\].|]+")).map { it.trim() }.filter { it.length >= 3 }
+        if (tokens.size < 2) return emptyList()
+        // Person part = first token + any honorific anywhere. Everything after
+        // the person part is a place candidate (covers "Ashraful vai sujansaha"
+        // -> [sujansaha] and "Ashraful vai" -> [] since nothing trails).
+        val first = tokens.first().lowercase()
+        val tail = tokens.drop(1).filter { it.lowercase() !in HONORIFICS }
+        if (tail.isEmpty()) return emptyList()
+        return tail.mapNotNull { tok ->
+            val low = tok.lowercase()
+            if (low in STOP) return@mapNotNull null
+            if (low in PERSON_TOKENS) return@mapNotNull null
+            if (low == first) return@mapNotNull null
+            if (!tok.any { it.isLetter() }) return@mapNotNull null
+            if (tok.count { it.isLetterOrDigit() } < 3) return@mapNotNull null
+            // Pure-digit or digit-heavy tokens are phone fragments, not places.
+            if (tok.count { it.isDigit() } >= 4) return@mapNotNull null
+            val repaired = BdPlaceGazetteer.repair(low)
+            PlaceCandidate(raw = tok, repaired = repaired, wasRepaired = !repaired.equals(low, ignoreCase = true))
+        }
+    }
 
     /** Heuristic token that likely is a place, not the person name. Null when none. */
     fun extractPlaceToken(fullName: String?): String? {
-        if (fullName.isNullOrBlank()) return null
-        val raw = fullName.trim()
-        // Split on whitespace and punctuation that often joins name + place.
-        val tokens = raw.split(Regex("[\\s,\\-_/()\\[\\].]+")).map { it.trim() }.filter { it.length >= 3 }
-        if (tokens.size < 2) return null
-        // Drop leading person-name tokens (first 1-2) and honorifics; the trailing
-        // token(s) are the place candidate.
-        val withoutHonor = tokens.filter { it.lowercase() !in HONORIFICS }
-        if (withoutHonor.size < 2) return null
-        // Prefer the last token that isn't a common stopword and is mostly letters.
-        val last = withoutHonor.last()
-        if (last.lowercase() in STOP) return null
-        if (!last.any { it.isLetter() }) return null
-        if (last.count { it.isLetterOrDigit() } < 3) return null
-        // Avoid surname-looking English tokens that are actually family names in
-        // this dataset; require lowercased distinct from first token.
-        if (last.equals(withoutHonor.first(), ignoreCase = true)) return null
-        // Keep original casing for display but ensure BD query.
-        return last
+        // Last candidate wins (closest to old single-token behavior).
+        return extractPlaceCandidates(fullName).lastOrNull()?.repaired
+    }
+
+    /** Normalized edit-distance similarity 0..1 (1 = identical). */
+    internal fun similarity(a: String, b: String): Double {
+        if (a.equals(b, ignoreCase = true)) return 1.0
+        val x = a.lowercase(); val y = b.lowercase()
+        if (x.isEmpty() || y.isEmpty()) return 0.0
+        // Cheap prefix shortcut: "sujansah" vs "sujansaha" scores ~0.97.
+        if (y.startsWith(x) || x.startsWith(y)) {
+            val longer = maxOf(x.length, y.length).toDouble()
+            return (minOf(x.length, y.length).toDouble() + 0.5) / (longer + 0.5)
+        }
+        val dp = Array(x.length + 1) { IntArray(y.length + 1) }
+        for (i in 0..x.length) dp[i][0] = i
+        for (j in 0..y.length) dp[0][j] = j
+        for (i in 1..x.length) for (j in 1..y.length) {
+            dp[i][j] = minOf(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + if (x[i - 1] == y[j - 1]) 0 else 1)
+        }
+        return 1.0 - dp[x.length][y.length].toDouble() / maxOf(x.length, y.length).toDouble()
     }
 
     fun cacheKey(name: String, token: String): String = "${name.trim().lowercase()}|$token"
+
+    private const val KEY_RESOLVED = "village_resolved_v1"
+
+    /** Last resolved display per token (7-day TTL) — avoids re-hitting Nominatim on every open. */
+    fun cachedResolved(context: Context, token: String): ResolvedVillage? {
+        return try {
+            val sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val raw = sp.getString("$KEY_RESOLVED|${token.lowercase()}", null) ?: return null
+            val parts = raw.split("|")
+            if (parts.size < 3) return null
+            val at = parts[0].toLongOrNull() ?: return null
+            if (System.currentTimeMillis() - at > 7 * 24 * 60 * 60 * 1000L) return null
+            ResolvedVillage(query = token, district = parts.getOrNull(1)?.takeIf { it.isNotBlank() }, upazila = parts.getOrNull(2)?.takeIf { it.isNotBlank() }, display = parts.getOrNull(3)?.takeIf { it.isNotBlank() } ?: token)
+        } catch (_: Exception) { null }
+    }
+
+    fun storeResolved(context: Context, token: String, v: ResolvedVillage) {
+        try {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString("$KEY_RESOLVED|${token.lowercase()}", "${System.currentTimeMillis()}|${v.district.orEmpty()}|${v.upazila.orEmpty()}|${v.display.take(120)}")
+                .apply()
+        } catch (_: Exception) { }
+    }
 
     fun wasSeen(context: Context, key: String): Boolean {
         return try {
@@ -91,9 +159,11 @@ object VillageResolver {
                 .build()
             val url = "https://nominatim.openstreetmap.org/search?q=${java.net.URLEncoder.encode(q, "UTF-8")}&format=json&addressdetails=1&limit=1&countrycodes=bd&accept-language=en"
             val req = Request.Builder().url(url).header("User-Agent", "InfoCaller/1.0 (Android; BD village lookup)").build()
-            val resp = client.newCall(req).execute()
-            if (!resp.isSuccessful) return@withContext null
-            val arr = JSONArray(resp.body?.string().orEmpty())
+            val body = client.newCall(req).await().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                resp.body?.string()
+            } ?: return@withContext null
+            val arr = JSONArray(body)
             if (arr.length() == 0) return@withContext null
             val first = arr.getJSONObject(0)
             val addr = first.optJSONObject("address") ?: return@withContext null

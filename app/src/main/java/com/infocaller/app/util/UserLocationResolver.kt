@@ -4,6 +4,7 @@ import android.content.Context
 import android.telephony.TelephonyManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.infocaller.app.util.await
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -79,7 +80,7 @@ object UserLocationResolver {
         null
     }
 
-    private fun tryGpsLocation(context: Context): UserLocation? {
+    private suspend fun tryGpsLocation(context: Context): UserLocation? {
         return try {
             if (androidx.core.content.ContextCompat.checkSelfPermission(
                     context, android.Manifest.permission.ACCESS_FINE_LOCATION
@@ -135,33 +136,35 @@ object UserLocationResolver {
                 .url("https://nominatim.openstreetmap.org/reverse?format=json&lat=${ll.latitude}&lon=${ll.longitude}&zoom=10&addressdetails=1&accept-language=en")
                 .header("User-Agent", "InfoCaller/1.0 (Android)")
                 .build()
-            val resp = client2.newCall(req).execute()
-            if (!resp.isSuccessful) return UserLocation(country = null, region = null, city = null)
-            val j2 = JSONObject(resp.body?.string().orEmpty())
-            val addr = j2.optJSONObject("address") ?: return null
-            UserLocation(
-                country = addr.optString("country", "").takeIf { it.isNotBlank() },
-                region = (addr.optString("state", "").takeIf { it.isNotBlank() }
-                    ?: addr.optString("county", "").takeIf { it.isNotBlank() }),
-                city = (addr.optString("city", "").takeIf { it.isNotBlank() }
-                    ?: addr.optString("town", "").takeIf { it.isNotBlank() }
-                    ?: addr.optString("village", "").takeIf { it.isNotBlank() }),
-            ).takeIf { !it.isBlank() }
+            client2.newCall(req).await().use { resp ->
+                if (!resp.isSuccessful) return UserLocation(country = null, region = null, city = null)
+                val j2 = JSONObject(resp.body?.string().orEmpty())
+                val addr = j2.optJSONObject("address") ?: return null
+                UserLocation(
+                    country = addr.optString("country", "").takeIf { it.isNotBlank() },
+                    region = (addr.optString("state", "").takeIf { it.isNotBlank() }
+                        ?: addr.optString("county", "").takeIf { it.isNotBlank() }),
+                    city = (addr.optString("city", "").takeIf { it.isNotBlank() }
+                        ?: addr.optString("town", "").takeIf { it.isNotBlank() }
+                        ?: addr.optString("village", "").takeIf { it.isNotBlank() }),
+                ).takeIf { !it.isBlank() }
+            }
         } catch (_: Exception) { null }
     }
 
-    private fun tryIpLocation(client: OkHttpClient?): UserLocation? {
+    private suspend fun tryIpLocation(client: OkHttpClient?): UserLocation? {
         return try {
             val c = client ?: OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).readTimeout(4, TimeUnit.SECONDS).build()
             val req = Request.Builder().url("https://ipapi.co/json/").header("User-Agent", "InfoCaller/1.0").build()
-            val resp = c.newCall(req).execute()
-            if (!resp.isSuccessful) return null
-            val j = JSONObject(resp.body?.string().orEmpty())
-            val city = j.optString("city", "").takeIf { it.isNotBlank() }
-            val region = j.optString("region", "").takeIf { it.isNotBlank() }
-            val country = j.optString("country_name", "").takeIf { it.isNotBlank() }
-                ?: j.optString("country", "").takeIf { it.isNotBlank() }
-            UserLocation(country = country, region = region, city = city).takeIf { !it.isBlank() }
+            c.newCall(req).await().use { resp ->
+                if (!resp.isSuccessful) return null
+                val j = JSONObject(resp.body?.string().orEmpty())
+                val city = j.optString("city", "").takeIf { it.isNotBlank() }
+                val region = j.optString("region", "").takeIf { it.isNotBlank() }
+                val country = j.optString("country_name", "").takeIf { it.isNotBlank() }
+                    ?: j.optString("country", "").takeIf { it.isNotBlank() }
+                UserLocation(country = country, region = region, city = city).takeIf { !it.isBlank() }
+            }
         } catch (_: Exception) { null }
     }
 

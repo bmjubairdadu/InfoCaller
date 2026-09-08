@@ -73,7 +73,13 @@ object IdentifierType {
 
 data class LookupContext(
     val forceRefresh: Boolean = false,
-    val priority: Int = 0
+    val priority: Int = 0,
+    /** Photo URLs already found by earlier providers in this scan. Deep-photo
+     *  tools (reverse-image, face-search pivot, avatar harvester) read this
+     *  to auto-run against the real photo instead of guessing seeds. */
+    val foundPhotos: List<String> = emptyList(),
+    /** Display name already found (feeds AI-assist queries). */
+    val foundName: String? = null
 )
 
 data class PartialResult(

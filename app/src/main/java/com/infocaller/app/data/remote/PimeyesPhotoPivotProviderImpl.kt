@@ -27,19 +27,35 @@ class PimeyesPhotoPivotProviderImpl(private val httpClient: OkHttpClient) : Look
     override val costClass = CostClass.FREE
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
-        // This pivot is identifier-agnostic: it enriches whatever the scan
-        // already found. Run for all types; it no-ops when nothing to pivot on.
+        // Auto-photo mode: enriches the scan's already-found photo. When an
+        // earlier provider found a profile picture, attach per-photo face-search
+        // upload links (Lens uploadbyurl embeds the photo; Pimeyes/FaceCheck open
+        // one tap away) so the pivot fires automatically instead of idling.
         try {
+            val autoPhotos = context.foundPhotos.filter { it.startsWith("http") }.distinct().take(3)
             val about = buildString {
-                append("Run a face search on the caller's photo: ")
-                append("Pimeyes https://pimeyes.com • FaceCheck https://facecheck.id • ")
-                append("Google Lens https://lens.google.com/v3/upload. ")
-                append("Same face on 2+ public profiles = strong match.")
+                if (autoPhotos.isNotEmpty()) {
+                    append("Face-search the caller's found photo (${autoPhotos.size}): ")
+                    autoPhotos.forEachIndexed { i, photo ->
+                        val enc = try { java.net.URLEncoder.encode(photo, "UTF-8") } catch (_: Exception) { photo }
+                        if (i > 0) append(" • ")
+                        append("Lens photo${i + 1} https://lens.google.com/uploadbyurl?url=$enc")
+                    }
+                    append(" • Pimeyes https://pimeyes.com • FaceCheck https://facecheck.id. ")
+                    append("Same face on 2+ public profiles = strong match.")
+                } else {
+                    append("Run a face search on the caller's photo: ")
+                    append("Pimeyes https://pimeyes.com • FaceCheck https://facecheck.id • ")
+                    append("Google Lens https://lens.google.com/v3/upload. ")
+                    append("Same face on 2+ public profiles = strong match.")
+                }
             }
             PartialResult(
-                about = about.take(500),
-                confidence = 0.4f,
-                source = "Face-Search Pivot (Pimeyes/FaceCheck/Lens)",
+                imageUrl = autoPhotos.firstOrNull(),
+                photoCandidates = autoPhotos.map { PhotoCandidate(provider = "FaceSearchPivot", url = it, sourcePriority = 52) },
+                about = about.take(900),
+                confidence = if (autoPhotos.isNotEmpty()) 0.6f else 0.4f,
+                source = "Face-Search Pivot (Pimeyes/FaceCheck/Lens${if (autoPhotos.isNotEmpty()) " — auto photo" else ""})",
                 providerId = id, providerVersion = version
             )
         } catch (_: Exception) { null }

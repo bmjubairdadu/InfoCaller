@@ -206,12 +206,6 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
             catch (_: Exception) { emptyList() }
         }
 
-        // Premium incoming card: dark gradient header, gold-ring circular
-        // photo, name + number, location, automatic NID badge, branded social
-        // logos, and big red-decline / green-answer tap targets. The overlay
-        // window is NOT_FOCUSABLE so taps deep-link to the full-screen UI
-        // where the red/green buttons answer for real. Entrance animates in
-        // (fade + slide) so the in-app banner feels alive, not static.
         androidx.compose.animation.AnimatedVisibility(
             visible = true,
             enter = androidx.compose.animation.fadeIn(
@@ -443,12 +437,19 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
             border = androidx.compose.foundation.BorderStroke(2.dp, brand.copy(alpha = 0.8f))
         ) {
             Box(contentAlignment = Alignment.Center) {
-                AsyncImage(
-                    model = SocialUtils.getLogoUrl(profile.platform),
-                    contentDescription = profile.platform,
-                    modifier = Modifier.size(18.dp).clip(CircleShape),
-                    contentScale = ContentScale.Fit
-                )
+                var logoFailed by remember(profile.platform) { mutableStateOf(false) }
+                if (!logoFailed) {
+                    AsyncImage(
+                        model = SocialUtils.getLogoUrl(profile.platform),
+                        contentDescription = profile.platform,
+                        modifier = Modifier.size(18.dp).clip(CircleShape),
+                        contentScale = ContentScale.Fit,
+                        onError = { logoFailed = true }
+                    )
+                }
+                if (logoFailed) {
+                    Text(profile.platform.firstOrNull()?.uppercase() ?: "?", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                }
             }
         }
     }

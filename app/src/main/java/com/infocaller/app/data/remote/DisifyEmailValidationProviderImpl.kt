@@ -2,6 +2,7 @@ package com.infocaller.app.data.remote
 
 import com.google.gson.JsonParser
 import com.infocaller.app.domain.engine.*
+import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -39,9 +40,8 @@ class DisifyEmailValidationProviderImpl(
                     .header("User-Agent", "InfoCaller-OSINT/2.0")
                     .header("Accept", "application/json")
                     .build()
-                val resp = httpClient.newCall(req).execute()
                 // Response must be closed (use{}) or connections leak.
-                val body = resp.use { r ->
+                val body = httpClient.newCall(req).await().use { r ->
                     if (!r.isSuccessful) return@withContext null
                     r.body?.string()
                 } ?: return@withContext null

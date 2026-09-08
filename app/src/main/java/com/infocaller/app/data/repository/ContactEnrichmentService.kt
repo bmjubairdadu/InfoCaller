@@ -80,6 +80,7 @@ class ContactEnrichmentService(
                 publicName = result.name,
                 alternateName = result.alternateName,
                 profileImageUrl = result.imageUrl,
+                profileImageSource = result.imageSource,
                 about = result.about,
                 city = result.city,
                 carrier = result.carrier,
@@ -90,6 +91,9 @@ class ContactEnrichmentService(
                 whatsappStatus = result.socialProfiles.find { it.platform == "WhatsApp" }?.status?.name,
                 telegramStatus = result.socialProfiles.find { it.platform == "Telegram" }?.status?.name,
                 socialProfilesJson = SocialUtils.toJson(result.socialProfiles),
+                // Auto-photo fix: persist candidates so the cached photo survives
+                // for the Details Lens button + next-scan LookupContext.
+                photoCandidatesJson = if (result.photoCandidates.isNotEmpty()) SocialUtils.photosToJson(result.photoCandidates) else null,
                 source = result.sources.joinToString(","),
                 confidence = result.confidence.toString(),
                 lastChecked = System.currentTimeMillis(),
@@ -317,6 +321,145 @@ class ContactEnrichmentService(
         } catch (e: Exception) {
             false
         }
+    }
+
+    /**
+     * Permanent phonebook mirror for one bulk-scan result (BulkIdentityEngine).
+     * Fills ONLY gaps — never overwrites the user's own saved name or photo:
+     * - missing row photo + scan has one  -> insert Photo row
+     * - saved name is a placeholder (raw number / "Unknown") + scan has a
+     *   real name -> rename the StructuredName row to the caller-ID name
+     * - enrichment extras (about, carrier, socials, NID...) -> InfoCaller
+     *   note block (existing user notes preserved)
+     * Runs best-effort: without WRITE_CONTACTS it silently no-ops.
+     */
+    suspend fun mirrorLookupResult(phoneNumber: String, result: LookupResult): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(
+                    context, com.infocaller.app.permissions.PermissionManager.WRITE_CONTACTS_PERMISSION
+                )
+            ) return@withContext false
+            val normalized = PhoneNumberUtils.normalize(phoneNumber)
+            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(normalized))
+            var rawContactId = -1L
+            var existingName: String? = null
+            var photoId = -1L
+            context.contentResolver.query(
+                uri,
+                arrayOf(ContactsContract.PhoneLookup._ID, ContactsContract.PhoneLookup.DISPLAY_NAME, ContactsContract.PhoneLookup.PHOTO_ID),
+                null, null, null
+            )?.use { c ->
+                if (c.moveToFirst()) {
+                    // PhoneLookup._ID is the aggregate CONTACT id; resolve a
+                    // writable RAW_CONTACT id for Data-row writes below.
+                    val aggregateId = c.getLong(0)
+                    existingName = c.getString(1)
+                    photoId = if (c.isNull(2)) -1 else c.getLong(2)
+                    rawContactId = resolveWritableRawContactId(aggregateId)
+                }
+            }
+            if (rawContactId == -1L) return@withContext false
+
+            val ops = mutableListOf<ContentProviderOperation>()
+
+            // 1. Gap-fill the display name (placeholder rows only).
+            val scanName = result.name?.takeIf { !ContactUtils.isPlaceholderName(it) }
+            val rowIsGap = ContactUtils.isPlaceholderName(existingName) ||
+                existingName == normalized ||
+                existingName?.filter { it.isDigit() } == normalized.filter { it.isDigit() }
+            if (scanName != null && rowIsGap) {
+                // Update-or-insert: some placeholder rows have no
+                // StructuredName row yet (number-only imports).
+                val hasNameRow = hasDataRow(rawContactId, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                if (hasNameRow) {
+                    ops.add(
+                        ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
+                            .withSelection(
+                                "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                                arrayOf(rawContactId.toString(), ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                            )
+                            .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, scanName)
+                            .build()
+                    )
+                } else {
+                    ops.add(
+                        ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                            .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
+                            .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                            .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, scanName)
+                            .build()
+                    )
+                }
+            }
+
+            // 2. Gap-fill the photo (rows without one only).
+            val photoUrl = result.imageUrl?.takeIf { it.startsWith("http") }
+                ?: result.photoCandidates.firstOrNull()?.url?.takeIf { it.startsWith("http") }
+            if (photoId == -1L && photoUrl != null) {
+                val bitmap = try { downloadBitmap(photoUrl) } catch (_: Exception) { null }
+                if (bitmap != null) {
+                    val stream = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)
+                    ops.add(
+                        ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                            .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
+                            .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                            .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, stream.toByteArray())
+                            .build()
+                    )
+                }
+            }
+
+            if (ops.isNotEmpty()) {
+                try {
+                    context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ArrayList(ops))
+                } catch (_: Exception) { }
+            }
+
+            // 3. Notes block with everything that has no structured slot.
+            val caller = Caller(
+                phoneNumber = normalized,
+                displayName = result.name,
+                alias = result.alternateName,
+                photoUrl = result.imageUrl,
+                organization = result.carrier,
+                country = result.country,
+                region = result.region,
+                carrier = result.carrier,
+                reportCount = 0,
+                isVerified = false,
+                socialMediaLinks = result.socialProfiles.mapNotNull { it.profileUrl }
+            )
+            syncEnrichmentToPhonebookNotes(rawContactId, null, caller)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** First writable (non-deleted) raw-contact row for an aggregate contact. */
+    private fun resolveWritableRawContactId(aggregateId: Long): Long {
+        return try {
+            context.contentResolver.query(
+                ContactsContract.RawContacts.CONTENT_URI,
+                arrayOf(ContactsContract.RawContacts._ID),
+                "${ContactsContract.RawContacts.CONTACT_ID}=? AND ${ContactsContract.RawContacts.DELETED}=0",
+                arrayOf(aggregateId.toString()),
+                null
+            )?.use { c -> if (c.moveToFirst()) c.getLong(0) else -1L } ?: -1L
+        } catch (_: Exception) { -1L }
+    }
+
+    private fun hasDataRow(rawContactId: Long, mimeType: String): Boolean {
+        return try {
+            context.contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.Data._ID),
+                "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                arrayOf(rawContactId.toString(), mimeType),
+                null
+            )?.use { it.moveToFirst() } ?: false
+        } catch (_: Exception) { false }
     }
 
     suspend fun syncAllWhatsAppPhotos(onProgress: (Int, Int) -> Unit): Int = withContext(Dispatchers.IO) {

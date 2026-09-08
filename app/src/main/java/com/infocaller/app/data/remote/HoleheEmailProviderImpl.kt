@@ -3,6 +3,7 @@ package com.infocaller.app.data.remote
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.domain.model.SocialLookupStatus
 import com.infocaller.app.domain.model.SocialProfile
+import com.infocaller.app.util.await
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -55,10 +56,10 @@ class HoleheEmailProviderImpl(
         )
     }
 
-    private fun keywordExists(site: Site, url: String): Boolean {
+    private suspend fun keywordExists(site: Site, url: String): Boolean {
         return try {
             val req = Request.Builder().url(url).header("User-Agent","Mozilla/5.0 (Linux; Android 14)").build()
-            httpClient.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).await().use { resp ->
                 if (resp.code != 200) return false
                 val body = resp.body?.string() ?: return false
                 if (body.length < 500) return false

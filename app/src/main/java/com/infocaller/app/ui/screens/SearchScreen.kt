@@ -27,14 +27,14 @@ fun SearchScreen(
     val uiState by viewModel.searchResult.collectAsState()
 
     Scaffold(
-        containerColor = Background,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Identify", color = Color.White) },
+                title = { Text("Identify", color = contentPrimary) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = contentPrimary)
                     }
                 }
             )
@@ -47,7 +47,7 @@ fun SearchScreen(
             contentAlignment = Alignment.Center
         ) {
             when (uiState) {
-                is SearchUiState.Idle -> Text("Type a number to begin...", color = Color.White.copy(alpha = 0.5f))
+                is SearchUiState.Idle -> Text("Type a number to begin...", color = contentSecondary(0.5f))
                 is SearchUiState.Loading -> InfoCallerLoading(isFullScreen = true, text = "Searching...")
                 is SearchUiState.Success -> {
                     val caller = (uiState as SearchUiState.Success).caller
@@ -63,7 +63,7 @@ fun SearchScreen(
                         colors = CardDefaults.cardColors(containerColor = Color.Transparent)
                     ) {
                         Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(text = caller.displayName ?: "Unknown Caller", style = MaterialTheme.typography.titleLarge, color = Color.White)
+                            Text(text = caller.displayName ?: "Unknown Caller", style = MaterialTheme.typography.titleLarge, color = contentPrimary)
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(text = caller.phoneNumber, style = MaterialTheme.typography.bodyMedium, color = Primary)
                             Spacer(modifier = Modifier.height(16.dp))
@@ -75,7 +75,7 @@ fun SearchScreen(
                         }
                     }
                 }
-                is SearchUiState.NotFound -> Text("No data found for this number", color = Color.White)
+                is SearchUiState.NotFound -> Text("No data found for this number", color = contentPrimary)
                 is SearchUiState.Error -> Text("Error: ${(uiState as SearchUiState.Error).message}", color = Error)
             }
         }

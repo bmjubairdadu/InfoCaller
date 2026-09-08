@@ -5,6 +5,7 @@ import com.infocaller.app.domain.engine.*
 import com.infocaller.app.domain.model.SocialLookupStatus
 import com.infocaller.app.domain.model.SocialProfile
 import com.infocaller.app.util.PhoneNumberUtils
+import com.infocaller.app.util.await
 import kotlinx.coroutines.*
 import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -28,17 +29,21 @@ class SocialEnumProviderImpl : SocialProvider {
         .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 
-    override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = coroutineScope {
-        if (type != IdentifierType.PHONE) return@coroutineScope null
+    override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
+        if (type != IdentifierType.PHONE) return@withContext null
         val normalizedPhoneNumber = identifier
         val cleanNumber = normalizedPhoneNumber.filter { it.isDigit() }
 
-        val deferredResults = listOf(
-            async { checkWhatsApp(cleanNumber) },
-            async { checkTelegram(cleanNumber) }
-        )
-
-        val profiles = deferredResults.awaitAll().filterNotNull()
+        // Strictly one-by-one: WhatsApp finishes, THEN Telegram starts.
+        // Simultaneous probes spiked the radio and raced the release build.
+        val profiles = mutableListOf<SocialProfile>()
+        try {
+            checkWhatsApp(cleanNumber)?.let { profiles.add(it) }
+        } catch (_: Exception) { }
+        try {
+            kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.ensureActive()
+            checkTelegram(cleanNumber)?.let { profiles.add(it) }
+        } catch (_: Exception) { }
         
         if (profiles.isNotEmpty()) {
             PartialResult(
@@ -59,7 +64,7 @@ class SocialEnumProviderImpl : SocialProvider {
         try {
             val url = "https://api.whatsapp.com/send/?phone=$cleanNumber&text&type=phone_number&app_absent=0"
             val request = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-            val text = httpClient.newCall(request).execute().use { response ->
+            val text = httpClient.newCall(request).await().use { response ->
                 response.body?.string() ?: ""
             }
             
@@ -74,7 +79,7 @@ class SocialEnumProviderImpl : SocialProvider {
         try {
             val url = "https://t.me/+$cleanNumber"
             val request = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-            val text = httpClient.newCall(request).execute().use { response ->
+            val text = httpClient.newCall(request).await().use { response ->
                 response.body?.string() ?: ""
             }
             

@@ -32,7 +32,13 @@ import com.infocaller.app.ui.viewmodel.AuthUiState
 import com.infocaller.app.ui.viewmodel.AuthViewModel
 import com.infocaller.app.ui.components.InfoCallerLoading
 import com.infocaller.app.ui.components.OtpInputField
-import com.infocaller.app.ui.theme.*
+import com.infocaller.app.ui.theme.Primary
+import com.infocaller.app.ui.theme.TruecallerBlue
+import com.infocaller.app.ui.theme.brandGradient
+import com.infocaller.app.ui.theme.contentPrimary
+import com.infocaller.app.ui.theme.contentSecondary
+import com.infocaller.app.ui.theme.faintTint
+import com.infocaller.app.ui.theme.glassy
 import com.infocaller.app.util.OtpManager
 import com.infocaller.app.util.PhoneNumberUtils
 import com.infocaller.app.permissions.PermissionManager
@@ -83,6 +89,10 @@ fun LoginScreen(
     var autoVerifying by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
     var verifyError by remember { mutableStateOf<String?>(null) }
+    // SEND-gate: tapping SEND VERIFICATION CODE first shows an Allow/Deny
+    // consent popup (OTP delivery + optional SMS auto-read). Allow fires the
+    // OTP request; Deny dismisses and stays on the number entry.
+    var showOtpConsent by remember { mutableStateOf(false) }
 
     LaunchedEffect(tcAuthResult) {
         if (tcAuthResult == null) return@LaunchedEffect
@@ -183,7 +193,7 @@ fun LoginScreen(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = Background
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             if (tcAuthResult == null && (uiState is AuthUiState.Loading || tcLoading)) {
@@ -220,7 +230,7 @@ fun LoginScreen(
                 Text(
                     text = "Intelligence at your fingertips. Verify your number to unlock full potential.",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.7f),
+                    color = contentSecondary(0.7f),
                     modifier = Modifier.padding(top = 12.dp, start = 32.dp, end = 32.dp),
                     textAlign = TextAlign.Center
                 )
@@ -241,25 +251,25 @@ fun LoginScreen(
                             Text(
                                 "Enter Phone Number",
                                 style = MaterialTheme.typography.titleMedium,
-                                color = Color.White,
+                                color = contentPrimary,
                                 modifier = Modifier.align(Alignment.Start)
                             )
                             Spacer(Modifier.height(16.dp))
-                            
+
                             OutlinedTextField(
                                 value = tcPhone,
                                 onValueChange = { viewModel.setTcPhone(it) },
-                                label = { Text("Phone Number", color = Color.White.copy(alpha = 0.5f)) },
+                                label = { Text("Phone Number", color = contentSecondary(0.5f)) },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp),
                                 leadingIcon = { Icon(Icons.Default.Phone, null, tint = Primary) },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                                 singleLine = true,
                                 colors = OutlinedTextFieldDefaults.colors(
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White,
+                                    focusedTextColor = contentPrimary,
+                                    unfocusedTextColor = contentPrimary,
                                     focusedBorderColor = Primary,
-                                    unfocusedBorderColor = Color.White.copy(alpha = 0.2f)
+                                    unfocusedBorderColor = faintTint(0.2f)
                                 )
                             )
 
@@ -284,54 +294,9 @@ fun LoginScreen(
                                     .alpha(if (tcPhone.length >= 7 && !tcLoading) 1f else 0.5f)
                                     .brandGradient(radius = 16.dp)
                                     .clickable(enabled = tcPhone.length >= 7 && !tcLoading) {
-                                        val runAuth: () -> Unit = {
-                                            tcLoading = true
-                                            authError = null
-                                            scope.launch {
-                                                val normalized = PhoneNumberUtils.normalize(tcPhone)
-                                                val r = authManager.requestOtp(normalized)
-                                                val result = if (r!=null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
-
-                                                if (result == null) {
-                                                    authError = "Connection error — check internet"
-                                                    snackbarHostState.showSnackbar("Connection error — check internet")
-                                                } else if (result.statusCode == -1) {
-                                                    authError = result.errorMessage ?: "Connection error. Check your internet."
-                                                    snackbarHostState.showSnackbar(result.errorMessage ?: "Connection error. Check your internet.")
-                                                } else if (result.requestId.isBlank() && result.statusCode != 3) {
-                                                    val errorMsg = result.errorMessage ?: ""
-                                                    // Benojir: status 5/6 = rate limit -> "Too many request... Try again after 1 hour"
-                                                    val isLimit = result.statusCode == 5 || result.statusCode == 6 || result.statusCode == 429
-                                                    if (isLimit) {
-                                                        viewModel.refreshTcSession(context)
-                                                        authError = errorMsg.takeIf { it.isNotBlank() } ?: "Too many requests. Try again after 1 hour."
-                                                        snackbarHostState.showSnackbar(errorMsg.takeIf { it.isNotBlank() } ?: "Too many requests. Try again after 1 hour.")
-                                                    } else {
-                                                        val msg = when(result.statusCode) {
-                                                            40104 -> "Configuration Error: Invalid Client Secret."
-                                                            40101 -> "Unauthorized request. Please check your credentials."
-                                                            12 -> "Region error. Try again shortly."
-                                                            else -> errorMsg.takeIf { it.isNotBlank() } ?: "Verification service unavailable (Error ${result.statusCode})."
-                                                        }
-                                                        authError = msg
-                                                        snackbarHostState.showSnackbar(msg)
-                                                    }
-                                                } else {
-                                                    // Benojir onSuccess: save requestId even when alreadyLoggedIn, then show OTP box
-                                                    viewModel.setTcAuthResult(result)
-                                                    if (result.requestId.isNotBlank()) {
-                                                        snackbarHostState.showSnackbar(if (result.method == "already_logged_in") "Already verified ✓" else "OTP sent ✓")
-                                                    }
-                                                }
-                                                tcLoading = false
-                                            }
-                                        }
-
-                                        // SEND never triggers a permission dialog: the OTP
-                                        // request fires immediately so the code box
-                                        // always appears. Auto-fill is offered later
-                                        // from the OTP screen itself.
-                                        runAuth()
+                                        // Allow/Deny gate first: the OTP request
+                                        // fires only after Allow in the popup.
+                                        showOtpConsent = true
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
@@ -348,14 +313,14 @@ fun LoginScreen(
                             }
                         } else {
                             Text(
-                                if (tcAuthResult!!.method == "call") 
-                                    "Verification via Call" 
+                                if (tcAuthResult!!.method == "call")
+                                    "Verification via Call"
                                 else if (tcAuthResult!!.method == "whatsapp")
                                     "Verification via WhatsApp"
-                                else 
+                                else
                                     "Enter Verification Code",
                                 style = MaterialTheme.typography.titleMedium,
-                                color = Color.White,
+                                color = contentPrimary,
                                 modifier = Modifier.align(Alignment.Start)
                             )
                             Text(
@@ -365,7 +330,7 @@ fun LoginScreen(
                                     else -> "We've sent a 6-digit code to your phone — type it below"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color.White.copy(alpha = 0.6f),
+                                color = contentSecondary(0.6f),
                                 modifier = Modifier.padding(top = 4.dp).align(Alignment.Start)
                             )
                             
@@ -393,7 +358,7 @@ fun LoginScreen(
                                 if (tcAuthResult!!.method == "whatsapp") {
                                     Text(
                                         "WhatsApp codes can't be read automatically — type the 6 digits from WhatsApp here.",
-                                        color = Color.White.copy(alpha = 0.5f),
+                                        color = contentSecondary(0.5f),
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         modifier = Modifier.padding(top = 8.dp)
@@ -423,9 +388,9 @@ fun LoginScreen(
                                     },
                                     modifier = Modifier.padding(top = 8.dp)
                                 ) {
-                                    Icon(Icons.Default.ContentPaste, null, tint = Color.White.copy(alpha = 0.5f), modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Default.ContentPaste, null, tint = contentSecondary(0.5f), modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(8.dp))
-                                    Text("Paste Code", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
+                                    Text("Paste Code", color = contentSecondary(0.5f), fontSize = 12.sp)
                                 }
                             } else {
                                 // Flash-call / missed-call path: the verification call is
@@ -435,7 +400,7 @@ fun LoginScreen(
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
                                         "Waiting for the verification call — it will be rejected automatically. Or enter the last 6 digits of the caller number:",
-                                        color = Color.White.copy(alpha = 0.7f),
+                                        color = contentSecondary(0.7f),
                                         style = MaterialTheme.typography.labelSmall,
                                         textAlign = TextAlign.Center,
                                         modifier = Modifier.padding(bottom = 16.dp)
@@ -514,7 +479,7 @@ fun LoginScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 TextButton(onClick = { viewModel.setTcAuthResult(null); tcOtp = ""; verifyError = null; authError = null }) {
-                                    Text("Edit Phone Number", color = Color.White.copy(alpha = 0.6f))
+                                    Text("Edit Phone Number", color = contentSecondary(0.6f))
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
                                 TextButton(
@@ -547,7 +512,7 @@ fun LoginScreen(
                                 ) {
                                     Text(
                                         if (resendCooldown > 0) "Resend in ${resendCooldown}s" else "Resend Code",
-                                        color = if (resendCooldown > 0) Color.White.copy(alpha = 0.35f) else Primary
+                                        color = if (resendCooldown > 0) contentSecondary(0.35f) else Primary
                                     )
                                 }
                             }
@@ -576,11 +541,92 @@ fun LoginScreen(
                 Text(
                     text = "By continuing, you agree to our Terms of Service & Privacy Policy",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color.White.copy(alpha = 0.4f),
+                    color = contentSecondary(0.4f),
                     textAlign = TextAlign.Center,
                     lineHeight = 16.sp
                 )
             }
+        }
+
+        // Allow/Deny consent popup for the OTP step. Allow fires the exact
+        // same OTP request the SEND button used to fire directly (plus an
+        // optional SMS auto-read grant); Deny dismisses back to number entry.
+        if (showOtpConsent && tcAuthResult == null) {
+            AlertDialog(
+                onDismissRequest = { if (!tcLoading) showOtpConsent = false },
+                icon = { Icon(Icons.Default.VerifiedUser, null, tint = Primary) },
+                title = { Text("Verify your number?") },
+                text = {
+                    Text(
+                        "InfoCaller will send a 6-digit verification code to $tcPhone. " +
+                            "Allow lets the app read the incoming SMS automatically so the code fills itself in — " +
+                            "you can always type it manually instead.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = !tcLoading,
+                        onClick = {
+                            tcLoading = true
+                            authError = null
+                            scope.launch {
+                                // Optional auto-read grant, taken here so the
+                                // system dialog appears as part of Allow.
+                                try {
+                                    if (!PermissionManager.hasPermissions(context, PermissionManager.SMS_PERMISSION)) {
+                                        smsPermissionLauncher.launch(PermissionManager.SMS_PERMISSION)
+                                    } else {
+                                        autoFillEnabled = true
+                                    }
+                                } catch (_: Exception) { }
+                                val normalized = PhoneNumberUtils.normalize(tcPhone)
+                                val r = authManager.requestOtp(normalized)
+                                val result = if (r != null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
+
+                                if (result == null) {
+                                    authError = "Connection error — check internet"
+                                    snackbarHostState.showSnackbar("Connection error — check internet")
+                                } else if (result.statusCode == -1) {
+                                    authError = result.errorMessage ?: "Connection error. Check your internet."
+                                    snackbarHostState.showSnackbar(result.errorMessage ?: "Connection error. Check your internet.")
+                                } else if (result.requestId.isBlank() && result.statusCode != 3) {
+                                    val errorMsg = result.errorMessage ?: ""
+                                    val isLimit = result.statusCode == 5 || result.statusCode == 6 || result.statusCode == 429
+                                    if (isLimit) {
+                                        viewModel.refreshTcSession(context)
+                                        authError = errorMsg.takeIf { it.isNotBlank() } ?: "Too many requests. Try again after 1 hour."
+                                        snackbarHostState.showSnackbar(errorMsg.takeIf { it.isNotBlank() } ?: "Too many requests. Try again after 1 hour.")
+                                    } else {
+                                        val msg = when (result.statusCode) {
+                                            40104 -> "Configuration Error: Invalid Client Secret."
+                                            40101 -> "Unauthorized request. Please check your credentials."
+                                            12 -> "Region error. Try again shortly."
+                                            else -> errorMsg.takeIf { it.isNotBlank() } ?: "Verification service unavailable (Error ${result.statusCode})."
+                                        }
+                                        authError = msg
+                                        snackbarHostState.showSnackbar(msg)
+                                    }
+                                } else {
+                                    viewModel.setTcAuthResult(result)
+                                    if (result.requestId.isNotBlank()) {
+                                        snackbarHostState.showSnackbar(if (result.method == "already_logged_in") "Already verified ✓" else "OTP sent ✓")
+                                    }
+                                }
+                                tcLoading = false
+                                // Close the popup once the OTP box is up (or
+                                // when an error left inline text behind).
+                                if (viewModel.tcAuthResult.value != null) showOtpConsent = false
+                            }
+                        }
+                    ) { Text("Allow", color = Primary, fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    TextButton(enabled = !tcLoading, onClick = { showOtpConsent = false }) {
+                        Text("Deny", color = contentSecondary(0.7f))
+                    }
+                }
+            )
         }
     }
 }

@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -26,6 +27,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.infocaller.app.ui.theme.Background
 import com.infocaller.app.ui.viewmodel.CallerViewModel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -36,7 +39,10 @@ fun MainScreen(
 ) {
     val navController = rememberNavController()
     val context = androidx.compose.ui.platform.LocalContext.current
-    
+    val launchScope = rememberCoroutineScope()
+
+    val bulkProgress by com.infocaller.app.data.repository.BulkIdentityEngine.progress.collectAsState()
+
     LaunchedEffect(Unit) {
         val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
         try {
@@ -45,19 +51,33 @@ fun MainScreen(
             app.operatorLogoManager.initialize(sims)
         } catch (_: Exception) { }
 
-        // Heavy first sync only makes sense once contacts permission exists;
-        // otherwise Contacts/Recents screens ask lazily when actually opened.
-        // Heat fix: run ONLY the throttled worker (gap-aware, batched) — never
-        // the direct full-scan calls. performMasterSync + syncWhatsAppPhotos each
-        // re-scanned every contact with full provider lookups on every launch.
-        val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-        val isFirstSyncDone = prefs.getBoolean("is_first_sync_done", false)
-        if (!isFirstSyncDone && com.infocaller.app.permissions.PermissionManager.hasPermissions(
+        // Identity engine on launch: recents + full phonebook through the
+        // parallel Truecaller-bulk + Eyecon sweep, permanently mirrored into
+        // the phonebook (gap-fill only). Skips rows that already have a
+        // name + photo, so repeat launches are cheap. Continues 24/7 via
+        // the hourly EnrichmentWorker (re-armed on boot).
+        if (com.infocaller.app.permissions.PermissionManager.hasPermissions(
                 context, com.infocaller.app.permissions.PermissionManager.CONTACTS_PERMISSIONS
             )
         ) {
-            viewModel.triggerThrottledSync(context)
-            prefs.edit { putBoolean("is_first_sync_done", true) }
+            try {
+                launchScope.launch {
+                    try {
+                        withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            com.infocaller.app.data.repository.BulkIdentityEngine.runFullPass(context)
+                        }
+                    } catch (_: Exception) { }
+                }
+            } catch (_: Exception) { }
+        } else {
+            // No contacts grant yet: queue the throttled worker so the sweep
+            // starts automatically once the grant lands (lazy tab requests).
+            val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+            val isFirstSyncDone = prefs.getBoolean("is_first_sync_done", false)
+            if (!isFirstSyncDone) {
+                viewModel.triggerThrottledSync(context)
+                prefs.edit { putBoolean("is_first_sync_done", true) }
+            }
         }
     }
 
@@ -81,8 +101,11 @@ fun MainScreen(
         )
     }
 
+    // Theme-aware shell: bar + labels follow Light/Dark instead of fixed navy/white.
+    val navBarContainer = if (MaterialTheme.colorScheme.background.red * 0.299f + MaterialTheme.colorScheme.background.green * 0.587f + MaterialTheme.colorScheme.background.blue * 0.114f < 0.5f) Color(0xFF0B1322) else MaterialTheme.colorScheme.surface
+    val navContent = MaterialTheme.colorScheme.onBackground
     Scaffold(
-        containerColor = Background,
+        containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -95,7 +118,7 @@ fun MainScreen(
                     .padding(bottom = 12.dp)
             ) {
                 NavigationBar(
-                    containerColor = Color(0xFF0B1322),
+                    containerColor = navBarContainer,
                     modifier = Modifier
                         .height(80.dp)
                         .clip(RoundedCornerShape(40.dp))
@@ -103,8 +126,8 @@ fun MainScreen(
                             width = 1.dp,
                             brush = Brush.verticalGradient(
                                 colors = listOf(
-                                    Color.White.copy(alpha = 0.25f),
-                                    Color.White.copy(alpha = 0.05f)
+                                    navContent.copy(alpha = 0.25f),
+                                    navContent.copy(alpha = 0.05f)
                                 )
                             ),
                             shape = RoundedCornerShape(40.dp)
@@ -119,23 +142,23 @@ fun MainScreen(
                                     item.icon,
                                     contentDescription = item.label,
                                     modifier = Modifier.size(24.dp),
-                                    tint = if (isSelected) Color.White else Color.White.copy(alpha = 0.4f)
+                                    tint = if (isSelected) navContent else navContent.copy(alpha = 0.4f)
                                 )
                             },
                             label = {
                                 Text(
                                     item.label,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.4f)
+                                    color = if (isSelected) navContent else navContent.copy(alpha = 0.4f)
                                 )
                             },
                             selected = isSelected,
                             colors = NavigationBarItemDefaults.colors(
-                                indicatorColor = Color.White.copy(alpha = 0.1f),
-                                selectedIconColor = Color.White,
-                                unselectedIconColor = Color.White.copy(alpha = 0.4f),
-                                selectedTextColor = Color.White,
-                                unselectedTextColor = Color.White.copy(alpha = 0.4f)
+                                indicatorColor = navContent.copy(alpha = 0.1f),
+                                selectedIconColor = navContent,
+                                unselectedIconColor = navContent.copy(alpha = 0.4f),
+                                selectedTextColor = navContent,
+                                unselectedTextColor = navContent.copy(alpha = 0.4f)
                             ),
                             onClick = {
                                 if (currentRoute != item.route) {
@@ -170,33 +193,78 @@ fun MainScreen(
             }
         }
     ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = "recents",
-            modifier = Modifier.fillMaxSize(),
-            enterTransition = { fadeIn(animationSpec = tween(150)) },
-            exitTransition = { fadeOut(animationSpec = tween(150)) }
-        ) {
-            composable("recents") {
-                RecentsScreen(
-                    viewModel = viewModel,
-                    innerPadding = innerPadding,
-                    onNavigateToDetails = { number ->
-                        viewModel.searchNumber(number)
-                        parentNavController.navigate("details/" + android.net.Uri.encode(number))
-                    }
-                )
+        Box(modifier = Modifier.fillMaxSize()) {
+            NavHost(
+                navController = navController,
+                startDestination = "recents",
+                modifier = Modifier.fillMaxSize(),
+                enterTransition = { fadeIn(animationSpec = tween(150)) },
+                exitTransition = { fadeOut(animationSpec = tween(150)) }
+            ) {
+                composable("recents") {
+                    RecentsScreen(
+                        viewModel = viewModel,
+                        innerPadding = innerPadding,
+                        onNavigateToDetails = { number ->
+                            viewModel.searchNumber(number)
+                            parentNavController.navigate("details/" + android.net.Uri.encode(number))
+                        }
+                    )
+                }
+                composable("contacts") {
+                    ContactsScreen(
+                        viewModel = viewModel,
+                        innerPadding = innerPadding,
+                        onMakeCall = onMakeCall,
+                        onNavigateToDetails = { number ->
+                            viewModel.searchNumber(number)
+                            parentNavController.navigate("details/" + android.net.Uri.encode(number))
+                        }
+                    )
+                }
             }
-            composable("contacts") {
-                ContactsScreen(
-                    viewModel = viewModel,
-                    innerPadding = innerPadding,
-                    onMakeCall = onMakeCall,
-                    onNavigateToDetails = { number ->
-                        viewModel.searchNumber(number)
-                        parentNavController.navigate("details/" + android.net.Uri.encode(number))
+            // Bulk identity sweep banner: floats above the tabs while the
+            // launch / 24-7 pass (Truecaller bulk + Eyecon) enriches recents
+            // + contacts and mirrors hits into the phonebook.
+            if (bulkProgress.running && bulkProgress.total > 0) {
+                val pct = (bulkProgress.done.toFloat() / bulkProgress.total.coerceAtLeast(1)).coerceIn(0f, 1f)
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = innerPadding.calculateBottomPadding() + 104.dp)
+                        .padding(horizontal = 24.dp)
+                        .fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = navBarContainer.copy(alpha = 0.97f)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(
+                            progress = { pct },
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 3.dp,
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Identifying contacts ${bulkProgress.done}/${bulkProgress.total}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = navContent,
+                            )
+                            bulkProgress.lastLabel?.takeIf { it.isNotBlank() }?.let {
+                                Text(
+                                    it.take(40),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = navContent.copy(alpha = 0.6f),
+                                    maxLines = 1,
+                                )
+                            }
+                        }
                     }
-                )
+                }
             }
         }
     }

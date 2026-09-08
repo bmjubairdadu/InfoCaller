@@ -1,15 +1,10 @@
 <resources>
     <style name="Theme.InfoCaller" parent="android:Theme.Material.Light.NoActionBar">
-        <!-- Brand Background (Pure Black for OLED) -->
-        <item name="android:windowBackground">#000000</item>
-        <item name="android:statusBarColor">#000000</item>
-        <item name="android:navigationBarColor">#000000</item>
+        <!-- Plain backdrop: the Compose launcher is the ONLY launch animation
+             (animated logo + per-letter app name). No static window logo. -->
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
-    </style>
-
-    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">#000000</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/app_logo</item>
-        <item name="postSplashScreenTheme">@style/Theme.InfoCaller</item>
     </style>
 </resources>

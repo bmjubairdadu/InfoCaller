@@ -111,12 +111,12 @@ fun RecentsScreen(
         Scaffold(
             containerColor = Color.Transparent,
             topBar = {
-                Surface(color = Color.Black.copy(alpha = 0.3f), modifier = Modifier.glassy(blur = 20.dp, radius = 0.dp)) {
+                Surface(color = topBarScrim(), modifier = Modifier.glassy(blur = 20.dp, radius = 0.dp)) {
                     TopAppBar(
-                        title = { Text("Activity", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White) },
+                        title = { Text("Activity", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = contentPrimary) },
                         actions = {
                             IconButton(onClick = { requestClearAll() }) {
-                                Icon(Icons.Default.DeleteSweep, contentDescription = "Clear All", tint = Color.White.copy(alpha = 0.6f))
+                                Icon(Icons.Default.DeleteSweep, contentDescription = "Clear All", tint = contentSecondary(0.6f))
                             }
                         },
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
@@ -138,10 +138,10 @@ fun RecentsScreen(
                         item {
                             OutlinedTextField(
                                 value = searchQuery, onValueChange = { searchQuery = it },
-                                placeholder = { Text("Search activity...", color = Color.White.copy(alpha = 0.5f)) },
+                                placeholder = { Text("Search activity...", color = contentSecondary(0.5f)) },
                                 modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
-                                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.White.copy(alpha = 0.6f)) },
-                                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedContainerColor = Color.White.copy(alpha = 0.05f), unfocusedContainerColor = Color.White.copy(alpha = 0.05f), focusedBorderColor = Primary.copy(alpha = 0.5f), unfocusedBorderColor = Color.White.copy(alpha = 0.1f)),
+                                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = contentSecondary(0.6f)) },
+                                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = contentPrimary, unfocusedTextColor = contentPrimary, focusedContainerColor = faintTint(0.05f), unfocusedContainerColor = faintTint(0.05f), focusedBorderColor = Primary.copy(alpha = 0.5f), unfocusedBorderColor = faintTint(0.1f)),
                                 singleLine = true
                             )
                             Spacer(modifier = Modifier.height(16.dp))
@@ -152,7 +152,7 @@ fun RecentsScreen(
                                 indicator = { tabPositions -> TabRowDefaults.SecondaryIndicator(modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]), color = Primary) }
                             ) {
                                 listOf("All", "Missed", "Incoming", "Outgoing").forEachIndexed { index, title ->
-                                    Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(text = title, color = if (selectedTab == index) Color.White else Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.titleSmall) })
+                                    Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(text = title, color = if (selectedTab == index) contentPrimary else contentSecondary(0.5f), style = MaterialTheme.typography.titleSmall) })
                                 }
                             }
                             Spacer(modifier = Modifier.height(16.dp))
@@ -160,7 +160,7 @@ fun RecentsScreen(
                         itemsIndexed(filteredCalls, key = { _, it -> "${it.number}_${it.date}" }) { _, entry ->
                             val enrichment = enrichmentMap[entry.number]
                             val sim = simInfos.find { it.subscriptionId.toString() == entry.subscriptionId }
-                            CallLogItem(entry, enrichment = enrichment, operatorLogoPath = sim?.localLogoPath, onClick = { onNavigateToDetails(entry.number) })
+                            CallLogItem(entry, enrichment = enrichment, operatorSim = sim, onClick = { onNavigateToDetails(entry.number) })
                         }
                         if (filteredCalls.isEmpty()) {
                             item {
@@ -171,14 +171,14 @@ fun RecentsScreen(
                                     Text(
                                         if (searchQuery.isEmpty()) "No recent calls" else "No matches for \"$searchQuery\"",
                                         style = MaterialTheme.typography.titleMedium,
-                                        color = Color.White
+                                        color = contentPrimary
                                     )
                                     Spacer(Modifier.height(8.dp))
                                     Text(
                                         if (searchQuery.isEmpty()) "Calls you make or receive will appear here."
                                         else "Try a different name or number.",
                                         style = MaterialTheme.typography.bodyMedium,
-                                        color = Color.White.copy(alpha = 0.6f)
+                                        color = contentSecondary(0.6f)
                                     )
                                 }
                             }
@@ -206,36 +206,39 @@ fun StatCard(label: String, value: String, icon: ImageVector, color: Color) {
         Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
             Column {
-                Text(text = value, style = MaterialTheme.typography.titleMedium, color = Color.White)
-                Text(text = label, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp)
+                Text(text = value, style = MaterialTheme.typography.titleMedium, color = contentPrimary)
+                Text(text = label, style = MaterialTheme.typography.labelSmall, color = contentSecondary(0.4f), fontSize = 10.sp)
             }
         }
     }
 }
 
 @Composable
-fun CallLogItem(entry: CallLogEntry, enrichment: com.infocaller.app.data.local.entity.ContactEnrichmentEntity?, operatorLogoPath: String?, onClick: () -> Unit) {
+fun CallLogItem(entry: CallLogEntry, enrichment: com.infocaller.app.data.local.entity.ContactEnrichmentEntity?, operatorSim: com.infocaller.app.util.SimInfo? = null, operatorLogoPath: String? = null, onClick: () -> Unit) {
     val dateFormat = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault())
     val dateString = dateFormat.format(Date(entry.date))
     val durationText = if (entry.duration > 0) "${entry.duration}s" else "Missed"
 
     Box(modifier = Modifier.fillMaxWidth().glassy(radius = 16.dp).clickable { onClick() }) {
         Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
+            Box(modifier = Modifier.size(48.dp).clip(CircleShape).background(faintTint(0.1f)), contentAlignment = Alignment.Center) {
                 AsyncImage(model = enrichment?.profileImageUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, error = rememberVectorPainter(when(entry.type) { 1 -> Icons.AutoMirrored.Filled.CallReceived; 2 -> Icons.AutoMirrored.Filled.CallMade; 3 -> Icons.AutoMirrored.Filled.CallMissed; else -> Icons.Default.Call }))
             }
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = entry.name.ifNullOrBlank { enrichment?.publicName.ifNullOrBlank { PhoneNumberUtils.formatAsYouType(entry.number) } }, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold), color = Color.White, modifier = Modifier.weight(1f, fill = false))
-                    if (operatorLogoPath != null) {
+                    Text(text = entry.name.ifNullOrBlank { enrichment?.publicName.ifNullOrBlank { PhoneNumberUtils.formatAsYouType(entry.number) } }, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold), color = contentPrimary, modifier = Modifier.weight(1f, fill = false))
+                    if (operatorSim != null) {
+                        Spacer(Modifier.width(8.dp))
+                        com.infocaller.app.ui.dialogs.SimLogo(sim = operatorSim, modifier = Modifier.size(14.dp), fontSize = 8.sp)
+                    } else if (operatorLogoPath != null) {
                         Spacer(Modifier.width(8.dp))
                         AsyncImage(model = operatorLogoPath, contentDescription = null, modifier = Modifier.size(14.dp).clip(CircleShape), contentScale = ContentScale.Fit)
                     }
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = dateString, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.5f))
+                    Text(text = dateString, style = MaterialTheme.typography.bodySmall, color = contentSecondary(0.5f))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = "• $durationText", style = MaterialTheme.typography.bodySmall, color = if (entry.duration > 0) Success.copy(alpha = 0.7f) else Error.copy(alpha = 0.7f))
                 }
@@ -247,7 +250,7 @@ fun CallLogItem(entry: CallLogEntry, enrichment: com.infocaller.app.data.local.e
                     Text(text = "NID: $recentNid", style = MaterialTheme.typography.bodySmall, color = Primary.copy(alpha = 0.85f))
                 }
             }
-            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = "Details", tint = Color.White.copy(alpha = 0.2f), modifier = Modifier.size(14.dp))
+            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = "Details", tint = contentSecondary(0.2f), modifier = Modifier.size(14.dp))
         }
     }
 }

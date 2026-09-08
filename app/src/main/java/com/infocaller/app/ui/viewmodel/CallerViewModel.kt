@@ -27,7 +27,9 @@ class CallerViewModel(
     private val lookupEngine: com.infocaller.app.domain.engine.IPublicLookupEngine
 ) : ViewModel() {
 
-    private val _themeMode = MutableStateFlow<Boolean?>(true) 
+    // null = follow system. Defaults to null so a fresh install matches the
+    // device theme; MainActivity persists the resolved choice afterwards.
+    private val _themeMode = MutableStateFlow<Boolean?>(null)
     val themeMode: StateFlow<Boolean?> = _themeMode.asStateFlow()
 
     private val _simInfos = MutableStateFlow<List<SimInfo>>(emptyList())
@@ -38,6 +40,11 @@ class CallerViewModel(
 
     private val _searchResult = MutableStateFlow<SearchUiState>(SearchUiState.Idle)
     val searchResult: StateFlow<SearchUiState> = _searchResult.asStateFlow()
+
+    // Monotonic generation: incremented on every new search so a superseded
+    // collector can detect it is stale and stop writing results.
+    @Volatile
+    private var searchGeneration = 0
 
     private val _scanSteps = MutableStateFlow<List<ScanStepUi>>(emptyList())
     val scanSteps: StateFlow<List<ScanStepUi>> = _scanSteps.asStateFlow()
@@ -174,6 +181,11 @@ class CallerViewModel(
 
     fun searchByIdentifier(identifier: String, type: String) {
         if (identifier.isBlank()) return
+        // Generation guard: only the latest search's collector may write
+        // _searchResult. An older scan cancelled a millisecond too late would
+        // otherwise overwrite the new scan's Loading/Success with its own
+        // stale Completed — the number→email ghost.
+        val generation = ++searchGeneration
         viewModelScope.launch {
             _searchResult.value = SearchUiState.Loading
             _scanSteps.value = emptyList()
@@ -182,16 +194,36 @@ class CallerViewModel(
                 val scanFlow = repository.startScan(identifier, com.infocaller.app.domain.engine.ScanPriority.CRITICAL, type)
                 var sawProviderStep = false
                 scanFlow.collect { state ->
+                        // Stale generation: ignore everything, including terminal
+                        // states, so the dead scan can't touch the new UI.
+                        if (generation != searchGeneration) return@collect
                         when (state) {
                             is com.infocaller.app.domain.engine.ScanState.ProviderStep -> {
                                 sawProviderStep = true
                                 applyScanStep(state)
                             }
                             is com.infocaller.app.domain.engine.ScanState.Progress -> {
-                                _searchResult.value = SearchUiState.Success(mapToCaller(state.result), isLive = true, lastProvider = state.lastProvider)
+                                // INSTANT display: persist + surface EVERY
+                                // partial the moment it arrives (name from
+                                // Truecaller, photo from Eyecon, socials from
+                                // the enumerator...). The DB write is what
+                                // wakes the enrichment collectors, so each
+                                // field appears live instead of waiting for
+                                // the final Completed.
+                                try {
+                                    repository.saveLookupResult(state.result)
+                                } catch (_: Exception) { }
+                                if (generation != searchGeneration) return@collect
+                                _searchResult.value = SearchUiState.Success(
+                                    mapToCaller(state.result),
+                                    isLive = true,
+                                    lastProvider = state.lastProvider,
+                                    livePartial = state.result,
+                                )
                             }
                             is com.infocaller.app.domain.engine.ScanState.Completed -> {
                                 repository.saveLookupResult(state.result)
+                                if (generation != searchGeneration) return@collect
                                 _searchResult.value = SearchUiState.Success(mapToCaller(state.result), isLive = false)
                                 _scanActive.value = false
                                 // Auto-sync to the phonebook: name + photo land
@@ -203,6 +235,7 @@ class CallerViewModel(
                                 } catch (_: Exception) { }
                             }
                             is com.infocaller.app.domain.engine.ScanState.Error -> {
+                                if (generation != searchGeneration) return@collect
                                 // Offline/no-route: fall back to whatever is
                                 // cached locally instead of dying with an error
                                 // card — the call UI must never crash offline.
@@ -220,6 +253,8 @@ class CallerViewModel(
                         }
                     }
             } catch (e: Exception) {
+                // Stale generation: a superseded scan's throw must not touch UI.
+                if (generation != searchGeneration) return@launch
                 // Any scan throw (offline, timeout, cancelled) degrades to the
                 // offline path: cached data if present, else a clean error.
                 try {
@@ -286,7 +321,21 @@ class CallerViewModel(
     fun showSimSelection(phoneNumber: String) { _showSimSelection.value = phoneNumber }
     fun dismissSimSelection() { _showSimSelection.value = null }
     fun cancelSearch(phoneNumber: String) { repository.cancelScan(phoneNumber); _searchResult.value = SearchUiState.Idle }
-    fun clearSearch() { _searchResult.value = SearchUiState.Idle }
+    fun clearSearch() { _searchResult.value = SearchUiState.Idle; _scanSteps.value = emptyList(); _scanActive.value = false }
+
+    /**
+     * Kill every in-flight scan and reset the result pipeline BEFORE a new
+     * search starts. Without this, tapping number → email in quick succession
+     * lets the old scan's late Progress/Completed overwrite the new scan's
+     * Loading state — the email view then shows the number's stale data.
+     */
+    fun cancelAllSearches() {
+        searchGeneration++
+        try { repository.cancelAllScans() } catch (_: Exception) { }
+        _searchResult.value = SearchUiState.Idle
+        _scanSteps.value = emptyList()
+        _scanActive.value = false
+    }
 
     fun updateCallerInfo(caller: Caller) {
         viewModelScope.launch {
@@ -416,7 +465,15 @@ class CallerViewModel(
 sealed class SearchUiState {
     object Idle : SearchUiState()
     object Loading : SearchUiState()
-    data class Success(val caller: Caller, val isLive: Boolean = false, val lastProvider: String? = null) : SearchUiState()
+    data class Success(
+        val caller: Caller,
+        val isLive: Boolean = false,
+        val lastProvider: String? = null,
+        /** Full cumulative result at the moment this state was emitted:
+         *  carries photo candidates, socials, about, carrier... the moment
+         *  each provider contributes them (instant partial display). */
+        val livePartial: LookupResult? = null,
+    ) : SearchUiState()
     object NotFound : SearchUiState()
     data class Error(val message: String) : SearchUiState()
 }

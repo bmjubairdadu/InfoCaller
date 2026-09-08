@@ -115,37 +115,21 @@ class ContinuousEnrichmentEngine(
 
             queueDao.insertOrUpdate(item.copy(status = QueueStatus.PROCESSING, lastAttemptAt = System.currentTimeMillis()))
 
-            // Gap-aware scanning is handled inside ScanOrchestrator via persisted
-            // satisfiedCapabilities; no per-item capability override is supported
-            // by IScanOrchestrator, so always run the standard background scan.
+            // Background continuous scan: only runs while online (guarded by
+            // callers + processNextOneByOne). Every completed result is:
+            //  1. persisted to the app DB (works offline later),
+            //  2. mirrored to the phonebook contact when one exists
+            //     (notes carry everything that has no ContactsContract slot),
+            //  3. cached under the enrichment row even when no phonebook row
+            //     exists yet. A SecurityException (revoked contacts grant)
+            //     never kills the loop — the item is requeued.
             orchestrator.startScan(identifier, ScanPriority.BACKGROUND).collect { state ->
                 if (state is ScanState.Completed) {
                     val res = state.result
-                    repository.saveLookupResult(res)
-
-                    val beforeGaps = gaps
-                    val newGaps = com.infocaller.app.util.EnrichmentGapChecker.check(
-                        enrichmentDao.getEnrichmentSync(com.infocaller.app.util.PhoneNumberUtils.normalize(identifier))
-                    )
-                    val shouldSync = res.confidence >= 0.6f && (!res.imageUrl.isNullOrBlank() || !res.name.isNullOrBlank() || !res.city.isNullOrBlank() || !res.about.isNullOrBlank())
-                    if (shouldSync) {
-                        enrichmentService?.updateExistingContact(
-                            phoneNumber = identifier,
-                            caller = Caller(
-                                phoneNumber = identifier,
-                                displayName = null,
-                                alias = res.name ?: res.alternateName,
-                                photoUrl = if (beforeGaps.missingPhoto) res.imageUrl else null,
-                                organization = res.carrier,
-                                carrier = res.carrier,
-                                country = res.country,
-                                region = res.region,
-                                reportCount = 0,
-                                isVerified = false,
-                                socialMediaLinks = res.socialProfiles.mapNotNull { it.profileUrl }
-                            )
-                        )
-                    }
+                    try {
+                        repository.saveLookupResult(res)
+                    } catch (_: Exception) { }
+                    persistBackgroundResult(identifier, res)
                 }
             }
 
@@ -157,6 +141,59 @@ class ContinuousEnrichmentEngine(
             val nextAttempt = System.currentTimeMillis() + capped + jitter
             queueDao.insertOrUpdate(item.copy(status = QueueStatus.RETRY_WAIT, nextAttemptAt = nextAttempt, attemptCount = item.attemptCount + 1, reason = e.message))
         }
+    }
+
+    /**
+     * Persist one background scan result to both stores. App DB first (always
+     * safe, offline-readable), then phonebook mirror when a matching row
+     * exists. WRITE_CONTACTS is requested contextually just before the mirror
+     * attempt; without it only the app DB is updated and the item completes —
+     * the mirror retries on the next pass after the grant.
+     */
+    private suspend fun persistBackgroundResult(identifier: String, res: com.infocaller.app.domain.model.LookupResult) {
+        if (res.confidence < 0.4f && res.name.isNullOrBlank() && res.imageUrl.isNullOrBlank() &&
+            res.city.isNullOrBlank() && res.about.isNullOrBlank() && res.socialProfiles.isEmpty()
+        ) return
+        try {
+            val svc = enrichmentService ?: return
+            val canWrite = try {
+                com.infocaller.app.permissions.PermissionManager.hasPermissions(
+                    context, com.infocaller.app.permissions.PermissionManager.WRITE_CONTACTS_PERMISSION
+                )
+            } catch (_: Exception) { false }
+            if (!canWrite) {
+                try {
+                    (context as? android.app.Activity)?.let { activity ->
+                        androidx.core.app.ActivityCompat.requestPermissions(
+                            activity,
+                            com.infocaller.app.permissions.PermissionManager.WRITE_CONTACTS_PERMISSION,
+                            1401
+                        )
+                    }
+                } catch (_: Exception) { }
+                return
+            }
+            try {
+                svc.updateExistingContact(
+                    phoneNumber = identifier,
+                    caller = Caller(
+                        phoneNumber = identifier,
+                        displayName = null,
+                        alias = res.name ?: res.alternateName,
+                        photoUrl = res.imageUrl,
+                        organization = res.carrier,
+                        carrier = res.carrier,
+                        country = res.country,
+                        region = res.region,
+                        reportCount = 0,
+                        isVerified = false,
+                        socialMediaLinks = res.socialProfiles.mapNotNull { it.profileUrl }
+                    )
+                )
+            } catch (se: SecurityException) {
+                // Grant revoked mid-loop: keep app-DB result, retry mirror later.
+            } catch (_: Exception) { }
+        } catch (_: Exception) { }
     }
 
     suspend fun enqueue(id: String, type: String = IdentifierType.PHONE, priority: Int = QueuePriority.MEDIUM, contactId: Long? = null) {
