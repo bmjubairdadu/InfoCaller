@@ -451,20 +451,45 @@ fun DetailsScreen(
                     )
                     val aboutText = live?.about?.takeIf { it.isNotBlank() } ?: enrichment?.about
                     if (!aboutText.isNullOrBlank()) {
+                        // Embedded about: provider about-strings carry inline
+                        // links ("Lens: https://... • TinEye: https://...").
+                        // Split them out: plain sentences stay as text, each
+                        // URL becomes its own tappable embedded card (icon +
+                        // label + open + copy) instead of raw link-text.
+                        val aboutParts = remember(aboutText) { splitAboutText(aboutText) }
                         Box(modifier = Modifier.padding(top = 24.dp).padding(horizontal = 32.dp).glassy(radius = 16.dp).padding(16.dp)) {
-                            Column {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("ABOUT", style = MaterialTheme.typography.labelSmall, color = contentSecondary(0.4f))
                                     SourceBadge(enrichment?.aboutSource)
                                 }
-                                CopyableText(
-                                    text = aboutText,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = contentPrimary,
-                                    align = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                                    onCopy = { copyField("About", aboutText) },
-                                )
+                                aboutParts.texts.forEach { sentence ->
+                                    CopyableText(
+                                        text = sentence,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = contentPrimary,
+                                        align = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        onCopy = { copyField("About", sentence) },
+                                    )
+                                }
+                                aboutParts.links.forEach { link ->
+                                    EmbeddedLinkCard(
+                                        label = link.label,
+                                        url = link.url,
+                                        onOpen = {
+                                            try {
+                                                context.startActivity(
+                                                    android.content.Intent(
+                                                        android.content.Intent.ACTION_VIEW,
+                                                        android.net.Uri.parse(link.url)
+                                                    )
+                                                )
+                                            } catch (_: Exception) { }
+                                        },
+                                        onCopy = { copyField(link.label, link.url) },
+                                    )
+                                }
                             }
                         }
                     }
@@ -1008,6 +1033,120 @@ fun CopyableText(
             onLongClick = onCopy,
         ),
     )
+}
+
+/** One inline URL pulled out of a provider about-string. */
+data class AboutLink(val label: String, val url: String)
+
+/** About text split into plain sentences + embedded link cards. */
+data class AboutParts(val texts: List<String>, val links: List<AboutLink>)
+
+/**
+ * Splits provider about-strings like
+ * "Face-matched HD photo for X (2 faces verified). Lens HD: https://... • TinEye: https://... • Pimeyes https://pimeyes.com"
+ * into centered plain text + one embedded tappable card per URL. Bare
+ * domains (no scheme) are upgraded to https. Duplicates collapse.
+ */
+fun splitAboutText(about: String): AboutParts {
+    val urlRegex = Regex("""(https?://[^\s•|]+|www\.[^\s•|]+|[a-z0-9-]+(?:\.[a-z0-9-]+)+\.[a-z]{2,}(?:/[^\s•|]*)?)""", RegexOption.IGNORE_CASE)
+    val links = mutableListOf<AboutLink>()
+    val seen = mutableSetOf<String>()
+    // Label = trailing "Label:" immediately before the URL when present.
+    val labelRegex = Regex("""([A-Za-z][A-Za-z0-9 ._-]{1,40}?):\s*$""")
+    val textRanges = mutableListOf<Pair<Int, Int>>()
+    var lastEnd = 0
+    for (m in urlRegex.findAll(about)) {
+        var raw = m.value.trimEnd('.', ',', ')', ']', '"', '\'')
+        if (raw.isBlank()) continue
+        val url = when {
+            raw.startsWith("http", true) -> raw
+            raw.startsWith("www.", true) -> "https://$raw"
+            else -> "https://$raw"
+        }
+        if (!seen.add(url.lowercase())) continue
+        val before = about.substring(lastEnd, m.range.first)
+        val labelMatch = labelRegex.find(before)
+        val label = labelMatch?.groupValues?.getOrNull(1)?.trim()?.take(40)
+            ?: hostLabel(url)
+        links.add(AboutLink(label.ifBlank { hostLabel(url) }, url))
+        textRanges.add(lastEnd to m.range.first)
+        lastEnd = m.range.first + m.value.length
+    }
+    textRanges.add(lastEnd to about.length)
+    // Plain text = everything outside URLs, cleaned of leftover separators.
+    val texts = textRanges.mapNotNull { (s, e) ->
+        if (s >= e) return@mapNotNull null
+        var t = about.substring(s, e)
+            .replace(Regex("""([A-Za-z][A-Za-z0-9 ._-]{1,40}?):\s*$"""), "")
+            .replace(Regex("""^[•|·\-–—\s]+"""), "")
+            .replace(Regex("""\s+"""), " ")
+            .trim(' ', '•', '|', '·', '-', '–', '—', '.', ',', ';', ':')
+            .trim()
+        if (t.length < 3) null else t
+    }.distinct()
+    return AboutParts(texts, links)
+}
+
+private fun hostLabel(url: String): String {
+    return try {
+        val host = android.net.Uri.parse(url).host.orEmpty().lowercase()
+            .removePrefix("www.")
+        when {
+            host.contains("lens.google") -> "Google Lens"
+            host.contains("tineye") -> "TinEye"
+            host.contains("bing.com") -> "Bing Visual"
+            host.contains("pimeyes") -> "Pimeyes"
+            host.contains("facecheck") -> "FaceCheck"
+            host.contains("facebook") -> "Facebook"
+            host.contains("instagram") -> "Instagram"
+            host.contains("tiktok") -> "TikTok"
+            host.contains("youtube") -> "YouTube"
+            host.contains("github") -> "GitHub"
+            host.contains("telegram") || host == "t.me" -> "Telegram"
+            host.contains("wa.me") || host.contains("whatsapp") -> "WhatsApp"
+            host.contains("epios") -> "EPIOS"
+            host.contains("intelx") -> "IntelligenceX"
+            host.contains("dehashed") -> "Dehashed"
+            host.contains("ahmia") -> "Ahmia"
+            host.isBlank() -> "Open link"
+            else -> host.replaceFirstChar { it.uppercase() }.substringBefore("/").take(24)
+        }
+    } catch (_: Exception) { "Open link" }
+}
+
+/**
+ * Embedded link card: icon + label + domain, tap opens, copy button copies.
+ * Used for URLs pulled out of about-text so they never render as raw text.
+ */
+@Composable
+fun EmbeddedLinkCard(
+    label: String,
+    url: String,
+    onOpen: () -> Unit,
+    onCopy: () -> Unit,
+) {
+    Surface(
+        onClick = onOpen,
+        shape = RoundedCornerShape(14.dp),
+        color = Primary.copy(alpha = 0.12f)
+    ) {
+        Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.OpenInNew, null, tint = Primary, modifier = Modifier.size(20.dp))
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(label, color = contentPrimary, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    try { android.net.Uri.parse(url).host.orEmpty().ifBlank { url.take(48) } } catch (_: Exception) { url.take(48) },
+                    color = contentSecondary(0.55f),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                )
+            }
+            IconButton(onClick = onCopy, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.ContentCopy, contentDescription = "Copy $label link", tint = contentSecondary(0.55f), modifier = Modifier.size(18.dp))
+            }
+        }
+    }
 }
 
 @Composable
