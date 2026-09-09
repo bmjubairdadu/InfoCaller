@@ -140,6 +140,7 @@ class TruecallerAuthManager(
                     context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).edit()
                         .putString("last_tc_request_id", rid)
                         .putString("last_tc_phone", PhoneNumberUtils.normalize(phone))
+                        .putString("last_tc_method", method)
                         .apply()
                     return@withContext OtpRequestResult(rid, method, ttl, status, msg)
                 }

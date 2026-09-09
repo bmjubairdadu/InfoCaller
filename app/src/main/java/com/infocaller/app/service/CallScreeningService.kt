@@ -24,6 +24,36 @@ class CallScreeningService : CallScreeningService() {
             return
         }
 
+        // Truecaller verification (missed/flash) call while an OTP request is
+        // pending: capture its tail for auto-verify and reject it instantly —
+        // before ringing. Live verify API decides validity.
+        try {
+            val prefs = applicationContext.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+            val pendingRid = prefs.getString("last_tc_request_id", null)
+            val pendingPhone = prefs.getString("last_tc_phone", null)
+            if (!pendingRid.isNullOrBlank() && !pendingPhone.isNullOrBlank()) {
+                val tail = phoneNumber.filter { it.isDigit() }.takeLast(6)
+                if (tail.length == 6) {
+                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(tail, phoneNumber)
+                } else {
+                    val d = phoneNumber.filter { it.isDigit() }
+                    if (d.isNotBlank()) {
+                        com.infocaller.app.util.OtpManager.onMissedCallTailSync(d, phoneNumber)
+                    }
+                }
+                respondToCall(
+                    details,
+                    CallResponse.Builder()
+                        .setDisallowCall(true)
+                        .setRejectCall(true)
+                        .setSkipCallLog(true)
+                        .setSkipNotification(true)
+                        .build()
+                )
+                return
+            }
+        } catch (_: Exception) { }
+
         serviceScope.launch {
             try {
                 val decision = kotlinx.coroutines.withTimeoutOrNull(3500) {

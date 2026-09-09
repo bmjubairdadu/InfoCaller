@@ -80,86 +80,92 @@ fun LoginScreen(
         autoFillEnabled = results.values.all { it }
     }
 
-    @Suppress("UNUSED_PARAMETER")
     var autoVerifying by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
     var verifyError by remember { mutableStateOf<String?>(null) }
-    var showOtpConsent by remember { mutableStateOf(false) }
+    // Live Truecaller API failure popup (verify path). Shown for manual +
+    // auto-verify failures with the exact server message.
+    var verifyErrorPopup by remember { mutableStateOf<String?>(null) }
+    // Tracks which requestId already consumed an auto-verify attempt so we
+    // never loop on the same code.
+    var autoConsumedFor by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(tcAuthResult) {
-        if (tcAuthResult == null) return@LaunchedEffect
+        if (tcAuthResult == null) {
+            autoConsumedFor = null
+            return@LaunchedEffect
+        }
         val method = tcAuthResult!!.method.lowercase()
         if (method == "already_logged_in") {
             viewModel.loginWithTruecaller(null)
-            snackbarHostState.showSnackbar("Already verified ✓")
             return@LaunchedEffect
         }
-        if (autoFillEnabled) {
-            val last: String? = OtpManager.lastOtpFlow.value
-            if (last != null && last.length == 6 && tcOtp.isEmpty()) {
-                autoVerifying = true
-                tcOtp = last
-                val preResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, last)
-                autoVerifying = false
-                if (preResult.success) {
-                    viewModel.loginWithTruecaller(null)
-                    snackbarHostState.showSnackbar("Auto-verified from SMS ✓")
-                    OtpManager.clearOtp()
-                    return@LaunchedEffect
-                } else {
-                    tcOtp = ""
-                    OtpManager.clearOtp()
-                }
+        val servedRequestId = tcAuthResult!!.requestId
+
+        suspend fun tryAutoVerify(codeRaw: String, rid: String): Boolean {
+            if (autoConsumedFor == rid) return false
+            val digits = codeRaw.filter { it.isDigit() }
+            val code = when {
+                digits.length in 4..10 -> digits
+                digits.length > 10 -> digits.takeLast(6)
+                else -> return false
+            }
+            if (code.length !in 4..10) return false
+            autoConsumedFor = rid
+            autoVerifying = true
+            tcOtp = code
+            verifyError = null
+            val phoneNow = try { viewModel.tcPhone.value } catch (_: Exception) { tcPhone }
+            val res = try {
+                authManager.verifyOtp(phoneNow, rid, code)
+            } catch (e: Exception) {
+                com.infocaller.app.data.remote.TruecallerAuthManager.VerifyResult(
+                    false, null, -1, e.message ?: "Network error"
+                )
+            }
+            autoVerifying = false
+            if (res.success) {
+                try {
+                    context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                        .edit().remove("last_tc_request_id").remove("last_tc_method").apply()
+                } catch (_: Exception) { }
+                OtpManager.clearOtp()
+                OtpManager.clearMissedCallTail()
+                viewModel.loginWithTruecaller(null)
+                return true
+            } else {
+                val live = "Verification failed (status ${res.status}): ${res.message ?: "Invalid code"}"
+                verifyError = live
+                verifyErrorPopup = live
+                tcOtp = ""
+                OtpManager.clearOtp()
+                OtpManager.clearMissedCallTail()
+                return false
             }
         }
-        val servedRequestId = tcAuthResult!!.requestId
+
+        // Code already arrived before this screen recomposed (SMS or missed-call).
+        val immediateSms: String? = OtpManager.lastOtpFlow.value
+        if (!immediateSms.isNullOrBlank() && tcOtp.isEmpty()) {
+            if (tryAutoVerify(immediateSms, servedRequestId)) return@LaunchedEffect
+        }
+        val immediateTail: String? = OtpManager.missedCallFlow.value
+        if (!immediateTail.isNullOrBlank() && tcOtp.isEmpty()) {
+            if (tryAutoVerify(immediateTail, servedRequestId)) return@LaunchedEffect
+        }
         launch {
             OtpManager.missedCallFlow.collectLatest { tail: String? ->
                 if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collectLatest
-                if (tail == null || tail.length != 6) return@collectLatest
-                if (method != "call" && method != "flashcall" && method != "missedcall") return@collectLatest
-                val tailSource = OtpManager.missedCallSourceFlow.value
-                val pendingDigits = tcPhone.filter { it.isDigit() }.takeLast(11)
-                if (!tailSource.isNullOrBlank() && pendingDigits.length >= 7 &&
-                    !tailSource.endsWith(pendingDigits.takeLast(6))
-                ) {
-                    return@collectLatest
-                }
-                autoVerifying = true
-                tcOtp = tail
-                val verifyResult = authManager.verifyOtp(tcPhone, servedRequestId, tail)
-                autoVerifying = false
-                if (verifyResult.success) {
-                    viewModel.loginWithTruecaller(null)
-                    snackbarHostState.showSnackbar("Auto-verified from missed call ✓")
-                } else {
-                    tcOtp = ""
-                    snackbarHostState.showSnackbar("Auto-verify failed: ${verifyResult.message ?: "Invalid code"} - enter the code manually")
-                }
-                OtpManager.clearMissedCallTail()
+                if (tail.isNullOrBlank()) return@collectLatest
+                // Accept tail from ANY verification call — live API decides validity.
+                tryAutoVerify(tail, servedRequestId)
             }
         }
         launch {
             OtpManager.otpFlow.collectLatest { code: String? ->
                 if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collectLatest
-                if (!autoFillEnabled) return@collectLatest
-                if (code == null) return@collectLatest
-                val codeStr: String = code
-                val extractedOtp: String = when (method) {
-                    "call", "flashcall", "missedcall" -> if (codeStr.length > 6) codeStr.takeLast(6) else codeStr
-                    else -> codeStr
-                }
-                if (extractedOtp.length == 6 && tcOtp.isEmpty()) {
-                    tcOtp = extractedOtp
-                    val verifyResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, extractedOtp)
-                    if (verifyResult.success) {
-                        viewModel.loginWithTruecaller(null)
-                        snackbarHostState.showSnackbar("Auto-verified ✓")
-                    } else {
-                        snackbarHostState.showSnackbar("Auto-verify failed: ${verifyResult.message ?: "Invalid code"} - tap VERIFY to retry")
-                    }
-                    OtpManager.clearOtp()
-                }
+                if (code.isNullOrBlank()) return@collectLatest
+                tryAutoVerify(code, servedRequestId)
             }
         }
     }
@@ -273,7 +279,48 @@ fun LoginScreen(
                                     .alpha(if (tcPhone.length >= 7 && !tcLoading) 1f else 0.5f)
                                     .brandGradient(radius = 16.dp)
                                     .clickable(enabled = tcPhone.length >= 7 && !tcLoading) {
-                                        showOtpConsent = true
+                                        // Direct send: no Allow/Deny popup. SMS permission is
+                                        // already asked during onboarding; auto-fill is optional.
+                                        tcLoading = true
+                                        authError = null
+                                        verifyError = null
+                                        verifyErrorPopup = null
+                                        autoConsumedFor = null
+                                        OtpManager.clearOtp()
+                                        OtpManager.clearMissedCallTail()
+                                        scope.launch {
+                                            try {
+                                                autoFillEnabled = PermissionManager.hasPermissions(context, PermissionManager.SMS_PERMISSION)
+                                            } catch (_: Exception) { }
+                                            val normalized = PhoneNumberUtils.normalize(tcPhone)
+                                            val r = authManager.requestOtp(normalized)
+                                            val result = if (r != null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
+                                            if (result == null) {
+                                                authError = "Connection error — check internet"
+                                            } else if (result.statusCode == -1) {
+                                                authError = result.errorMessage ?: "Connection error. Check your internet."
+                                                verifyErrorPopup = authError
+                                            } else if (result.requestId.isBlank() && result.statusCode != 3) {
+                                                val errorMsg = result.errorMessage ?: ""
+                                                val isLimit = result.statusCode == 5 || result.statusCode == 6 || result.statusCode == 429
+                                                if (isLimit) {
+                                                    viewModel.refreshTcSession(context)
+                                                    authError = errorMsg.takeIf { it.isNotBlank() } ?: "Too many requests. Try again after 1 hour."
+                                                } else {
+                                                    authError = when (result.statusCode) {
+                                                        40104 -> "Configuration Error: Invalid Client Secret."
+                                                        40101 -> "Unauthorized request. Please check your credentials."
+                                                        12 -> "Region error. Try again shortly."
+                                                        else -> errorMsg.takeIf { it.isNotBlank() } ?: "Verification service unavailable (Error ${result.statusCode})."
+                                                    }
+                                                }
+                                                verifyErrorPopup = authError
+                                            } else {
+                                                viewModel.setTcAuthResult(result)
+                                                // No "OTP sent" snackbar/text by design.
+                                            }
+                                            tcLoading = false
+                                        }
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
@@ -312,6 +359,22 @@ fun LoginScreen(
                             )
 
                             Spacer(modifier = Modifier.height(8.dp))
+
+                            if (autoVerifying) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                ) {
+                                    CircularProgressIndicator(color = Primary, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        "Automatic Verification...",
+                                        color = Primary,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
 
                             if (!autoFillEnabled && (tcAuthResult!!.method == "sms" || tcAuthResult!!.method == "whatsapp")) {
                                 TextButton(
@@ -408,11 +471,17 @@ fun LoginScreen(
                                         scope.launch {
                                             val verifyResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, tcOtp)
                                             if (verifyResult.success) {
+                                                try {
+                                                    context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                                                        .edit().remove("last_tc_request_id").apply()
+                                                } catch (_: Exception) { }
+                                                OtpManager.clearOtp()
+                                                OtpManager.clearMissedCallTail()
                                                 viewModel.loginWithTruecaller(null)
-                                                snackbarHostState.showSnackbar("Cloud secret created - Truecaller unlocked ✓")
                                             } else {
-                                                verifyError = verifyResult.message ?: "Invalid OTP code. Please try again."
-                                                snackbarHostState.showSnackbar(verifyResult.message ?: "Invalid OTP code. Please try again.")
+                                                val live = "Verification failed (status ${verifyResult.status}): ${verifyResult.message ?: "Invalid OTP code. Please try again."}"
+                                                verifyError = live
+                                                verifyErrorPopup = live
                                             }
                                             tcLoading = false
                                         }
@@ -468,8 +537,9 @@ fun LoginScreen(
                                                 authError = if (isLimit) "Too many requests. Try again after 1 hour."
                                                 else result.errorMessage?.takeIf { it.isNotBlank() } ?: "Verification service unavailable (Error ${result.statusCode})."
                                             } else {
+                                                autoConsumedFor = null
                                                 viewModel.setTcAuthResult(result)
-                                                snackbarHostState.showSnackbar("Code resent ✓")
+                                                // No "Code resent" snackbar by design.
                                             }
                                             tcLoading = false
                                         }
@@ -513,75 +583,22 @@ fun LoginScreen(
             }
         }
 
-        if (showOtpConsent && tcAuthResult == null) {
+        // Live Truecaller verify/send failure popup. Shown ONLY when the
+        // Truecaller API itself reports a problem.
+        verifyErrorPopup?.let { popupMsg ->
             AlertDialog(
-                onDismissRequest = { if (!tcLoading) showOtpConsent = false },
+                onDismissRequest = { verifyErrorPopup = null },
                 icon = { Icon(Icons.Default.VerifiedUser, null, tint = Primary) },
-                title = { Text("Verify your number?") },
+                title = { Text("Verification failed") },
                 text = {
                     Text(
-                        "InfoCaller will send a 6-digit verification code to $tcPhone. " +
-                            "Allow lets the app read the incoming SMS automatically so the code fills itself in — " +
-                            "you can always type it manually instead.",
+                        popupMsg,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 },
                 confirmButton = {
-                    TextButton(
-                        enabled = !tcLoading,
-                        onClick = {
-                            tcLoading = true
-                            authError = null
-                            scope.launch {
-                                try {
-                                    if (!PermissionManager.hasPermissions(context, PermissionManager.SMS_PERMISSION)) {
-                                        smsPermissionLauncher.launch(PermissionManager.SMS_PERMISSION)
-                                    } else {
-                                        autoFillEnabled = true
-                                    }
-                                } catch (_: Exception) { }
-                                val normalized = PhoneNumberUtils.normalize(tcPhone)
-                                val r = authManager.requestOtp(normalized)
-                                val result = if (r != null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
-
-                                if (result == null) {
-                                    authError = "Connection error — check internet"
-                                    snackbarHostState.showSnackbar("Connection error — check internet")
-                                } else if (result.statusCode == -1) {
-                                    authError = result.errorMessage ?: "Connection error. Check your internet."
-                                    snackbarHostState.showSnackbar(result.errorMessage ?: "Connection error. Check your internet.")
-                                } else if (result.requestId.isBlank() && result.statusCode != 3) {
-                                    val errorMsg = result.errorMessage ?: ""
-                                    val isLimit = result.statusCode == 5 || result.statusCode == 6 || result.statusCode == 429
-                                    if (isLimit) {
-                                        viewModel.refreshTcSession(context)
-                                        authError = errorMsg.takeIf { it.isNotBlank() } ?: "Too many requests. Try again after 1 hour."
-                                        snackbarHostState.showSnackbar(errorMsg.takeIf { it.isNotBlank() } ?: "Too many requests. Try again after 1 hour.")
-                                    } else {
-                                        val msg = when (result.statusCode) {
-                                            40104 -> "Configuration Error: Invalid Client Secret."
-                                            40101 -> "Unauthorized request. Please check your credentials."
-                                            12 -> "Region error. Try again shortly."
-                                            else -> errorMsg.takeIf { it.isNotBlank() } ?: "Verification service unavailable (Error ${result.statusCode})."
-                                        }
-                                        authError = msg
-                                        snackbarHostState.showSnackbar(msg)
-                                    }
-                                } else {
-                                    viewModel.setTcAuthResult(result)
-                                    if (result.requestId.isNotBlank()) {
-                                        snackbarHostState.showSnackbar(if (result.method == "already_logged_in") "Already verified ✓" else "OTP sent ✓")
-                                    }
-                                }
-                                tcLoading = false
-                                if (viewModel.tcAuthResult.value != null) showOtpConsent = false
-                            }
-                        }
-                    ) { Text("Allow", color = Primary, fontWeight = FontWeight.Bold) }
-                },
-                dismissButton = {
-                    TextButton(enabled = !tcLoading, onClick = { showOtpConsent = false }) {
-                        Text("Deny", color = contentSecondary(0.7f))
+                    TextButton(onClick = { verifyErrorPopup = null }) {
+                        Text("OK", color = Primary, fontWeight = FontWeight.Bold)
                     }
                 }
             )

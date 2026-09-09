@@ -23,8 +23,8 @@ android {
         applicationId = "com.infocaller.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "2.2.9"
+        versionCode = 12
+        versionName = "2.3.0"
 
         androidResources {
             localeFilters += listOf("en", "bn")

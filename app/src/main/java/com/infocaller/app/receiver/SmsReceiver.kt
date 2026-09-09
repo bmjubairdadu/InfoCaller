@@ -15,11 +15,19 @@ import java.util.regex.Pattern
 class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
+            val pendingVerification = hasPendingVerification(context)
             val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
             for (message in messages) {
                 val body = message.displayMessageBody
                 val sender = message.displayOriginatingAddress ?: ""
-                if (isVerificationSender(sender, body)) {
+                if (pendingVerification) {
+                    // During Truecaller verification accept OTP from ANY sender
+                    // (short codes, operator gateways). Live API decides validity.
+                    val otp = extractOtp(body)
+                    if (otp != null) {
+                        OtpManager.onOtpReceivedSync(otp)
+                    }
+                } else if (isVerificationSender(sender, body)) {
                     val otp = extractOtp(body)
                     if (otp != null) {
                         OtpManager.onOtpReceivedSync(otp)
@@ -28,6 +36,13 @@ class SmsReceiver : BroadcastReceiver() {
                 identifySmsSender(context, sender)
             }
         }
+    }
+
+    private fun hasPendingVerification(context: Context): Boolean {
+        return try {
+            val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+            !prefs.getString("last_tc_request_id", null).isNullOrBlank()
+        } catch (_: Exception) { false }
     }
 
     private fun identifySmsSender(context: Context, phoneNumber: String) {
