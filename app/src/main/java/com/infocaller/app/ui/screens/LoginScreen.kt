@@ -336,23 +336,25 @@ fun LoginScreen(
                                 }
                             }
                         } else {
+                            val methodLower = tcAuthResult!!.method.lowercase()
+                            val methodLabel = when (methodLower) {
+                                "sms" -> "SMS"
+                                "call" -> "Call"
+                                "flashcall" -> "Flash call"
+                                "missedcall" -> "Missed call"
+                                "whatsapp" -> "WhatsApp"
+                                else -> tcAuthResult!!.method.uppercase()
+                            }
+                            val isCallLike =
+                                methodLower == "call" || methodLower == "flashcall" || methodLower == "missedcall"
                             Text(
-                                if (tcAuthResult!!.method == "call")
-                                    "Verification via Call"
-                                else if (tcAuthResult!!.method == "whatsapp")
-                                    "Verification via WhatsApp"
-                                else
-                                    "Enter Verification Code",
+                                "Enter Verification Code",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = contentPrimary,
                                 modifier = Modifier.align(Alignment.Start)
                             )
                             Text(
-                                when (tcAuthResult!!.method) {
-                                    "call" -> "We are calling your number. The call is rejected automatically — just wait or type the code."
-                                    "whatsapp" -> "Open WhatsApp to see the 6-digit code, then type it below"
-                                    else -> "We've sent a 6-digit code to your phone — type it below"
-                                },
+                                "Code sent via $methodLabel — but SMS, missed-call, call & WhatsApp codes ALL work here. Type any code below, auto-verify catches the rest.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = contentSecondary(0.6f),
                                 modifier = Modifier.padding(top = 4.dp).align(Alignment.Start)
@@ -376,7 +378,7 @@ fun LoginScreen(
                                 }
                             }
 
-                            if (!autoFillEnabled && (tcAuthResult!!.method == "sms" || tcAuthResult!!.method == "whatsapp")) {
+                            if (!autoFillEnabled) {
                                 TextButton(
                                     onClick = { smsPermissionLauncher.launch(PermissionManager.SMS_PERMISSION) },
                                     modifier = Modifier.padding(bottom = 4.dp)
@@ -387,66 +389,71 @@ fun LoginScreen(
                                 }
                             }
 
-                            if (tcAuthResult!!.method == "sms" || tcAuthResult!!.method == "whatsapp") {
-                                OtpInputField(
-                                    otpText = tcOtp,
-                                    onOtpTextChange = { tcOtp = it; verifyError = null },
-                                    modifier = Modifier.wrapContentWidth()
-                                )
-                                if (tcAuthResult!!.method == "whatsapp") {
+                            // ONE unified box: SMS + missed-call + call + WhatsApp codes
+                            // all go through the same OTP field + auto-verify.
+                            OtpInputField(
+                                otpText = tcOtp,
+                                onOtpTextChange = { tcOtp = it; verifyError = null },
+                                modifier = Modifier.wrapContentWidth()
+                            )
+                            if (isCallLike) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(top = 10.dp)
+                                ) {
+                                    Icon(Icons.Default.Call, null, tint = contentSecondary(0.5f), modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(6.dp))
                                     Text(
-                                        "WhatsApp codes can't be read automatically — type the 6 digits from WhatsApp here.",
+                                        "Verification call is rejected automatically — or type its last 6 digits here.",
                                         color = contentSecondary(0.5f),
                                         style = MaterialTheme.typography.labelSmall,
-                                        textAlign = TextAlign.Center,
-                                        modifier = Modifier.padding(top = 8.dp)
+                                        textAlign = TextAlign.Center
                                     )
                                 }
-
-                                TextButton(
-                                    onClick = {
-                                        val raw = clipboardManager.getText()?.text?.toString().orEmpty()
-                                        val digits = raw.filter { it.isDigit() }
-                                        val code = when {
-                                            raw.length == 6 && raw.all { it.isDigit() } -> raw
-                                            digits.length == 6 -> digits
-                                            digits.length > 6 -> digits.takeLast(6)
-                                            else -> null
-                                        }
-                                        if (code != null) {
-                                            tcOtp = code
-                                            verifyError = null
-                                        } else {
-                                            scope.launch {
-                                                snackbarHostState.showSnackbar("Clipboard has no 6-digit code — type it manually")
-                                            }
-                                        }
-                                    },
+                                Spacer(modifier = Modifier.height(14.dp))
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp), color = Primary.copy(alpha = 0.3f))
+                            } else if (methodLower == "whatsapp") {
+                                Text(
+                                    "WhatsApp codes can't be read automatically — type the 6 digits from WhatsApp here. SMS / missed-call codes work too.",
+                                    color = contentSecondary(0.5f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center,
                                     modifier = Modifier.padding(top = 8.dp)
-                                ) {
-                                    Icon(Icons.Default.ContentPaste, null, tint = contentSecondary(0.5f), modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Paste Code", color = contentSecondary(0.5f), fontSize = 12.sp)
-                                }
+                                )
                             } else {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(
-                                        "Waiting for the verification call — it will be rejected automatically. Or enter the last 6 digits of the caller number:",
-                                        color = contentSecondary(0.7f),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        textAlign = TextAlign.Center,
-                                        modifier = Modifier.padding(bottom = 16.dp)
-                                    )
+                                Text(
+                                    "SMS auto-fills when permission is on. Missed-call, call & WhatsApp codes work here too.",
+                                    color = contentSecondary(0.5f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(top = 8.dp)
+                                )
+                            }
 
-                                    OtpInputField(
-                                        otpText = tcOtp,
-                                        onOtpTextChange = { tcOtp = it; verifyError = null },
-                                        modifier = Modifier.wrapContentWidth()
-                                    )
-
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp), color = Primary.copy(alpha = 0.3f))
-                                }
+                            TextButton(
+                                onClick = {
+                                    val raw = clipboardManager.getText()?.text?.toString().orEmpty()
+                                    val digits = raw.filter { it.isDigit() }
+                                    val code = when {
+                                        raw.length == 6 && raw.all { it.isDigit() } -> raw
+                                        digits.length == 6 -> digits
+                                        digits.length > 6 -> digits.takeLast(6)
+                                        else -> null
+                                    }
+                                    if (code != null) {
+                                        tcOtp = code
+                                        verifyError = null
+                                    } else {
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Clipboard has no 6-digit code — type it manually")
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.padding(top = 8.dp)
+                            ) {
+                                Icon(Icons.Default.ContentPaste, null, tint = contentSecondary(0.5f), modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Paste Code", color = contentSecondary(0.5f), fontSize = 12.sp)
                             }
 
                             Spacer(modifier = Modifier.height(24.dp))
