@@ -1,8 +1,10 @@
 <resources>
     <style name="Theme.InfoCaller" parent="android:Theme.Material.Light.NoActionBar">
-        <!-- Plain backdrop: the Compose launcher is the ONLY launch animation
-             (animated logo + per-letter app name). No static window logo. -->
-        <item name="android:windowBackground">@drawable/launch_background</item>
+        <!-- No window pre-background: the Compose launcher animation is the
+             very first frame. Any windowBackground here flashes as a black
+             screen before the animation starts, so it stays null. -->
+        <item name="android:windowBackground">@null</item>
+        <item name="android:windowDisablePreview">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>

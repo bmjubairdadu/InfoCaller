@@ -22,6 +22,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Instant first frame: with no window preview, edge-to-edge must be
+        // enabled BEFORE setContent so the Compose launcher animation draws
+        // under the system bars from frame one (no black flash).
+        enableEdgeToEdge()
         try {
             val workRequest = androidx.work.PeriodicWorkRequestBuilder<com.infocaller.app.worker.EnrichmentWorker>(
                 1, java.util.concurrent.TimeUnit.HOURS
@@ -47,7 +51,6 @@ class MainActivity : ComponentActivity() {
             }
         } catch (_: Exception) { }
 
-        enableEdgeToEdge()
         setContent {
             val app = application as InfoCallerApplication
             val enrichmentService = com.infocaller.app.data.repository.ContactEnrichmentService(

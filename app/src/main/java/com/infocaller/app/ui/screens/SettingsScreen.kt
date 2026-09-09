@@ -354,7 +354,7 @@ fun SettingsScreen(
             }
 
             SettingsSection("About") {
-                SettingsInfoRow("Version", "2.2.3", Icons.Default.Info)
+                SettingsInfoRow("Version", "2.2.4", Icons.Default.Info)
                 SettingsClickRow(
                     title = "Privacy Policy",
                     subtitle = "Read our data policy",
