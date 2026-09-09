@@ -122,25 +122,10 @@ fun DetailsScreen(
     var showAddContactDialog by remember { mutableStateOf(false) }
     val scanSteps by viewModel.scanSteps.collectAsState()
     val scanActive by viewModel.scanActive.collectAsState()
-    var scanPopupVisible by remember { mutableStateOf(false) }
-    // Auto-open the popup when a fresh scan starts; auto-close it when the
-    // scan completes so the result is revealed underneath.
-    LaunchedEffect(scanActive) {
-        if (scanActive) scanPopupVisible = true
-        else scanPopupVisible = false
-    }
+    // Manual-scan UX: NO popup dialog — only the inline loading animation on
+    // the page itself (header shimmer + "Identifying..." state below). The
+    // step list still feeds the subtle live-provider line in the top bar.
     GlassyBackground {
-        if (scanPopupVisible && (scanActive || scanSteps.isNotEmpty())) {
-            com.infocaller.app.ui.components.ScanProgressPopup(
-                identifier = displayIdentifier.ifBlank { rawIdentifier },
-                steps = scanSteps,
-                scanActive = scanActive,
-                onDismiss = {
-                    scanPopupVisible = false
-                    if (scanActive) viewModel.dismissScanPopup()
-                }
-            )
-        }
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             containerColor = Color.Transparent,
@@ -252,6 +237,13 @@ fun DetailsScreen(
                 }
             }
         ) { innerPadding ->
+            // Loading UX for manual scans: full-screen animation ONLY while
+            // nothing renderable exists yet (no cache, no partial). The moment
+            // ANY field arrives the content below renders instantly and keeps
+            // updating live — no popup, no dialog, just the page filling in.
+            val enr = enrichment
+            val hasPartial = caller != null || livePartial != null ||
+                (enr != null && (!enr.publicName.isNullOrBlank() || !enr.profileImageUrl.isNullOrBlank()))
             if (displayIdentifier.isBlank() && caller == null) {
                 // Stale/empty navigation (deep link, process death, lost race) must not
                 // spin forever — time out with a retry path after 20s.
@@ -283,6 +275,31 @@ fun DetailsScreen(
                         Spacer(Modifier.height(8.dp))
                         TextButton(onClick = onBack) { Text("Go back", color = Primary) }
                     }
+                }
+            } else if (!hasPartial && scanActive) {
+                // Fresh manual scan, nothing cached yet: loading animation
+                // only (no popup). Shows which provider is answering live.
+                Column(
+                    modifier = Modifier.padding(innerPadding).fillMaxSize().padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    InfoCallerLoading(isFullScreen = false, text = "Identifying...")
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        displayIdentifier.ifBlank { rawIdentifier },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Primary,
+                        textAlign = TextAlign.Center,
+                    )
+                    val runningStep = scanSteps.lastOrNull { it.status == "RUNNING" }
+                    Text(
+                        runningStep?.let { "Asking ${it.providerName}…" } ?: "Starting lookup tools…",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = contentSecondary(0.6f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                 }
             } else {
                 Column(
@@ -373,6 +390,55 @@ fun DetailsScreen(
                             modifier = Modifier.padding(top = 4.dp),
                             onCopy = { copyField("Also known as", altName) },
                         )
+                    }
+                    // Embedded: every alternate name from every provider
+                    // (cached map + live map), each tappable to copy.
+                    val allAltNames = remember(enrichment?.alternateNamesJson, live?.alternateNames) {
+                        val merged = mutableMapOf<String, MutableList<String>>()
+                        try {
+                            SocialUtils.altNamesFromJson(enrichment?.alternateNamesJson).forEach { (k, v) ->
+                                merged.getOrPut(k) { mutableListOf() }.addAll(v)
+                            }
+                        } catch (_: Exception) { }
+                        try {
+                            live?.alternateNames?.forEach { (k, v) ->
+                                merged.getOrPut(k) { mutableListOf() }.addAll(v)
+                            }
+                        } catch (_: Exception) { }
+                        merged.mapValues { it.value.distinct().take(4) }
+                            .filter { (k, _) -> k != displayName && k != extraName && k != altName }
+                            .toList().sortedByDescending { it.second.size }.take(6)
+                    }
+                    if (allAltNames.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier.padding(top = 8.dp).padding(horizontal = 32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            allAltNames.forEach { (name, sources) ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.combinedClickable(
+                                        onClick = { copyField("Name", name) },
+                                        onLongClick = { copyField("Name", name) },
+                                    ).padding(vertical = 2.dp),
+                                ) {
+                                    Text(
+                                        "• $name",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = contentSecondary(0.75f),
+                                        textAlign = TextAlign.Center,
+                                    )
+                                    if (sources.size > 1) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            "×${sources.size}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Primary.copy(alpha = 0.8f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                     val numberText = if (isNonPhoneScan) displayIdentifier else com.infocaller.app.util.PhoneNumberUtils.formatAsYouType(phoneNumber)
                     CopyableText(

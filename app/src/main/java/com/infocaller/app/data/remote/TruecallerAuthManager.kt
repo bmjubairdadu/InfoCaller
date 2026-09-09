@@ -54,6 +54,32 @@ class TruecallerAuthManager(
     }
     private fun rnd(len:Int): String { val c="abcdefghijklmnopqrstuvwxyz0123456789"; return (1..len).map{ c.random() }.joinToString("") }
 
+    /**
+     * Device id bound to ONE phone number: stable across retries for the same
+     * number (server expects continuity), fresh for a different number (server
+     * rejects OTP for a new number under an old number's install identity).
+     * Falls back to ANDROID_ID only when per-number storage fails.
+     */
+    private fun freshDeviceIdFor(normalizedPhone: String): String {
+        return try {
+            val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+            val key = "tc_device_id_" + normalizedPhone.filter { it.isDigit() }.takeLast(11)
+            var did = prefs.getString(key, null)
+            if (did.isNullOrBlank() || did == "9774d56d682e549c") {
+                did = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
+                if (did.isNullOrBlank() || did == "9774d56d682e549c") {
+                    did = rnd(16)
+                }
+                prefs.edit().putString(key, did).apply()
+            }
+            // Keep the legacy single key in sync so older readers still work.
+            prefs.edit().putString("tc_device_id", did).apply()
+            did
+        } catch (_: Exception) {
+            deviceIdReal()
+        }
+    }
+
     // Exactly Benojir: multiple endpoints, ANDROID_ID, osVersion "10", gzip handling via OkHttp auto
     suspend fun requestOtp(phone: String): OtpRequestResult? = withContext(Dispatchers.IO) {
         val norm = PhoneNumberUtils.normalize(phone)
@@ -61,8 +87,28 @@ class TruecallerAuthManager(
         val sig = PhoneNumberUtils.getSignificantNumber(norm) ?: norm.filter{it.isDigit()}
         val dial = PhoneNumberUtils.getDialingCode(norm) ?: 880
         val secret = "lvc22mp3l1sfv6ujg83rd17btt"
-        val deviceId = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID) ?: deviceIdReal()
-        
+        // Per-number install identity: Truecaller binds OTP state to the
+        // (deviceId, number) pair server-side. Reusing one stored device id
+        // across numbers is exactly why only the FIRST number ever receives
+        // an OTP and every other number silently gets nothing. A new number
+        // gets a fresh device id; the previously verified number keeps its
+        // own. Stale tokens from another number are cleared first so a dead
+        // installationId can never shadow the new request.
+        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        val lastPhone = prefs.getString("last_tc_phone", null)?.let { PhoneNumberUtils.normalize(it) }
+        if (lastPhone != null && lastPhone != norm) {
+            prefs.edit()
+                .remove("truecaller_token")
+                .remove("tc_device_id")
+                .remove("last_tc_request_id")
+                .apply()
+        }
+        val deviceId = freshDeviceIdFor(norm)
+        // sequenceNo must restart at 1 for a new number: sending 2 immediately
+        // makes the server treat it as a retry of a non-existent flow.
+        val isNewNumber = lastPhone == null || lastPhone != norm
+        val seqNo = if (isNewNumber) 1 else 2
+
         val body = JsonObject().apply {
             addProperty("countryCode", cc); addProperty("dialingCode", dial)
             add("installationDetails", JsonObject().apply {
@@ -73,7 +119,7 @@ class TruecallerAuthManager(
                 })
                 addProperty("language","en")
             })
-            addProperty("phoneNumber", sig); addProperty("region","region-2"); addProperty("sequenceNo",2)
+            addProperty("phoneNumber", sig); addProperty("region","region-2"); addProperty("sequenceNo",seqNo)
         }
 
         val endpoints = listOf(

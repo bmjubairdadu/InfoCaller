@@ -133,13 +133,22 @@ fun LoginScreen(
         }
         // Missed-call (flash-call) auto-verify: tail digits arrive on the
         // dedicated channel and the verification call was already rejected.
-        // Guard: only tails for THIS request (same requestId + TTL-checked bus).
+        // Guards: same requestId + TTL-checked bus + SOURCE NUMBER match —
+        // an ordinary missed call's tail must never verify this OTP.
         val servedRequestId = tcAuthResult!!.requestId
         launch {
             OtpManager.missedCallFlow.collectLatest { tail: String? ->
                 if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collectLatest
                 if (tail == null || tail.length != 6) return@collectLatest
                 if (method != "call" && method != "flashcall" && method != "missedcall") return@collectLatest
+                val tailSource = OtpManager.missedCallSourceFlow.value
+                val pendingDigits = tcPhone.filter { it.isDigit() }.takeLast(11)
+                if (!tailSource.isNullOrBlank() && pendingDigits.length >= 7 &&
+                    !tailSource.endsWith(pendingDigits.takeLast(6))
+                ) {
+                    // Tail came from an unrelated caller — ignore, keep box clean.
+                    return@collectLatest
+                }
                 autoVerifying = true
                 tcOtp = tail
                 val verifyResult = authManager.verifyOtp(tcPhone, servedRequestId, tail)

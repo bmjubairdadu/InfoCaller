@@ -37,16 +37,41 @@ class CallBroadcastReceiver : BroadcastReceiver() {
             prefs.edit().putString("last_number", phoneNumber).apply()
             // Flash-call verification: publish the tail digits on the dedicated
             // missed-call channel (NOT the SMS channel) and auto-reject the
-            // verification call so it never rings through.
+            // verification call so it never rings through. The tail is bound
+            // to its SOURCE number — LoginScreen only auto-fills when the
+            // source matches the pending verification caller, so an ordinary
+            // missed call can never verify someone else's OTP.
             if (phoneNumber != null) {
                 val digits = phoneNumber.filter { it.isDigit() }.takeLast(6)
                 if (digits.length == 6) {
-                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(digits)
+                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(digits, phoneNumber)
                     try {
                         if (isVerificationCall(context, phoneNumber)) {
                             com.infocaller.app.data.local.CallManager.decline()
                         }
                     } catch (_: Exception) { }
+                }
+            } else {
+                // Android 9+: EXTRA_INCOMING_NUMBER is often null at RINGING
+                // (needs READ_CALL_LOG, granted later). Resolve via the call
+                // log after a beat so flash-call tails are still captured.
+                val pendingResult = goAsync()
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        delay(2500)
+                        val resolved: String? = com.infocaller.app.util.ContactUtils.getLastIncomingCallNumber(context)
+                        if (resolved != null) {
+                            val d = resolved.filter { it.isDigit() }.takeLast(6)
+                            if (d.length == 6) com.infocaller.app.util.OtpManager.onMissedCallTailSync(d, resolved)
+                            try {
+                                if (isVerificationCall(context, resolved)) {
+                                    com.infocaller.app.data.local.CallManager.decline()
+                                }
+                            } catch (_: Exception) { }
+                        }
+                    } finally {
+                        pendingResult.finish()
+                    }
                 }
             }
             if (com.infocaller.app.permissions.PermissionManager.isDefaultDialer(context)) {
@@ -78,7 +103,7 @@ class CallBroadcastReceiver : BroadcastReceiver() {
                         val resolvedNumber: String? = com.infocaller.app.util.ContactUtils.getLastIncomingCallNumber(context)
                         if (resolvedNumber != null) {
                             val d = resolvedNumber.filter { it.isDigit() }.takeLast(6)
-                            if (d.length == 6) com.infocaller.app.util.OtpManager.onMissedCallTailSync(d)
+                            if (d.length == 6) com.infocaller.app.util.OtpManager.onMissedCallTailSync(d, resolvedNumber)
                             identifyMissedCall(context, resolvedNumber)
                         }
                     } finally {

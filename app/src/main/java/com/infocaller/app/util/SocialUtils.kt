@@ -56,6 +56,17 @@ object SocialUtils {
         }
     }
 
+    /** Alternate-name map (name -> provider list) from the enrichment cache. */
+    fun altNamesFromJson(json: String?): Map<String, List<String>> {
+        if (json.isNullOrBlank()) return emptyMap()
+        return try {
+            val type = object : TypeToken<Map<String, List<String>>>() {}.type
+            gson.fromJson(json, type) ?: emptyMap()
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
     fun getSocialIntent(context: Context, profile: SocialProfile): Intent? {
         val url = profile.profileUrl?.trim() ?: return null
         if (url.isBlank()) return null

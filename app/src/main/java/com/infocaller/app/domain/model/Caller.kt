@@ -13,6 +13,8 @@ data class Caller(
     val country: String?,
     val region: String?,
     val carrier: String?,
+    /** Carried through to the phonebook Email row + note block. */
+    val email: String? = null,
     val reportCount: Int = 0,
     val isVerified: Boolean = false,
     val socialMediaLinks: List<String> = emptyList()

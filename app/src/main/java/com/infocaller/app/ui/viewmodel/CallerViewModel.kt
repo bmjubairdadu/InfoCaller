@@ -312,6 +312,7 @@ class CallerViewModel(
             country = res.country,
             region = res.region,
             carrier = res.carrier,
+            email = res.email,
             reportCount = 0,
             isVerified = false,
             socialMediaLinks = res.socialProfiles.mapNotNull { it.profileUrl }
@@ -413,6 +414,7 @@ class CallerViewModel(
             country = entity.country,
             region = entity.region,
             carrier = entity.carrier,
+            email = entity.email,
             reportCount = 0,
             isVerified = false,
             socialMediaLinks = com.infocaller.app.util.SocialUtils.fromJson(entity.socialProfilesJson).mapNotNull { it.profileUrl }

@@ -43,6 +43,29 @@ object OtpManager {
     suspend fun onOtpReceived(otp: String) { _lastOtp.value = TimedCode(otp, System.currentTimeMillis()) }
     fun onOtpReceivedSync(otp: String) { _lastOtp.value = TimedCode(otp, System.currentTimeMillis()) }
     fun onMissedCallTailSync(tail: String) { _lastMissedCallTail.value = TimedCode(tail, System.currentTimeMillis()) }
+    /**
+     * Number-bound missed-call tail: records WHICH caller left the tail so a
+     * random missed call can never verify someone else's OTP. The LoginScreen
+     * only auto-fills when the tail's source number matches the pending
+     * verification caller.
+     */
+    fun onMissedCallTailSync(tail: String, sourceNumber: String?) {
+        _lastMissedCallTail.value = TimedCode(tail, System.currentTimeMillis())
+        if (!sourceNumber.isNullOrBlank()) {
+            _lastMissedCallSource.value = TimedCode(
+                sourceNumber.filter { it.isDigit() }.takeLast(11),
+                System.currentTimeMillis()
+            )
+        }
+    }
+    /** Source number of the last missed-call tail (digits only, TTL-guarded). */
+    private val _lastMissedCallSource = MutableStateFlow<TimedCode?>(null)
+    val missedCallSourceFlow: StateFlow<String?> = _lastMissedCallSource
+        .map { timed -> timed?.takeIf { System.currentTimeMillis() - it.at < OTP_TTL_MS }?.code }
+        .stateIn(
+            CoroutineScope(Dispatchers.Default),
+            SharingStarted.Eagerly, null
+        )
     fun clearOtp() { _lastOtp.value = null }
-    fun clearMissedCallTail() { _lastMissedCallTail.value = null }
+    fun clearMissedCallTail() { _lastMissedCallTail.value = null; _lastMissedCallSource.value = null }
 }

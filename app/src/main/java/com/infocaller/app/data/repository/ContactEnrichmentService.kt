@@ -103,25 +103,47 @@ class ContactEnrichmentService(
     }
 
     private fun saveToContacts(caller: Caller, accountName: String? = null, accountType: String? = null): Long {
+        // Standard Android format every contacts app understands: one
+        // RawContact + StructuredName + Mobile Phone + (optional) Email +
+        // (optional) Organization rows. Email uses the real Email mimetype
+        // (not a note) so Gmail/Dialer/people apps file it correctly.
         val ops = mutableListOf<ContentProviderOperation>()
-        
+
         ops.add(ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
             .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, accountType)
             .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, accountName)
             .build())
-            
+
         ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
             .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
             .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
             .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, caller.displayName)
             .build())
-            
+
         ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
             .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
             .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
             .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, caller.phoneNumber)
             .withValue(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
             .build())
+
+        caller.email?.trim()?.takeIf { it.contains("@") }?.let { email ->
+            ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE)
+                .withValue(ContactsContract.CommonDataKinds.Email.ADDRESS, email)
+                .withValue(ContactsContract.CommonDataKinds.Email.TYPE, ContactsContract.CommonDataKinds.Email.TYPE_HOME)
+                .build())
+        }
+
+        caller.organization?.trim()?.takeIf { it.isNotBlank() }?.let { org ->
+            ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Organization.CONTENT_ITEM_TYPE)
+                .withValue(ContactsContract.CommonDataKinds.Organization.COMPANY, org)
+                .withValue(ContactsContract.CommonDataKinds.Organization.TYPE, ContactsContract.CommonDataKinds.Organization.TYPE_WORK)
+                .build())
+        }
 
         val results = context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ArrayList(ops))
         return ContentUris.parseId(results[0].uri!!)
@@ -170,8 +192,12 @@ class ContactEnrichmentService(
             if (shouldUpdatePhoto) {
                 val bitmap = downloadBitmap(caller.photoUrl)
                 if (bitmap != null) {
+                    // JPEG-90, capped at 720px: PNG-100 blobs render
+                    // differently per contacts app (huge + slow sync); JPEG
+                    // is the standard phonebook photo format everywhere.
+                    val scaled = scaleDown(bitmap, 720)
                     val stream = ByteArrayOutputStream()
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                    scaled.compress(Bitmap.CompressFormat.JPEG, 90, stream)
                     val photoBytes = stream.toByteArray()
                     val ops = mutableListOf<ContentProviderOperation>()
                     ops.add(
@@ -183,6 +209,22 @@ class ContactEnrichmentService(
                     )
                     context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ArrayList(ops))
                 }
+            }
+
+            // Email gap-fill into the REAL Email field (not just notes): skip
+            // when a matching address already exists on the row.
+            val scanEmail = caller.email?.trim()?.takeIf { it.contains("@") }
+                ?: enrichment?.email?.trim()?.takeIf { it.contains("@") }
+            if (scanEmail != null && !hasEmailRow(contactId, scanEmail)) {
+                try {
+                    val emailOp = ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                        .withValue(ContactsContract.Data.RAW_CONTACT_ID, contactId)
+                        .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE)
+                        .withValue(ContactsContract.CommonDataKinds.Email.ADDRESS, scanEmail)
+                        .withValue(ContactsContract.CommonDataKinds.Email.TYPE, ContactsContract.CommonDataKinds.Email.TYPE_HOME)
+                        .build()
+                    context.contentResolver.applyBatch(ContactsContract.AUTHORITY, arrayListOf(emailOp))
+                } catch (_: Exception) { }
             }
 
             if (isSavedRealName && caller.displayName != null) {
@@ -417,6 +459,8 @@ class ContactEnrichmentService(
             }
 
             // 3. Notes block with everything that has no structured slot.
+            // Email ALSO goes in notes (searchable) even though it now has
+            // its own row — every other app reads the row, humans read notes.
             val caller = Caller(
                 phoneNumber = normalized,
                 displayName = result.name,
@@ -426,11 +470,25 @@ class ContactEnrichmentService(
                 country = result.country,
                 region = result.region,
                 carrier = result.carrier,
+                email = result.email,
                 reportCount = 0,
                 isVerified = false,
                 socialMediaLinks = result.socialProfiles.mapNotNull { it.profileUrl }
             )
             syncEnrichmentToPhonebookNotes(rawContactId, null, caller)
+            // 4. Same-row email gap-fill for the bulk path.
+            val bulkEmail = result.email?.trim()?.takeIf { it.contains("@") }
+            if (bulkEmail != null && !hasEmailRow(rawContactId, bulkEmail)) {
+                try {
+                    val emailOp = ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                        .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
+                        .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE)
+                        .withValue(ContactsContract.CommonDataKinds.Email.ADDRESS, bulkEmail)
+                        .withValue(ContactsContract.CommonDataKinds.Email.TYPE, ContactsContract.CommonDataKinds.Email.TYPE_HOME)
+                        .build()
+                    context.contentResolver.applyBatch(ContactsContract.AUTHORITY, arrayListOf(emailOp))
+                } catch (_: Exception) { }
+            }
             true
         } catch (_: Exception) {
             false
@@ -460,6 +518,31 @@ class ContactEnrichmentService(
                 null
             )?.use { it.moveToFirst() } ?: false
         } catch (_: Exception) { false }
+    }
+
+    /** True when this raw-contact already holds the address in its Email row. */
+    private fun hasEmailRow(rawContactId: Long, email: String): Boolean {
+        return try {
+            context.contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.Data._ID),
+                "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=? AND ${ContactsContract.CommonDataKinds.Email.ADDRESS}=?",
+                arrayOf(rawContactId.toString(), ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE, email),
+                null
+            )?.use { it.moveToFirst() } ?: false
+        } catch (_: Exception) { false }
+    }
+
+    /** Downscales huge avatars to a phonebook-standard size (keeps aspect). */
+    private fun scaleDown(bitmap: Bitmap, maxSide: Int): Bitmap {
+        return try {
+            val w = bitmap.width
+            val h = bitmap.height
+            val longest = maxOf(w, h)
+            if (longest <= maxSide) return bitmap
+            val scale = maxSide.toFloat() / longest.toFloat()
+            Bitmap.createScaledBitmap(bitmap, (w * scale).toInt(), (h * scale).toInt(), true)
+        } catch (_: Exception) { bitmap }
     }
 
     suspend fun syncAllWhatsAppPhotos(onProgress: (Int, Int) -> Unit): Int = withContext(Dispatchers.IO) {
