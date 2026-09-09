@@ -8,7 +8,6 @@ import com.infocaller.app.util.await
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 object UserLocationResolver {
@@ -86,28 +85,6 @@ object UserLocationResolver {
                     } catch (_: Exception) { }
                 }
             } catch (_: Exception) { }
-            if (loc == null) {
-                try {
-                    val cls = Class.forName("com.google.android.gms.location.LocationServices")
-                    val fusedAny = cls.getMethod("getFusedLocationProviderClient", android.content.Context::class.java)
-                        .invoke(null, context)
-                    val fusedLastLocationMethod = fusedAny.javaClass.methods.firstOrNull { it.name == "getLastLocation" }
-                    if (fusedLastLocationMethod == null) throw IllegalStateException("no getLastLocation")
-                    @Suppress("MissingPermission")
-                    val fusedLoc: android.location.Location? = try {
-                        val task = fusedLastLocationMethod.invoke(fusedAny)
-                        var tmp: android.location.Location? = null
-                        val latch = CountDownLatch(1)
-                        @Suppress("UNCHECKED_CAST")
-                        val anyTask = task as com.google.android.gms.tasks.Task<Any?>
-                        anyTask.addOnSuccessListener { ll2: Any? -> tmp = ll2 as? android.location.Location; latch.countDown() }
-                        anyTask.addOnFailureListener { _: Exception -> latch.countDown() }
-                        latch.await(2000, TimeUnit.MILLISECONDS)
-                        tmp
-                    } catch (_: Exception) { null }
-                    if (fusedLoc != null) loc = fusedLoc
-                } catch (_: Exception) { }
-            }
             val ll: android.location.Location = loc ?: return null
             val client2 = OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).readTimeout(4, TimeUnit.SECONDS).build()
             val req = Request.Builder()
