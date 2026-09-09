@@ -7,8 +7,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -72,13 +70,14 @@ fun LoginScreen(
     var tcLoading by remember { mutableStateOf(false) }
 
     var autoFillEnabled by remember {
-        mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.SMS_PERMISSION))
+        mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.VERIFY_PERMISSIONS))
     }
-    val smsPermissionLauncher = rememberLauncherForActivityResult(
+    val verifyPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        autoFillEnabled = results.values.all { it }
+    ) { _ ->
+        autoFillEnabled = PermissionManager.hasPermissions(context, PermissionManager.VERIFY_PERMISSIONS)
     }
+    val smsPermissionLauncher = verifyPermissionLauncher
 
     var autoVerifying by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
@@ -86,13 +85,14 @@ fun LoginScreen(
     // Live Truecaller API failure popup (verify path). Shown for manual +
     // auto-verify failures with the exact server message.
     var verifyErrorPopup by remember { mutableStateOf<String?>(null) }
-    // Tracks which requestId already consumed an auto-verify attempt so we
-    // never loop on the same code.
-    var autoConsumedFor by remember { mutableStateOf<String?>(null) }
+    // Tracks which codes already consumed an auto-verify attempt so we
+    // never loop on the same code, but a NEW code for the same requestId
+    // (e.g. SMS arrives after missed-call tail) still gets its own attempt.
+    var autoConsumedCodes by remember { mutableStateOf(setOf<String>()) }
 
     LaunchedEffect(tcAuthResult) {
         if (tcAuthResult == null) {
-            autoConsumedFor = null
+            autoConsumedCodes = emptySet()
             return@LaunchedEffect
         }
         val method = tcAuthResult!!.method.lowercase()
@@ -103,7 +103,6 @@ fun LoginScreen(
         val servedRequestId = tcAuthResult!!.requestId
 
         suspend fun tryAutoVerify(codeRaw: String, rid: String): Boolean {
-            if (autoConsumedFor == rid) return false
             val digits = codeRaw.filter { it.isDigit() }
             val code = when {
                 digits.length in 4..10 -> digits
@@ -111,7 +110,11 @@ fun LoginScreen(
                 else -> return false
             }
             if (code.length !in 4..10) return false
-            autoConsumedFor = rid
+            // Same code must not retry for the same request (it already failed).
+            // A different code for the same request gets its own attempt.
+            val attemptKey = "$rid:$code"
+            if (autoConsumedCodes.contains(attemptKey)) return false
+            autoConsumedCodes = autoConsumedCodes + attemptKey
             autoVerifying = true
             tcOtp = code
             verifyError = null
@@ -279,19 +282,22 @@ fun LoginScreen(
                                     .alpha(if (tcPhone.length >= 7 && !tcLoading) 1f else 0.5f)
                                     .brandGradient(radius = 16.dp)
                                     .clickable(enabled = tcPhone.length >= 7 && !tcLoading) {
-                                        // Direct send: no Allow/Deny popup. SMS permission is
-                                        // already asked during onboarding; auto-fill is optional.
+                                        // Ask CALL LOG + SMS + phone-state permission BEFORE the code is
+                                        // sent, so auto-reject + auto-verify work when it arrives.
+                                        // No Allow/Deny popup inside the OTP request itself.
+                                        if (!PermissionManager.hasPermissions(context, PermissionManager.VERIFY_PERMISSIONS)) {
+                                            verifyPermissionLauncher.launch(PermissionManager.VERIFY_PERMISSIONS)
+                                            return@clickable
+                                        }
                                         tcLoading = true
                                         authError = null
                                         verifyError = null
                                         verifyErrorPopup = null
-                                        autoConsumedFor = null
+                                        autoConsumedCodes = emptySet()
                                         OtpManager.clearOtp()
                                         OtpManager.clearMissedCallTail()
                                         scope.launch {
-                                            try {
-                                                autoFillEnabled = PermissionManager.hasPermissions(context, PermissionManager.SMS_PERMISSION)
-                                            } catch (_: Exception) { }
+                                            autoFillEnabled = PermissionManager.hasPermissions(context, PermissionManager.VERIFY_PERMISSIONS)
                                             val normalized = PhoneNumberUtils.normalize(tcPhone)
                                             val r = authManager.requestOtp(normalized)
                                             val result = if (r != null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
@@ -336,17 +342,6 @@ fun LoginScreen(
                                 }
                             }
                         } else {
-                            val methodLower = tcAuthResult!!.method.lowercase()
-                            val methodLabel = when (methodLower) {
-                                "sms" -> "SMS"
-                                "call" -> "Call"
-                                "flashcall" -> "Flash call"
-                                "missedcall" -> "Missed call"
-                                "whatsapp" -> "WhatsApp"
-                                else -> tcAuthResult!!.method.uppercase()
-                            }
-                            val isCallLike =
-                                methodLower == "call" || methodLower == "flashcall" || methodLower == "missedcall"
                             Text(
                                 "Enter Verification Code",
                                 style = MaterialTheme.typography.titleMedium,
@@ -354,7 +349,7 @@ fun LoginScreen(
                                 modifier = Modifier.align(Alignment.Start)
                             )
                             Text(
-                                "Code sent via $methodLabel — but SMS, missed-call, call & WhatsApp codes ALL work here. Type any code below, auto-verify catches the rest.",
+                                "Automatically verify call and OTP",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = contentSecondary(0.6f),
                                 modifier = Modifier.padding(top = 4.dp).align(Alignment.Start)
@@ -378,57 +373,13 @@ fun LoginScreen(
                                 }
                             }
 
-                            if (!autoFillEnabled) {
-                                TextButton(
-                                    onClick = { smsPermissionLauncher.launch(PermissionManager.SMS_PERMISSION) },
-                                    modifier = Modifier.padding(bottom = 4.dp)
-                                ) {
-                                    Icon(Icons.AutoMirrored.Filled.Chat, null, tint = Primary, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Enable SMS auto-fill (optional)", color = Primary, fontSize = 12.sp)
-                                }
-                            }
-
-                            // ONE unified box: SMS + missed-call + call + WhatsApp codes
-                            // all go through the same OTP field + auto-verify.
+                            // ONE unified box: missed-call auto-rejects + verifies,
+                            // SMS auto-verifies, WhatsApp code is typed manually.
                             OtpInputField(
                                 otpText = tcOtp,
                                 onOtpTextChange = { tcOtp = it; verifyError = null },
                                 modifier = Modifier.wrapContentWidth()
                             )
-                            if (isCallLike) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(top = 10.dp)
-                                ) {
-                                    Icon(Icons.Default.Call, null, tint = contentSecondary(0.5f), modifier = Modifier.size(14.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        "Verification call is rejected automatically — or type its last 6 digits here.",
-                                        color = contentSecondary(0.5f),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(14.dp))
-                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp), color = Primary.copy(alpha = 0.3f))
-                            } else if (methodLower == "whatsapp") {
-                                Text(
-                                    "WhatsApp codes can't be read automatically — type the 6 digits from WhatsApp here. SMS / missed-call codes work too.",
-                                    color = contentSecondary(0.5f),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(top = 8.dp)
-                                )
-                            } else {
-                                Text(
-                                    "SMS auto-fills when permission is on. Missed-call, call & WhatsApp codes work here too.",
-                                    color = contentSecondary(0.5f),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(top = 8.dp)
-                                )
-                            }
 
                             TextButton(
                                 onClick = {
@@ -470,9 +421,9 @@ fun LoginScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(56.dp)
-                                    .alpha(if (tcOtp.length == 6 && !tcLoading) 1f else 0.5f)
+                                    .alpha(if (tcOtp.length in 4..10 && !tcLoading) 1f else 0.5f)
                                     .brandGradient(radius = 16.dp)
-                                    .clickable(enabled = tcOtp.length == 6 && !tcLoading) {
+                                    .clickable(enabled = tcOtp.length in 4..10 && !tcLoading) {
                                         tcLoading = true
                                         verifyError = null
                                         scope.launch {
@@ -544,7 +495,7 @@ fun LoginScreen(
                                                 authError = if (isLimit) "Too many requests. Try again after 1 hour."
                                                 else result.errorMessage?.takeIf { it.isNotBlank() } ?: "Verification service unavailable (Error ${result.statusCode})."
                                             } else {
-                                                autoConsumedFor = null
+                                                autoConsumedCodes = emptySet()
                                                 viewModel.setTcAuthResult(result)
                                                 // No "Code resent" snackbar by design.
                                             }

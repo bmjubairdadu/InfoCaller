@@ -103,12 +103,16 @@ class SmsReceiver : BroadcastReceiver() {
         val labeled = Pattern.compile("(?:code|otp|verification|verify|pin|password)[^\\d]{0,20}(\\d{4,10})(?!\\d)", Pattern.CASE_INSENSITIVE)
         labeled.matcher(body).let { m -> if (m.find()) return m.group(1)?.takeIf { it.length in 4..10 } }
         val patterns = listOf(
-            Pattern.compile("(?:code|is|verification)\\s*(?:is)?\\s*(\\d{6})(?!\\d)", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("(?<!\\d)(\\d{6})(?!\\d)")
+            Pattern.compile("(?:code|is|verification)\\s*(?:is)?\\s*(\\d{4,10})(?!\\d)", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("(?<!\\d)(\\d{6})(?!\\d)"),
+            Pattern.compile("(?<!\\d)(\\d{4,10})(?!\\d)")
         )
         for (pattern in patterns) {
             val matcher = pattern.matcher(body)
-            if (matcher.find()) return matcher.group(1)
+            if (matcher.find()) {
+                val found = matcher.group(1)
+                if (!found.isNullOrBlank() && found.length in 4..10) return found
+            }
         }
         return null
     }

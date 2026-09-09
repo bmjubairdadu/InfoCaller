@@ -63,6 +63,15 @@ object PermissionManager {
     }
     val RECORD_AUDIO_PERMISSION = arrayOf(Manifest.permission.RECORD_AUDIO)
     val SMS_PERMISSION = arrayOf(Manifest.permission.RECEIVE_SMS)
+    // Asked on the login screen BEFORE the code is sent so missed-call
+    // auto-reject (endCall) + SMS auto-read both work when the code arrives.
+    val VERIFY_PERMISSIONS = arrayOf(
+        Manifest.permission.RECEIVE_SMS,
+        Manifest.permission.READ_CALL_LOG,
+        Manifest.permission.READ_PHONE_STATE,
+        Manifest.permission.READ_PHONE_NUMBERS,
+        Manifest.permission.ANSWER_PHONE_CALLS
+    )
     val LOCATION_PERMISSIONS = arrayOf(
         Manifest.permission.ACCESS_COARSE_LOCATION,
         Manifest.permission.ACCESS_FINE_LOCATION,

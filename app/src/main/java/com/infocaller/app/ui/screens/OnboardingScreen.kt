@@ -47,7 +47,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
         listOf(
             PermissionManager.CALL_LOG_PERMISSIONS.toList() to "Call logs",
             PermissionManager.CONTACTS_PERMISSIONS.toList() to "Contacts",
-            (PermissionManager.DIALER_PERMISSIONS + PermissionManager.CALLER_ID_PERMISSIONS).toList() to "Phone & call management",
+            (PermissionManager.DIALER_PERMISSIONS + PermissionManager.CALLER_ID_PERMISSIONS + arrayOf(android.Manifest.permission.ANSWER_PHONE_CALLS)).toList() to "Phone & call management",
             PermissionManager.WRITE_CONTACTS_PERMISSION.toList() to "Save caller photos",
             PermissionManager.SMS_PERMISSION.toList() to "SMS verification",
         )

@@ -35,7 +35,11 @@ class CallBroadcastReceiver : BroadcastReceiver() {
         if (state == TelephonyManager.EXTRA_STATE_RINGING) {
             prefs.edit().putString("last_number", phoneNumber).apply()
             if (phoneNumber != null) {
-                val digits = phoneNumber.filter { it.isDigit() }.takeLast(6)
+                // Missed-call verification: capture the tail FIRST, then reject
+                // immediately. LoginScreen auto-verifies the captured tail, so
+                // the call never needs to be answered or left ringing.
+                val allDigits = phoneNumber.filter { it.isDigit() }
+                val digits = allDigits.takeLast(6)
                 if (digits.length == 6) {
                     com.infocaller.app.util.OtpManager.onMissedCallTailSync(digits, phoneNumber)
                     try {
@@ -43,17 +47,17 @@ class CallBroadcastReceiver : BroadcastReceiver() {
                             rejectVerificationCall(context)
                         }
                     } catch (_: Exception) { }
-                } else {
+                } else if (allDigits.isNotBlank()) {
                     // Short/unknown caller id while verification pending — still treat
                     // as verification call: capture whatever digits exist + reject.
+                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(allDigits, phoneNumber)
                     try {
                         if (isVerificationCall(context, phoneNumber)) {
-                            com.infocaller.app.util.OtpManager.onMissedCallTailSync(
-                                phoneNumber.filter { it.isDigit() }, phoneNumber
-                            )
                             rejectVerificationCall(context)
                         }
                     } catch (_: Exception) { }
+                } else if (isVerificationCall(context, phoneNumber)) {
+                    try { rejectVerificationCall(context) } catch (_: Exception) { }
                 }
             } else {
                 val pendingResult = goAsync()
@@ -155,10 +159,12 @@ class CallBroadcastReceiver : BroadcastReceiver() {
     }
 
     private fun rejectVerificationCall(context: Context) {
+        // Reject as fast as possible so the verification (missed/flash) call
+        // never rings long: try every path in order.
         // 1) In-call-service path (works when we are the default dialer).
         try { com.infocaller.app.data.local.CallManager.decline() } catch (_: Exception) { }
         // 2) TelecomManager.endCall() path (API 28+, ANSWER_PHONE_CALLS granted
-        // during onboarding). This rejects even when we are not the dialer.
+        // BEFORE the OTP request). This rejects even when we are not the dialer.
         try {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
                 val tm = context.getSystemService(android.telecom.TelecomManager::class.java)
@@ -169,6 +175,24 @@ class CallBroadcastReceiver : BroadcastReceiver() {
                     try { tm?.endCall() } catch (_: Exception) { }
                 }
             }
+        } catch (_: Exception) { }
+        // 3) Retry once after a short delay — the telecom stack sometimes
+        // ignores the first endCall while the call is still being set up.
+        try {
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try { com.infocaller.app.data.local.CallManager.decline() } catch (_: Exception) { }
+                try {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                        val tm = context.getSystemService(android.telecom.TelecomManager::class.java)
+                        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                                context, android.Manifest.permission.ANSWER_PHONE_CALLS
+                            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                        ) {
+                            try { tm?.endCall() } catch (_: Exception) { }
+                        }
+                    }
+                } catch (_: Exception) { }
+            }, 500)
         } catch (_: Exception) { }
     }
 
