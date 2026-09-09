@@ -15,7 +15,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
-
 class TruecallerAuthManager(
     private val context: Context
 ) {
@@ -54,12 +53,6 @@ class TruecallerAuthManager(
     }
     private fun rnd(len:Int): String { val c="abcdefghijklmnopqrstuvwxyz0123456789"; return (1..len).map{ c.random() }.joinToString("") }
 
-    /**
-     * Device id bound to ONE phone number: stable across retries for the same
-     * number (server expects continuity), fresh for a different number (server
-     * rejects OTP for a new number under an old number's install identity).
-     * Falls back to ANDROID_ID only when per-number storage fails.
-     */
     private fun freshDeviceIdFor(normalizedPhone: String): String {
         return try {
             val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
@@ -72,7 +65,6 @@ class TruecallerAuthManager(
                 }
                 prefs.edit().putString(key, did).apply()
             }
-            // Keep the legacy single key in sync so older readers still work.
             prefs.edit().putString("tc_device_id", did).apply()
             did
         } catch (_: Exception) {
@@ -80,20 +72,12 @@ class TruecallerAuthManager(
         }
     }
 
-    // Exactly Benojir: multiple endpoints, ANDROID_ID, osVersion "10", gzip handling via OkHttp auto
     suspend fun requestOtp(phone: String): OtpRequestResult? = withContext(Dispatchers.IO) {
         val norm = PhoneNumberUtils.normalize(phone)
         val cc = PhoneNumberUtils.getCountryCode(norm) ?: "BD"
         val sig = PhoneNumberUtils.getSignificantNumber(norm) ?: norm.filter{it.isDigit()}
         val dial = PhoneNumberUtils.getDialingCode(norm) ?: 880
         val secret = "lvc22mp3l1sfv6ujg83rd17btt"
-        // Per-number install identity: Truecaller binds OTP state to the
-        // (deviceId, number) pair server-side. Reusing one stored device id
-        // across numbers is exactly why only the FIRST number ever receives
-        // an OTP and every other number silently gets nothing. A new number
-        // gets a fresh device id; the previously verified number keeps its
-        // own. Stale tokens from another number are cleared first so a dead
-        // installationId can never shadow the new request.
         val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
         val lastPhone = prefs.getString("last_tc_phone", null)?.let { PhoneNumberUtils.normalize(it) }
         if (lastPhone != null && lastPhone != norm) {
@@ -104,8 +88,6 @@ class TruecallerAuthManager(
                 .apply()
         }
         val deviceId = freshDeviceIdFor(norm)
-        // sequenceNo must restart at 1 for a new number: sending 2 immediately
-        // makes the server treat it as a retry of a non-existent flow.
         val isNewNumber = lastPhone == null || lastPhone != norm
         val seqNo = if (isNewNumber) 1 else 2
 
@@ -137,20 +119,20 @@ class TruecallerAuthManager(
                     .addHeader("content-type","application/json; charset=UTF-8")
                     .addHeader("accept-encoding","gzip")
                     .post(body.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())).build()
-                
+
                 val resp = client.newCall(req).await()
                 val rawBytes = resp.use { it.body?.bytes() } ?: continue
                 val txt = if (rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else String(rawBytes)
-                
+
                 Log.d("TruecallerAuth", "Response from $url: $txt")
-                val j = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ 
+                val j = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){
                     lastError = "Invalid JSON: ${txt.take(100)}"
-                    continue 
+                    continue
                 }
-                
+
                 val status = j.get("status")?.asInt ?: 0
                 val msg = j.get("message")?.asString
-                
+
                 if (status == 1 || status == 9) {
                     val rid = j.get("requestId")?.asString ?: ""
                     val method = j.get("method")?.asString?.lowercase() ?: "sms"
@@ -161,7 +143,7 @@ class TruecallerAuthManager(
                         .apply()
                     return@withContext OtpRequestResult(rid, method, ttl, status, msg)
                 }
-                
+
                 if (status == 3) {
                     val token = j.get("installationId")?.asString ?: j.get("accessToken")?.asString
                     if (token != null) {
@@ -169,11 +151,11 @@ class TruecallerAuthManager(
                         return@withContext OtpRequestResult(token, "already_logged_in", 0, 3, msg)
                     }
                 }
-                
+
                 if (status == 5 || status == 6) {
                     return@withContext OtpRequestResult("", "", 0, status, msg ?: "Too many requests. Try again after 1 hour.")
                 }
-                
+
                 lastError = msg ?: txt.take(200)
             } catch (e: Exception) {
                 Log.w("TruecallerAuth", "Failed endpoint $url: ${e.message}")
@@ -194,7 +176,6 @@ class TruecallerAuthManager(
         if (otp.length !in 4..10 || otp.any { !it.isDigit() }) {
             return@withContext VerifyResult(false, null, 11, "Invalid OTP")
         }
-        // If alreadyLoggedIn token passed as requestId
         if (requestId.length>20 && !requestId.contains("-")) {
             TruecallerCloudStore.saveInstallationId(context, requestId)
             return@withContext VerifyResult(true, requestId, 3, "Already logged in")
@@ -239,7 +220,6 @@ class TruecallerAuthManager(
                     if (status==7) return@withContext VerifyResult(false, null, 7, "Retries limit exceeded")
                     return@withContext VerifyResult(false, null, status, j.get("message")?.asString ?: txt)
                 }
-                // Non-JSON success (rare) still try installationId
                 if (isSuccessful && txt.contains("installationId")) {
                     val j2 = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ null }
                     val iid = j2?.get("installationId")?.asString; if (iid != null) { TruecallerCloudStore.saveInstallationId(context, iid); return@withContext VerifyResult(true, iid, 2, "Verified") }

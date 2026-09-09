@@ -7,7 +7,6 @@ import android.provider.ContactsContract
 import android.content.Intent
 
 object ContactUtils {
-
     private val PLACEHOLDER_NAMES = setOf(
         "public record",
         "unknown",
@@ -42,7 +41,7 @@ object ContactUtils {
         val normalized = PhoneNumberUtils.normalize(phoneNumber)
         val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(normalized))
         val projection = arrayOf(ContactsContract.PhoneLookup._ID, ContactsContract.PhoneLookup.LOOKUP_KEY)
-        
+
         context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val contactId = cursor.getLong(0)
@@ -57,8 +56,6 @@ object ContactUtils {
     }
 
     fun getLastIncomingCallNumber(context: Context): String? {
-        // Call-log query without READ_CALL_LOG throws SecurityException (this exact
-        // crash killed the main screen on fresh installs). Fail quiet, never escape.
         return try {
             val resolver = context.contentResolver
             val cursor = resolver.query(
@@ -76,11 +73,6 @@ object ContactUtils {
         }
     }
 
-    /**
-     * True when the normalized number exists in the user's contacts.
-     * Used by the on-device screening engine ("block unknown numbers").
-     * Callers must hold READ_CONTACTS; throws are contained here regardless.
-     */
     fun isKnownContact(context: Context, normalizedNumber: String): Boolean {
         if (normalizedNumber.isBlank()) return false
         return try {
@@ -94,7 +86,6 @@ object ContactUtils {
                 null, null, null
             )?.use { it.moveToFirst() } ?: false
         } catch (_: Exception) {
-            // Fail open: a lookup error must never block a legitimate call.
             true
         }
     }
@@ -102,15 +93,15 @@ object ContactUtils {
     fun getContactAccounts(context: Context): List<ContactAccount> {
         val accounts = mutableListOf<ContactAccount>()
         val accountManager = AccountManager.get(context)
-        
+
         accounts.add(ContactAccount("Phone", "Local Device", null, null))
-        
+
         try {
             val amAccounts = accountManager.accounts
             for (account in amAccounts) {
                 val type = account.type.lowercase()
                 val name = account.name
-                
+
                 val label = when {
                     type == "com.google" -> "Google ($name)"
                     type.contains("sim") -> "SIM Card"
@@ -118,12 +109,12 @@ object ContactUtils {
                     type.contains("whatsapp") -> "WhatsApp"
                     else -> name
                 }
-                
+
                 if (type == "com.google" || type.contains("sim") || type.contains("telecom") || type.contains("android.contacts")) {
                     accounts.add(ContactAccount(name, label, name, account.type))
                 }
             }
-            
+
             if (accounts.none { it.typeLabel.contains("SIM") }) {
                 val cursor = context.contentResolver.query(
                     ContactsContract.RawContacts.CONTENT_URI,
@@ -143,7 +134,7 @@ object ContactUtils {
                 }
             }
         } catch (_: Exception) {}
-        
+
         return accounts.distinctBy { (it.accountName ?: "") + (it.accountType ?: "") }
     }
 }

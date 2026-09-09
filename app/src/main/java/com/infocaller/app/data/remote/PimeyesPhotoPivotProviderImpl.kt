@@ -10,14 +10,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 
-/**
- * Pimeyes-style photo OSINT pivot (no key): given a profile photo URL found
- * by an earlier provider, scrape public avatar mirrors (Gravatar variants,
- * GitHub avatar sizes, libravatar, robolink fallbacks) to confirm the face
- * appears on multiple public profiles — strong identity signal. Also adds
- * FaceCheck.ID / Pimeyes one-tap upload links so the user can run the full
- * face search in one tap.
- */
 class PimeyesPhotoPivotProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "pimeyes_photo_pivot"
     override val name = "Face-Search Photo Pivot"
@@ -27,10 +19,6 @@ class PimeyesPhotoPivotProviderImpl(private val httpClient: OkHttpClient) : Look
     override val costClass = CostClass.FREE
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
-        // Auto-photo mode: enriches the scan's already-found photo. When an
-        // earlier provider found a profile picture, attach per-photo face-search
-        // upload links (Lens uploadbyurl embeds the photo; Pimeyes/FaceCheck open
-        // one tap away) so the pivot fires automatically instead of idling.
         try {
             val autoPhotos = context.foundPhotos.filter { it.startsWith("http") }.distinct().take(3)
             val about = buildString {

@@ -3,10 +3,7 @@ package com.infocaller.app.domain.engine
 import com.infocaller.app.domain.model.*
 import com.infocaller.app.util.ContactUtils
 
-
 object IntelligenceResultMerger {
-
-    
     fun merge(current: LookupResult, next: PartialResult): LookupResult {
         val (bestName, nameSource, alternateNames) = mergeNames(current, next)
 
@@ -17,7 +14,7 @@ object IntelligenceResultMerger {
         val newSources = (current.sources + (next.source ?: next.providerId ?: "unknown")).distinct()
 
         var newConfidence = maxOf(current.confidence, next.confidence)
-        
+
         val nameMatchCount = alternateNames[bestName]?.size ?: 0
         if (nameMatchCount >= 2 && newConfidence < 0.95f) {
             newConfidence = minOf(1.0f, newConfidence + 0.15f)
@@ -56,9 +53,9 @@ object IntelligenceResultMerger {
     private fun mergeNames(current: LookupResult, next: PartialResult): Triple<String?, String?, Map<String, List<String>>> {
         val nextName = next.name
         val provider = next.source ?: next.providerId ?: "unknown"
-        
+
         val newAlternateNames = current.alternateNames.toMutableMap()
-        
+
         if (nextName != null && !ContactUtils.isPlaceholderName(nextName)) {
             val providers = newAlternateNames.getOrDefault(nextName, emptyList()).toMutableList()
             if (!providers.contains(provider)) {
@@ -69,21 +66,17 @@ object IntelligenceResultMerger {
 
         val currentIsPlaceholder = ContactUtils.isPlaceholderName(current.name)
         val shouldUpdate = current.name == null || currentIsPlaceholder
-        
+
         val bestName = if (shouldUpdate && nextName != null && !ContactUtils.isPlaceholderName(nextName)) {
             nextName
         } else current.name
-        
+
         val bestSource = if (bestName == nextName) provider else current.nameSource
-        
+
         return Triple(bestName, bestSource, newAlternateNames)
     }
 
     private fun mergePhotos(current: LookupResult, next: PartialResult): Triple<String?, String?, List<PhotoCandidate>> {
-        // Auto-photo fix: many providers set only imageUrl (NID/owner-verified/
-        // Truecaller) with no photoCandidates. Synthesize candidates from bare
-        // http imageUrls so the founded photo is never dropped before the
-        // Lens uploadbyurl link is built.
         val synthetics = listOfNotNull(
             current.imageUrl?.takeIf { it.startsWith("http") }?.let { PhotoCandidate(provider = current.imageSource ?: "photo", url = it) },
             next.imageUrl?.takeIf { it.startsWith("http") }?.let { PhotoCandidate(provider = next.source ?: next.providerId ?: "photo", url = it) }
@@ -95,31 +88,28 @@ object IntelligenceResultMerger {
         }
 
         val bestCandidate = newCandidates.maxByOrNull { calculatePhotoScore(it) }
-        
+
         return Triple(bestCandidate?.url, bestCandidate?.provider, newCandidates)
     }
 
-    
     private fun calculatePhotoScore(c: PhotoCandidate): Float {
         var score = 0f
-        
+
         if (c.faceCount > 0) score += 500f
         score += c.faceCoverage * 100f
         score += c.imageQuality * 100f
-        
+
         val resolution = c.width * c.height
         val resolutionScore = if (resolution > 250000) 100f else (resolution / 2500f)
         score += minOf(100f, resolutionScore)
-        
+
         if (c.provider.lowercase().contains("truecaller") || c.provider.lowercase().contains("eyecon")) {
             score += 50f
         }
-        // Verified profile scrapers (LinkedIn/X/Reddit/GitHub...) outrank
-        // generic sweep hits: their photos are confirmed account avatars.
         if (c.provider.lowercase() in setOf("linkedin", "x", "reddit", "github", "gitlab", "instagram", "telegram")) {
             score += 30f
         }
-        
+
         return score
     }
 
@@ -138,14 +128,12 @@ object IntelligenceResultMerger {
             if (profileUrl == null || genericUrls.contains(profileUrl)) {
                 return@forEach
             }
-            
+
             if (profileUrl.endsWith(".com") || profileUrl.endsWith(".me") || profileUrl.endsWith(".org") || profileUrl.endsWith(".net")) {
                 val path = profileUrl.substringAfter(".com").substringAfter(".me").substringAfter(".org").substringAfter(".net")
                 if (path.isEmpty() || path == "/") return@forEach
             }
 
-            // Dedup by platform + normalized URL so two distinct accounts on the
-            // same platform are both kept instead of dropping the second one.
             val dedupKey = (n.platform.lowercase() + "|" + profileUrl).take(300)
             val existing = result.find {
                 (it.platform.lowercase() + "|" + (it.profileUrl?.lowercase() ?: "")).take(300) == dedupKey

@@ -10,7 +10,6 @@ import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-
 class CallerIdDeepOsintProvider(
     private val httpClient: OkHttpClient
 ) : LookupProvider {

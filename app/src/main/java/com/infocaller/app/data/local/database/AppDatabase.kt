@@ -15,18 +15,18 @@ import com.infocaller.app.data.local.entity.LocalContactEntity
 
 @Database(
     entities = [
-        CallerEntity::class, 
+        CallerEntity::class,
         BlocklistEntity::class,
         com.infocaller.app.data.local.entity.BlockedPrefixEntity::class,
         com.infocaller.app.data.local.entity.BlockedEventEntity::class,
-        LocalContactEntity::class, 
+        LocalContactEntity::class,
         com.infocaller.app.data.local.entity.ContactEnrichmentEntity::class,
         com.infocaller.app.data.local.entity.EnrichmentQueueEntity::class,
         com.infocaller.app.data.local.entity.OperatorLogoEntity::class,
         com.infocaller.app.data.local.entity.ScanJobStateEntity::class,
         com.infocaller.app.data.local.entity.NidEntity::class
-    ], 
-    version = 25, 
+    ],
+    version = 25,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -103,8 +103,6 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("CREATE TABLE IF NOT EXISTS contribution_queue (phoneHash TEXT NOT NULL, displayName TEXT, payloadFingerprint TEXT NOT NULL, status TEXT NOT NULL, attemptCount INTEGER NOT NULL, nextAttemptAt INTEGER NOT NULL, lastAttemptAt INTEGER NOT NULL, lastError TEXT, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(phoneHash))")
             }
         }
-        // v22: query indices only — no column changes. IF NOT EXISTS keeps this
-        // idempotent for installs that already created indices via entities.
         val MIGRATION_21_22 = object : Migration(21, 22) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_contact_enrichment_contactId ON contact_enrichment(contactId)")
@@ -115,14 +113,11 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_contribution_queue_status_nextAttemptAt ON contribution_queue(status, nextAttemptAt)")
             }
         }
-        // v23: drop the never-used contact_backups table (zero readers/writers).
         val MIGRATION_22_23 = object : Migration(22, 23) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("DROP TABLE IF EXISTS contact_backups")
             }
         }
-        // v24: on-device screening rules (blocked prefixes + blocked-event log),
-        // pattern source: humanjuan/iOG26 (call-filter). Local-only, no server.
         val MIGRATION_23_24 = object : Migration(23, 24) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("CREATE TABLE IF NOT EXISTS blocked_prefixes (prefix TEXT NOT NULL, addedAt INTEGER NOT NULL, PRIMARY KEY(prefix))")
@@ -130,9 +125,6 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_blocked_events_timestamp ON blocked_events(timestamp)")
             }
         }
-        // v25: drop the never-functional contribution_queue table (uploads
-        // posted to a placeholder backend that never existed). Local-only;
-        // existing installs lose nothing but a dead queue.
         val MIGRATION_24_25 = object : Migration(24, 25) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("DROP TABLE IF EXISTS contribution_queue")

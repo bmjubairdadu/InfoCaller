@@ -26,9 +26,6 @@ class CallerViewModel(
     private val database: AppDatabase,
     private val lookupEngine: com.infocaller.app.domain.engine.IPublicLookupEngine
 ) : ViewModel() {
-
-    // null = follow system. Defaults to null so a fresh install matches the
-    // device theme; MainActivity persists the resolved choice afterwards.
     private val _themeMode = MutableStateFlow<Boolean?>(null)
     val themeMode: StateFlow<Boolean?> = _themeMode.asStateFlow()
 
@@ -41,8 +38,6 @@ class CallerViewModel(
     private val _searchResult = MutableStateFlow<SearchUiState>(SearchUiState.Idle)
     val searchResult: StateFlow<SearchUiState> = _searchResult.asStateFlow()
 
-    // Monotonic generation: incremented on every new search so a superseded
-    // collector can detect it is stale and stop writing results.
     @Volatile
     private var searchGeneration = 0
 
@@ -58,9 +53,6 @@ class CallerViewModel(
     private val _showSimSelection = MutableStateFlow<String?>(null)
     val showSimSelection: StateFlow<String?> = _showSimSelection.asStateFlow()
 
-    // Tick that restarts the device-data flows (call log / contacts) after a
-    // permission grant. Without this, a flow that closed itself for lack of
-    // permission would stay empty forever even after the user grants access.
     private val _deviceDataTick = MutableStateFlow(0)
     fun refreshDeviceData() { _deviceDataTick.value += 1 }
 
@@ -84,8 +76,8 @@ class CallerViewModel(
 
     val filteredContacts: StateFlow<List<Contact>> = combine(_dialerInput, contacts) { input, list ->
         if (input.isEmpty()) emptyList()
-        else list.filter { 
-            (it.phoneNumber?.contains(input) == true) || T9Search.matches(input, it.displayName) 
+        else list.filter {
+            (it.phoneNumber?.contains(input) == true) || T9Search.matches(input, it.displayName)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -111,10 +103,6 @@ class CallerViewModel(
     }
 
     fun searchNumber(phoneNumber: String) {
-        // Single routed entry: emails run an EMAIL scan (phone normalize strips
-        // them to digits), handles a USERNAME scan, everything else a PHONE
-        // scan. NID/DOB are display-only from database.json matches — there is
-        // no NID search path. Used by nav-graph + details retry + settings.
         when (com.infocaller.app.util.IdentifierRouter.routeType(phoneNumber)) {
             com.infocaller.app.domain.engine.IdentifierType.EMAIL -> {
                 searchEmailManual(phoneNumber)
@@ -130,35 +118,20 @@ class CallerViewModel(
         searchByIdentifier(normalized, com.infocaller.app.domain.engine.IdentifierType.PHONE)
     }
 
-    /**
-     * Manual search entry point (contacts / recents / dial pad / settings):
-     * CRITICAL priority pauses background scans (ScanOrchestrator cancels
-     * BACKGROUND jobs) and focuses exclusively on this number. Same path is
-     * used for incoming calls via the overlay.
-     */
     fun searchNumberManual(phoneNumber: String) {
         searchNumber(phoneNumber)
     }
 
-    /** NID search is DISABLED: search is phone-number only. NID/DOB surface
-     *  automatically as display fields on phone matches (see NidDatabase*).
-     *  Kept as a no-op so existing call sites fail safe instead of crashing. */
     fun searchNidManual(identifier: String) {
         return
     }
 
-    /** Manual email search: same focus semantics, EMAIL identifier type.
-     *  Lowercased/trimmed but never phone-normalized (normalize() would strip
-     *  the address to digits). Details screen shows the raw identifier. */
     fun searchEmailManual(email: String) {
         val cleaned = email.trim().lowercase()
         if (cleaned.isBlank() || !com.infocaller.app.util.IdentifierRouter.isEmail(cleaned)) return
         searchByIdentifier(cleaned, com.infocaller.app.domain.engine.IdentifierType.EMAIL)
     }
 
-    /** Manual username search: same focus semantics, USERNAME identifier type.
-     *  Lowercased/trimmed, leading @ stripped, never phone-normalized.
-     *  Details screen shows the raw handle. */
     fun searchUsernameManual(username: String) {
         val cleaned = username.trim().lowercase().removePrefix("@")
         if (cleaned.length !in 2..40 || cleaned.contains(" ") || cleaned.contains("@")) return
@@ -170,7 +143,7 @@ class CallerViewModel(
         viewModelScope.launch {
             repository.startScan(normalized, com.infocaller.app.domain.engine.ScanPriority.CRITICAL)
                 .collect { state ->
-                    if (state is com.infocaller.app.domain.engine.ScanState.Progress || 
+                    if (state is com.infocaller.app.domain.engine.ScanState.Progress ||
                         state is com.infocaller.app.domain.engine.ScanState.Completed) {
                         val result = if (state is com.infocaller.app.domain.engine.ScanState.Progress) state.result else (state as com.infocaller.app.domain.engine.ScanState.Completed).result
                         _fullLookupResult.value = result
@@ -181,10 +154,6 @@ class CallerViewModel(
 
     fun searchByIdentifier(identifier: String, type: String) {
         if (identifier.isBlank()) return
-        // Generation guard: only the latest search's collector may write
-        // _searchResult. An older scan cancelled a millisecond too late would
-        // otherwise overwrite the new scan's Loading/Success with its own
-        // stale Completed — the number→email ghost.
         val generation = ++searchGeneration
         viewModelScope.launch {
             _searchResult.value = SearchUiState.Loading
@@ -194,8 +163,6 @@ class CallerViewModel(
                 val scanFlow = repository.startScan(identifier, com.infocaller.app.domain.engine.ScanPriority.CRITICAL, type)
                 var sawProviderStep = false
                 scanFlow.collect { state ->
-                        // Stale generation: ignore everything, including terminal
-                        // states, so the dead scan can't touch the new UI.
                         if (generation != searchGeneration) return@collect
                         when (state) {
                             is com.infocaller.app.domain.engine.ScanState.ProviderStep -> {
@@ -203,13 +170,6 @@ class CallerViewModel(
                                 applyScanStep(state)
                             }
                             is com.infocaller.app.domain.engine.ScanState.Progress -> {
-                                // INSTANT display: persist + surface EVERY
-                                // partial the moment it arrives (name from
-                                // Truecaller, photo from Eyecon, socials from
-                                // the enumerator...). The DB write is what
-                                // wakes the enrichment collectors, so each
-                                // field appears live instead of waiting for
-                                // the final Completed.
                                 try {
                                     repository.saveLookupResult(state.result)
                                 } catch (_: Exception) { }
@@ -226,19 +186,12 @@ class CallerViewModel(
                                 if (generation != searchGeneration) return@collect
                                 _searchResult.value = SearchUiState.Success(mapToCaller(state.result), isLive = false)
                                 _scanActive.value = false
-                                // Auto-sync to the phonebook: name + photo land
-                                // on the matching system contact (or the cached
-                                // scanned number) without a manual tap. Saved
-                                // names are never overwritten — only gaps fill.
                                 try {
                                     autoSyncToPhonebook(state.result)
                                 } catch (_: Exception) { }
                             }
                             is com.infocaller.app.domain.engine.ScanState.Error -> {
                                 if (generation != searchGeneration) return@collect
-                                // Offline/no-route: fall back to whatever is
-                                // cached locally instead of dying with an error
-                                // card — the call UI must never crash offline.
                                 val cached = try {
                                     repository.searchCaller(identifier)
                                 } catch (_: Exception) { null }
@@ -253,10 +206,7 @@ class CallerViewModel(
                         }
                     }
             } catch (e: Exception) {
-                // Stale generation: a superseded scan's throw must not touch UI.
                 if (generation != searchGeneration) return@launch
-                // Any scan throw (offline, timeout, cancelled) degrades to the
-                // offline path: cached data if present, else a clean error.
                 try {
                     val cached = repository.searchCaller(identifier)
                     if (cached != null) {
@@ -292,7 +242,6 @@ class CallerViewModel(
     }
 
     private suspend fun autoSyncToPhonebook(result: LookupResult) {
-        // Phone scans only — email/username keys have no phonebook row.
         if (result.phoneNumber.isBlank()) return
         if (!com.infocaller.app.util.IdentifierRouter.routeType(result.phoneNumber)
             .equals(com.infocaller.app.domain.engine.IdentifierType.PHONE, ignoreCase = true)
@@ -324,12 +273,6 @@ class CallerViewModel(
     fun cancelSearch(phoneNumber: String) { repository.cancelScan(phoneNumber); _searchResult.value = SearchUiState.Idle }
     fun clearSearch() { _searchResult.value = SearchUiState.Idle; _scanSteps.value = emptyList(); _scanActive.value = false }
 
-    /**
-     * Kill every in-flight scan and reset the result pipeline BEFORE a new
-     * search starts. Without this, tapping number → email in quick succession
-     * lets the old scan's late Progress/Completed overwrite the new scan's
-     * Loading state — the email view then shows the number's stale data.
-     */
     fun cancelAllSearches() {
         searchGeneration++
         try { repository.cancelAllScans() } catch (_: Exception) { }
@@ -404,6 +347,27 @@ class CallerViewModel(
         viewModelScope.launch { contactEnrichmentService.updateExistingContact(phoneNumber, caller) }
     }
 
+    fun setPrimaryPhoto(identifier: String, url: String, provider: String) {
+        if (identifier.isBlank() || url.isBlank()) return
+        val key = try {
+            when {
+                com.infocaller.app.util.IdentifierRouter.isEmail(identifier) -> identifier.trim().lowercase()
+                com.infocaller.app.util.IdentifierRouter.routeType(identifier) ==
+                    com.infocaller.app.domain.engine.IdentifierType.USERNAME ->
+                    identifier.trim().lowercase().removePrefix("@")
+                else -> PhoneNumberUtils.normalize(identifier)
+            }
+        } catch (_: Exception) { return }
+        viewModelScope.launch {
+            try {
+                database.enrichmentDao().setPrimaryPhoto(key, url, provider)
+            } catch (_: Exception) { }
+            try {
+                contactEnrichmentService.forcePhonebookPhoto(key, url)
+            } catch (_: Exception) { }
+        }
+    }
+
     fun mapToCaller(entity: com.infocaller.app.data.local.entity.ContactEnrichmentEntity, phoneNumber: String): Caller {
         return Caller(
             phoneNumber = phoneNumber,
@@ -438,8 +402,6 @@ class CallerViewModel(
     }
 
     fun getEnrichment(number: String): Flow<com.infocaller.app.data.local.entity.ContactEnrichmentEntity?> {
-        // Email/username keys must NOT go through phone normalization
-        // (strips addresses to digits, mangles handles).
         val key = when {
             com.infocaller.app.util.IdentifierRouter.isEmail(number) -> number.trim().lowercase()
             com.infocaller.app.util.IdentifierRouter.routeType(number) == com.infocaller.app.domain.engine.IdentifierType.USERNAME -> number.trim().lowercase().removePrefix("@")
@@ -449,9 +411,6 @@ class CallerViewModel(
     }
 
     fun getEnrichments(numbers: List<String>): Flow<List<com.infocaller.app.data.local.entity.ContactEnrichmentEntity>> {
-        // Room generates "IN ()" for an empty list, which is a syntax error and
-        // crashes collectors (fresh install with no call history). Short-circuit.
-        // Email/username keys bypass phone normalization.
         val normalized = numbers.map {
             when {
                 com.infocaller.app.util.IdentifierRouter.isEmail(it) -> it.trim().lowercase()
@@ -471,9 +430,7 @@ sealed class SearchUiState {
         val caller: Caller,
         val isLive: Boolean = false,
         val lastProvider: String? = null,
-        /** Full cumulative result at the moment this state was emitted:
-         *  carries photo candidates, socials, about, carrier... the moment
-         *  each provider contributes them (instant partial display). */
+
         val livePartial: LookupResult? = null,
     ) : SearchUiState()
     object NotFound : SearchUiState()

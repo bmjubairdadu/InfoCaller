@@ -11,14 +11,7 @@ import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/**
- * Resolves the *calling user's* location for sharing with callees.
- * Order: fused-last-location (if granted) -> IP geocode -> SIM MCC/MNC
- * country mapping. Never throws; returns null when nothing resolves.
- * Result is cached for 24h; IP fetch is 5s-bounded; no PII leaves device.
- */
 object UserLocationResolver {
-
     private const val PREFS = "user_location_prefs"
     private const val K_COUNTRY = "user_country"
     private const val K_REGION = "user_region"
@@ -57,24 +50,16 @@ object UserLocationResolver {
         } catch (_: Exception) { }
     }
 
-    /**
-     * Attempt to resolve without prompting: fused location when granted,
-     * otherwise IP geocode when online. SIM country is synchronous fallback.
-     * Safe to call on any thread; internally IO-shifted.
-     */
     suspend fun resolve(
         context: Context,
         httpClient: OkHttpClient? = null,
     ): UserLocation? = withContext(Dispatchers.IO) {
         cached(context)?.let { return@withContext it }
 
-        // 1) Device location if granted (no prompt here; onboarding handles it).
         tryGpsLocation(context)?.let { save(context, it); return@withContext it }
 
-        // 2) IP geocode when online.
         tryIpLocation(httpClient)?.let { save(context, it); return@withContext it }
 
-        // 3) SIM / network country as coarse fallback.
         trySimCountry(context)?.let { save(context, it); return@withContext it }
 
         null
@@ -90,9 +75,6 @@ object UserLocationResolver {
                 ) != android.content.pm.PackageManager.PERMISSION_GRANTED
             ) return null
 
-            // Prefer LocationManager last-known first (no play-services dep,
-            // no ambiguity around `location` import from GMS). Fall back to
-            // fused if still null.
             var loc: android.location.Location? = null
             try {
                 val lm = context.getSystemService(Context.LOCATION_SERVICE) as? android.location.LocationManager
@@ -106,9 +88,6 @@ object UserLocationResolver {
             } catch (_: Exception) { }
             if (loc == null) {
                 try {
-                    // Use reflection so the GMS location artifact is optional
-                    // (app builds without play-services-location). If absent,
-                    // this branch just falls through to IP/SIM.
                     val cls = Class.forName("com.google.android.gms.location.LocationServices")
                     val fusedAny = cls.getMethod("getFusedLocationProviderClient", android.content.Context::class.java)
                         .invoke(null, context)
@@ -130,7 +109,6 @@ object UserLocationResolver {
                 } catch (_: Exception) { }
             }
             val ll: android.location.Location = loc ?: return null
-            // Reverse-geocode via Nominatim (BD-biased) — best-effort, never throws.
             val client2 = OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).readTimeout(4, TimeUnit.SECONDS).build()
             val req = Request.Builder()
                 .url("https://nominatim.openstreetmap.org/reverse?format=json&lat=${ll.latitude}&lon=${ll.longitude}&zoom=10&addressdetails=1&accept-language=en")
@@ -179,16 +157,10 @@ object UserLocationResolver {
         } catch (_: Exception) { null }
     }
 
-    /**
-     * Associate the resolved user location with each SIM slot key so callees
-     * can render a "caller is in ..." line. Stored per-SIM (mcc/mnc/iso) so
-     * swapping SIMs updates correctly. Best-effort only.
-     */
     fun bindToSimSlots(context: Context, loc: UserLocation) {
         try {
             val sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val editor = sp.edit()
-            // Persist a display string per reachable SIM slot key.
             val sm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
             val ids = try {
                 val sub = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? android.telephony.SubscriptionManager

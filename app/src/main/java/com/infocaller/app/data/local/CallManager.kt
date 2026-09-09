@@ -14,13 +14,13 @@ object CallManager {
 
     private val _activeCall = MutableStateFlow<Call?>(null)
     val activeCall = _activeCall.asStateFlow()
-    
+
     private val _callState = MutableStateFlow(Call.STATE_DISCONNECTED)
     val callState = _callState.asStateFlow()
-    
+
     private val _isMuted = MutableStateFlow(false)
     val isMuted = _isMuted.asStateFlow()
-    
+
     private val _isSpeakerOn = MutableStateFlow(false)
     val isSpeakerOn = _isSpeakerOn.asStateFlow()
 
@@ -29,7 +29,7 @@ object CallManager {
 
     private val _isRecording = MutableStateFlow(false)
     val isRecording = _isRecording.asStateFlow()
-    
+
     private var inCallService: java.lang.ref.WeakReference<InCallService>? = null
     private var callRecorder: CallRecorder? = null
 
@@ -56,12 +56,12 @@ object CallManager {
             })
         }
     }
-    
+
     fun updateAudioState(state: CallAudioState) {
         _isMuted.value = state.isMuted
         _isSpeakerOn.value = state.route == CallAudioState.ROUTE_SPEAKER
     }
-    
+
     fun setInCallService(service: InCallService?) {
         inCallService = service?.let { java.lang.ref.WeakReference(it) }
     }

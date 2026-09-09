@@ -30,8 +30,6 @@ class ContinuousEnrichmentEngine(
     val isOnline = _isOnline.asStateFlow()
 
     init {
-        // A throw here would kill Application.onCreate ("keeps stopping" on every
-        // launch), so the callback registration must never escape.
         try {
             monitorConnectivity()
         } catch (_: Exception) { }
@@ -115,14 +113,6 @@ class ContinuousEnrichmentEngine(
 
             queueDao.insertOrUpdate(item.copy(status = QueueStatus.PROCESSING, lastAttemptAt = System.currentTimeMillis()))
 
-            // Background continuous scan: only runs while online (guarded by
-            // callers + processNextOneByOne). Every completed result is:
-            //  1. persisted to the app DB (works offline later),
-            //  2. mirrored to the phonebook contact when one exists
-            //     (notes carry everything that has no ContactsContract slot),
-            //  3. cached under the enrichment row even when no phonebook row
-            //     exists yet. A SecurityException (revoked contacts grant)
-            //     never kills the loop — the item is requeued.
             orchestrator.startScan(identifier, ScanPriority.BACKGROUND).collect { state ->
                 if (state is ScanState.Completed) {
                     val res = state.result
@@ -143,13 +133,6 @@ class ContinuousEnrichmentEngine(
         }
     }
 
-    /**
-     * Persist one background scan result to both stores. App DB first (always
-     * safe, offline-readable), then phonebook mirror when a matching row
-     * exists. WRITE_CONTACTS is requested contextually just before the mirror
-     * attempt; without it only the app DB is updated and the item completes —
-     * the mirror retries on the next pass after the grant.
-     */
     private suspend fun persistBackgroundResult(identifier: String, res: com.infocaller.app.domain.model.LookupResult) {
         if (res.confidence < 0.4f && res.name.isNullOrBlank() && res.imageUrl.isNullOrBlank() &&
             res.city.isNullOrBlank() && res.about.isNullOrBlank() && res.socialProfiles.isEmpty()
@@ -191,7 +174,6 @@ class ContinuousEnrichmentEngine(
                     )
                 )
             } catch (se: SecurityException) {
-                // Grant revoked mid-loop: keep app-DB result, retry mirror later.
             } catch (_: Exception) { }
         } catch (_: Exception) { }
     }

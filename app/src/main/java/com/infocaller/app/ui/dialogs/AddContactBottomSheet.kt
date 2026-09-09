@@ -49,13 +49,13 @@ fun AddContactBottomSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    
+
     var inputNumber by remember { mutableStateOf(phoneNumber) }
     var displayName by remember { mutableStateOf(initialName) }
     var suggestedPhotoUrl by remember { mutableStateOf<String?>(null) }
     var isSaving by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    
+
     var isNameManuallyEdited by remember { mutableStateOf(false) }
     var userSelectedPhotoUri by remember { mutableStateOf<android.net.Uri?>(null) }
 
@@ -68,10 +68,6 @@ fun AddContactBottomSheet(
         }
     }
 
-    // WRITE_CONTACTS is requested only here, at the exact moment the user
-    // taps SAVE — never with the read side, never up front. The launcher must
-    // be registered before any UI that uses it; it flips saveRequested, and
-    // the SAVE button / effect below (after selectedAccount) does the work.
     var saveRequested by remember { mutableStateOf(false) }
     var saveDeniedNotice by remember { mutableStateOf(false) }
     val writeLauncher = rememberLauncherForActivityResult(
@@ -84,20 +80,20 @@ fun AddContactBottomSheet(
             isSaving = false
         }
     }
-    
-    val enrichmentService = remember { 
-        ContactEnrichmentService(context, database = (context.applicationContext as com.infocaller.app.InfoCallerApplication).database) 
+
+    val enrichmentService = remember {
+        ContactEnrichmentService(context, database = (context.applicationContext as com.infocaller.app.InfoCallerApplication).database)
     }
-    
+
     val normalized = remember(inputNumber) { com.infocaller.app.util.PhoneNumberUtils.normalize(inputNumber) }
     val enrichment by viewModel.getEnrichment(normalized).collectAsState(initial = null)
     val localContacts by viewModel.localContacts.collectAsState()
-    val existingContact = remember(normalized, localContacts) { 
-        localContacts.find { com.infocaller.app.util.PhoneNumberUtils.normalize(it.phoneNumber) == normalized } 
+    val existingContact = remember(normalized, localContacts) {
+        localContacts.find { com.infocaller.app.util.PhoneNumberUtils.normalize(it.phoneNumber) == normalized }
     }
-    
+
     val lookupResult by viewModel.fullLookupResult.collectAsState()
-    
+
     LaunchedEffect(normalized) {
         if (normalized.length >= 7) {
             viewModel.performFullLookup(normalized)
@@ -109,7 +105,7 @@ fun AddContactBottomSheet(
             val contactName = existingContact?.displayName
             val enrichedName = enrichment?.publicName
             val providerName = lookupResult?.name
-            
+
             if (contactName != null && !ContactUtils.isPlaceholderName(contactName)) {
                 displayName = contactName
             } else if (enrichedName != null && !ContactUtils.isPlaceholderName(enrichedName)) {
@@ -118,12 +114,12 @@ fun AddContactBottomSheet(
                 displayName = providerName
             }
         }
-        
+
         if (suggestedPhotoUrl == null || suggestedPhotoUrl!!.startsWith("http")) {
             val contactPhoto = existingContact?.photoUri
             val enrichedPhoto = enrichment?.profileImageUrl
             val providerPhoto = lookupResult?.imageUrl
-            
+
             if (contactPhoto != null) {
                 suggestedPhotoUrl = contactPhoto
             } else if (enrichedPhoto != null) {
@@ -138,9 +134,6 @@ fun AddContactBottomSheet(
     var selectedAccount by remember { mutableStateOf(accounts.firstOrNull()) }
     var showAccountPicker by remember { mutableStateOf(false) }
 
-    // Save logic lives here — after enrichmentService/lookupResult/
-    // selectedAccount — so no forward references. Triggered by the SAVE
-    // button below or by the write-permission grant above.
     fun doSave() {
         scope.launch {
             val success = enrichmentService.saveContactFast(
@@ -200,7 +193,7 @@ fun AddContactBottomSheet(
                     .size(100.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .clickable { 
+                    .clickable {
                         photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
                 contentAlignment = Alignment.Center
@@ -225,24 +218,24 @@ fun AddContactBottomSheet(
 
             OutlinedTextField(
                 value = displayName,
-                onValueChange = { 
+                onValueChange = {
                     displayName = it
                     isNameManuallyEdited = true
-                    errorMessage = null 
+                    errorMessage = null
                 },
                 label = { Text("Name") },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 singleLine = true
             )
-            
+
             Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedTextField(
                 value = inputNumber,
-                onValueChange = { 
+                onValueChange = {
                     inputNumber = it
-                    errorMessage = null 
+                    errorMessage = null
                 },
                 label = { Text("Phone Number") },
                 modifier = Modifier.fillMaxWidth(),
@@ -332,15 +325,15 @@ fun AddContactBottomSheet(
                         ListItem(
                             headlineContent = { Text(account.name) },
                             supportingContent = { Text(account.typeLabel, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                            leadingContent = { 
+                            leadingContent = {
                                 val icon = when {
                                     account.typeLabel.contains("Google") -> Icons.Default.AccountCircle
                                     account.typeLabel.contains("SIM") -> Icons.Default.SimCard
                                     else -> Icons.Default.PhoneAndroid
                                 }
-                                Icon(icon, null, tint = Primary) 
+                                Icon(icon, null, tint = Primary)
                             },
-                            modifier = Modifier.clickable { 
+                            modifier = Modifier.clickable {
                                 selectedAccount = account
                                 showAccountPicker = false
                             },

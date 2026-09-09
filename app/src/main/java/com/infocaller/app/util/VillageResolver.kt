@@ -9,14 +9,7 @@ import okhttp3.Request
 import org.json.JSONArray
 import java.util.concurrent.TimeUnit
 
-/**
- * When a caller-ID name embeds a location token (e.g. "Ashraful vai sujansaha"),
- * resolve that token into a Bangladesh administrative place via Nominatim and
- * render "District, Upazila" style precision. Purely display + note; never
- * renames the saved contact. Capped to 1 lookup per distinct name.
- */
 object VillageResolver {
-
     private const val PREFS = "village_resolver_prefs"
     private const val KEY_SEEN = "village_seen_v1"
 
@@ -31,7 +24,6 @@ object VillageResolver {
 
     private val HONORIFICS = setOf("vai", "vaiya", "bhai", "bhaia", "apa", "apu", "dada", "dadi", "nana", "nani", "mama", "mami", "chacha", "chachi", "khalu", "khala", "fupu", "fupa", "uncle", "aunty", "aunt", "sir", "mam", "madam", "boss", "bro", "sis", "dst", "hujur", "office", "store", "shop")
     private val STOP = setOf("and", "or", "the", "a", "an", "of", "for", "in", "on", "at", "to", "with", "new", "old", "shah", "md", "mohammad", "hossain", "hossen", "ahmed", "rahman", "khan", "ali", "uddin", "islam")
-    // Common BD person-name tokens: never treated as places even when trailing.
     private val PERSON_TOKENS = setOf(
         "rahim", "karim", "rahman", "ahmed", "ahmad", "hossain", "hossen", "hassan", "hasan", "khan", "ali", "uddin",
         "islam", "mohammad", "mohammed", "abdul", "abul", "abu", "mia", "mia", "sheikh", "chowdhury", "choudhury",
@@ -43,20 +35,11 @@ object VillageResolver {
 
     data class PlaceCandidate(val raw: String, val repaired: String, val wasRepaired: Boolean)
 
-    /**
-     * All trailing tokens that could be places, AFTER skipping the person
-     * part: first token (given name) + honorifics are never places. Returns
-     * empty when the name is just a person ("Ashraful vai" -> skipped).
-     * Repair info included per token ("sujansah" -> "sujansaha").
-     */
     fun extractPlaceCandidates(fullName: String?): List<PlaceCandidate> {
         if (fullName.isNullOrBlank()) return emptyList()
         val tokens = fullName.trim()
             .split(Regex("[\\s,\\-_/()\\[\\].|]+")).map { it.trim() }.filter { it.length >= 3 }
         if (tokens.size < 2) return emptyList()
-        // Person part = first token + any honorific anywhere. Everything after
-        // the person part is a place candidate (covers "Ashraful vai sujansaha"
-        // -> [sujansaha] and "Ashraful vai" -> [] since nothing trails).
         val first = tokens.first().lowercase()
         val tail = tokens.drop(1).filter { it.lowercase() !in HONORIFICS }
         if (tail.isEmpty()) return emptyList()
@@ -67,25 +50,20 @@ object VillageResolver {
             if (low == first) return@mapNotNull null
             if (!tok.any { it.isLetter() }) return@mapNotNull null
             if (tok.count { it.isLetterOrDigit() } < 3) return@mapNotNull null
-            // Pure-digit or digit-heavy tokens are phone fragments, not places.
             if (tok.count { it.isDigit() } >= 4) return@mapNotNull null
             val repaired = BdPlaceGazetteer.repair(low)
             PlaceCandidate(raw = tok, repaired = repaired, wasRepaired = !repaired.equals(low, ignoreCase = true))
         }
     }
 
-    /** Heuristic token that likely is a place, not the person name. Null when none. */
     fun extractPlaceToken(fullName: String?): String? {
-        // Last candidate wins (closest to old single-token behavior).
         return extractPlaceCandidates(fullName).lastOrNull()?.repaired
     }
 
-    /** Normalized edit-distance similarity 0..1 (1 = identical). */
     internal fun similarity(a: String, b: String): Double {
         if (a.equals(b, ignoreCase = true)) return 1.0
         val x = a.lowercase(); val y = b.lowercase()
         if (x.isEmpty() || y.isEmpty()) return 0.0
-        // Cheap prefix shortcut: "sujansah" vs "sujansaha" scores ~0.97.
         if (y.startsWith(x) || x.startsWith(y)) {
             val longer = maxOf(x.length, y.length).toDouble()
             return (minOf(x.length, y.length).toDouble() + 0.5) / (longer + 0.5)
@@ -103,7 +81,6 @@ object VillageResolver {
 
     private const val KEY_RESOLVED = "village_resolved_v1"
 
-    /** Last resolved display per token (7-day TTL) — avoids re-hitting Nominatim on every open. */
     fun cachedResolved(context: Context, token: String): ResolvedVillage? {
         return try {
             val sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -135,16 +112,11 @@ object VillageResolver {
             val sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val cur = sp.getStringSet(KEY_SEEN, emptySet())?.toMutableSet() ?: mutableSetOf()
             cur.add(key)
-            // Cap set to 800 entries.
             val trimmed = if (cur.size > 800) cur.take(800).toSet() else cur
             sp.edit().putStringSet(KEY_SEEN, trimmed).apply()
         } catch (_: Exception) { }
     }
 
-    /**
-     * Resolve a place token to BD administrative levels via Nominatim. Append
-     * ", Bangladesh" to bias results. Returns null on miss/timeout/offline.
-     */
     suspend fun resolve(
         context: Context,
         token: String,
@@ -175,7 +147,6 @@ object VillageResolver {
                 ?: addr.optString("city_district", "").takeIf { it.isNotBlank() }
             val district = addr.optString("state_district", "").takeIf { it.isNotBlank() }
                 ?: addr.optString("state", "").takeIf { it.isNotBlank() }
-            // Must contain at least district or upazila to be useful in BD.
             if (district.isNullOrBlank() && upazila.isNullOrBlank() && union.isNullOrBlank() && village.isNullOrBlank()) {
                 return@withContext null
             }

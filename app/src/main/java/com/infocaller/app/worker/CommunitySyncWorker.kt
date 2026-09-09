@@ -18,19 +18,10 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONArray
 
-/**
- * Community auto-sync:
- * - Runs on app open + periodic (internet required).
- * - Pulls ONLY hash-keyed community rows from Supabase.
- * - Matches against device contacts / call log numbers.
- * - Saves matched info into local enrichment cache (local DB + display).
- * - Never uploads device contacts automatically.
- */
 class CommunitySyncWorker(
     context: Context,
     workerParams: WorkerParameters
 ) : CoroutineWorker(context, workerParams) {
-
     private val http = (applicationContext as InfoCallerApplication).commonHttpClient
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
@@ -41,17 +32,13 @@ class CommunitySyncWorker(
             val (baseUrl, anonKey) = supabaseConfig() ?: return@withContext Result.success()
             val dao = app.database.enrichmentDao()
 
-            // 1. Pull latest community rows (hash + display_name + report_count + updated_at).
             val since = prefs().getLong(KEY_LAST_SYNC, 0L)
             val rows = fetchCommunityRows(baseUrl, anonKey, since)
             if (rows.isEmpty()) {
-                // fetchCommunityRows returns [] on HTTP failure too — do NOT advance
-                // the sync window, or the failed window is skipped forever.
                 return@withContext Result.retry()
             }
             prefs().edit().putLong(KEY_LAST_SYNC, System.currentTimeMillis()).apply()
 
-            // 2. Collect device numbers: contacts + recent calls (permission-gated).
             val deviceNumbers = collectDeviceNumbers()
             if (deviceNumbers.isEmpty()) return@withContext Result.success()
             val numberToHash = deviceNumbers.associateWith { n ->
@@ -59,7 +46,6 @@ class CommunitySyncWorker(
             }.filterValues { it.isNotBlank() }
             val hashToNumber = numberToHash.entries.associate { (n, h) -> h to n }
 
-            // 3. Match + save to local enrichment cache (batched reads, one write each).
             var matched = 0
             val now = System.currentTimeMillis()
             val expiry = now + 30L * 24 * 60 * 60 * 1000
@@ -128,7 +114,6 @@ class CommunitySyncWorker(
     }
 
     private suspend fun fetchCommunityRows(baseUrl: String, anonKey: String, since: Long): List<Row> {
-        // Order by updated_at desc, cap page size. First sync caps to 2000.
         val limit = 2000
         val url = if (since > 0) {
             val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
@@ -162,7 +147,6 @@ class CommunitySyncWorker(
         val out = LinkedHashSet<String>()
         val ctx = applicationContext
         try {
-            // Contacts (requires READ_CONTACTS)
             if (PermissionManager.hasPermissions(ctx, PermissionManager.CONTACTS_PERMISSIONS)) {
                 ctx.contentResolver.query(
                     ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
@@ -176,7 +160,6 @@ class CommunitySyncWorker(
                     }
                 }
             }
-            // Recent calls (requires READ_CALL_LOG)
             if (PermissionManager.hasPermissions(ctx, PermissionManager.CALL_LOG_PERMISSIONS)) {
                 val app = ctx.applicationContext as InfoCallerApplication
                 app.deviceDataRepository.fetchRecentCallsSync().forEach {

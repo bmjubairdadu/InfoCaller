@@ -12,28 +12,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 
-/**
- * Multi-account social enumerator: one phone number or email can own MANY
- * accounts (personal + business + old handles). This provider fans one
- * PHONE/EMAIL identifier out into every linked social account instead of
- * stopping at the first hit:
- *
- * PHONE path:
- *  1. Sync.ME server-rendered title -> real display name for the number.
- *  2. Truecaller-web title pivot -> second opinion on the name.
- *  3. Every handle fragment derived from the number + discovered names is
- *     verified site-by-site (Facebook / Instagram / TikTok / YouTube /
- *     X / Telegram / WhatsApp links), each kept as its own SocialProfile
- *     so the UI shows ALL of them, not just WhatsApp.
- * EMAIL path:
- *  1. Gravatar profile JSON -> display name + verified external accounts
- *     (each kept as its own SocialProfile).
- *  2. Prefix-as-username probes (GitHub API exact match + TikTok/IG/FB
- *     page checks), each kept separately.
- *
- * Keyless GET only; null unless at least two actionable socials resolve
- * (single WhatsApp-only rows are already covered by the presence probe).
- */
 class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "social_account_enumerator"
     override val name = "Social Account Enumerator"
@@ -50,15 +28,13 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? =
         withContext(Dispatchers.IO) {
             when (type) {
-                IdentifierType.PHONE -> enumerateByPhone(identifier)
+                IdentifierType.PHONE -> enumerateByPhone(identifier, context.foundName)
                 IdentifierType.EMAIL -> enumerateByEmail(identifier)
                 else -> null
             }
         }
 
-    // ---------------- PHONE ----------------
-
-    private suspend fun enumerateByPhone(identifier: String): PartialResult? {
+    private suspend fun enumerateByPhone(identifier: String, ctxName: String? = null): PartialResult? {
         val digits = identifier.filter { it.isDigit() }
         if (digits.length < 7) return null
         val e164 = if (identifier.trim().startsWith("+")) identifier.trim() else "+$digits"
@@ -67,7 +43,6 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
         var photo: String? = null
         var about: String? = null
 
-        // 1. Sync.ME: server-rendered display name + avatar for the number.
         try {
             val enc = java.net.URLEncoder.encode(e164, "UTF-8")
             val req = Request.Builder().url("https://sync.me/search/?number=$enc")
@@ -90,7 +65,6 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
             }
         } catch (_: Exception) { }
 
-        // 2. Truecaller-web title pivot: second opinion on the name.
         if (name == null) {
             for (path in listOf("bd/${digits.takeLast(10)}", "search/${digits.takeLast(10)}")) {
                 try {
@@ -103,21 +77,21 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
             }
         }
 
-        // 3. Handle fragments: every plausible username shape becomes a
-        //    candidate handle, verified per platform below. A number like
-        //    +8801712345678 yields "1712345678", "01712345678", and — when a
-        //    display name exists — its compacted forms ("jubairhosen",
-        //    "jubair.hosen").
-        val handleSeeds = mutableListOf(digits.takeLast(10), digits)
-        if (!name.isNullOrBlank() && !ContactUtils.isPlaceholderName(name)) {
-            val compact = name!!.lowercase().replace(Regex("[^a-z0-9]"), "")
-            if (compact.length in 3..30) handleSeeds.add(compact)
-            val dotted = name!!.lowercase().trim().replace(Regex("\\s+"), ".").replace(Regex("[^a-z0-9._]"), "")
-            if (dotted.length in 3..30 && dotted != compact) handleSeeds.add(dotted)
+        val nameCandidates = listOfNotNull(
+            name?.takeIf { it.isNotBlank() },
+            ctxName?.takeIf { it.isNotBlank() }
+        ).distinct()
+        val handleSeeds = mutableListOf<String>()
+        for (n in nameCandidates) {
+            try {
+                if (ContactUtils.isPlaceholderName(n)) continue
+            } catch (_: Exception) { }
+            val compact = n.lowercase().replace(Regex("[^a-z0-9]"), "")
+            if (compact.length in 3..30 && compact.any { it.isLetter() } && compact !in handleSeeds) handleSeeds.add(compact)
+            val dotted = n.lowercase().trim().replace(Regex("\\s+"), ".").replace(Regex("[^a-z0-9._]"), "")
+            if (dotted.length in 3..30 && dotted.any { it.isLetter() } && dotted != compact && dotted !in handleSeeds) handleSeeds.add(dotted)
         }
 
-        // 4. Per-platform verification: each hit is its own SocialProfile so
-        //    one number shows Facebook + Instagram + TikTok + ... together.
         val probes = listOf(
             Triple("Facebook", "https://www.facebook.com/%s", SocialLookupStatus.PUBLIC_MATCH),
             Triple("Instagram", "https://www.instagram.com/%s/", SocialLookupStatus.PUBLIC_MATCH),
@@ -126,20 +100,26 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
             Triple("X", "https://x.com/%s", SocialLookupStatus.POSSIBLE_MATCH),
             Triple("Telegram", "https://t.me/%s", SocialLookupStatus.POSSIBLE_MATCH),
         )
-        for (seed in handleSeeds.distinct().take(4)) {
+        val probeJobs = mutableListOf<Triple<String, String, SocialLookupStatus>>()
+        for (seed in handleSeeds.distinct().take(3)) {
             if (seed.length < 3 || seed.length > 30 || seed.contains(" ")) continue
             for ((platform, tmpl, status) in probes) {
                 if (socials.any { it.platform.equals(platform, true) && it.username.equals(seed, true) }) continue
                 try {
-                    val url = tmpl.format(seed)
-                    if (UsernameExistenceChecker.exists(httpClient, url)) {
-                        socials.add(SocialProfile(platform, seed, url, status))
-                    }
+                    probeJobs.add(Triple(platform, tmpl.format(seed), status))
                 } catch (_: Exception) { }
             }
         }
+        if (probeJobs.isNotEmpty()) {
+            val found = UsernameExistenceChecker.mapBounded(probeJobs) { (platform, url, status) ->
+                val seed = url.substringAfterLast("/").removePrefix("@")
+                if (UsernameExistenceChecker.exists(httpClient, url)) {
+                    SocialProfile(platform, seed, url, status)
+                } else null
+            }
+            socials.addAll(found)
+        }
 
-        // Messaging deep links are always actionable for a valid number.
         if (socials.none { it.platform.equals("WhatsApp", true) }) {
             socials.add(SocialProfile("WhatsApp", digits, "https://wa.me/$digits", SocialLookupStatus.POSSIBLE_MATCH))
         }
@@ -147,8 +127,6 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
             socials.add(SocialProfile("Telegram", digits, "https://t.me/+$digits", SocialLookupStatus.POSSIBLE_MATCH))
         }
 
-        // Keep the good stuff: drop messaging-only rows when real socials exist
-        // is the UI's job — here we return everything; the merger dedupes.
         val realSocials = socials.filterNot {
             it.platform.equals("WhatsApp", true) || it.platform.equals("Telegram", true)
         }
@@ -167,8 +145,6 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
         )
     }
 
-    // ---------------- EMAIL ----------------
-
     private suspend fun enumerateByEmail(identifier: String): PartialResult? {
         val email = identifier.trim().lowercase()
         if (!email.contains("@")) return null
@@ -180,7 +156,6 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
         var city: String? = null
         val photos = mutableListOf<PhotoCandidate>()
 
-        // 1. Gravatar profile JSON: display name + verified linked accounts.
         try {
             val hash = md5(email)
             val req = Request.Builder().url("https://www.gravatar.com/$hash.json")
@@ -222,7 +197,6 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
             }
         } catch (_: Exception) { }
 
-        // 2. Prefix-as-username: GitHub exact API match + per-platform probes.
         try {
             val req = Request.Builder().url("https://api.github.com/users/$prefix")
                 .header("User-Agent", ua()).build()

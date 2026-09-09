@@ -15,8 +15,6 @@ import kotlinx.coroutines.flow.collectLatest
 
 class InfoInCallService : InCallService() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    // Track one enrichment collector per call so call-waiting (2nd onCallAdded)
-    // no longer cancels the first call's observation.
     private val enrichmentJobs = java.util.concurrent.ConcurrentHashMap<Call, Job>()
 
     @Deprecated("Use onCallEndpointChanged instead", ReplaceWith("onCallEndpointChanged"))
@@ -42,9 +40,6 @@ class InfoInCallService : InCallService() {
         if (state == Call.STATE_RINGING) {
             showIncomingCallNotification(call)
             startEnrichmentObservation(call)
-            // Ringing must ALWAYS surface the animated full-screen UI, screen
-            // on or off — the notification's full-screen intent handles the
-            // wake, but explicitly launching covers OEMs that swallow it.
             try {
                 val fullScreen = Intent(this, InCallActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -70,7 +65,6 @@ class InfoInCallService : InCallService() {
         enrichmentJobs[call] = serviceScope.launch {
             try {
                 app.enrichmentEngine.getEnrichment(normalizedNumber).collectLatest { enrichment ->
-                    // Skip if this call is gone (prevents notifying for a stale call).
                     if (enrichmentJobs.containsKey(call)) showIncomingCallNotification(call, enrichment)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
@@ -86,7 +80,6 @@ class InfoInCallService : InCallService() {
         val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
         val customRingtoneUri = prefs.getString("custom_ringtone_uri", null)?.takeIf { it.startsWith("content://") }
 
-        // Channel sound is immutable after first creation — only set a validated content URI.
         val channel = android.app.NotificationChannel(
             channelId,
             "Incoming Calls",
@@ -112,9 +105,9 @@ class InfoInCallService : InCallService() {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pendingIntent = android.app.PendingIntent.getActivity(
-            this, 
-            0, 
-            intent, 
+            this,
+            0,
+            intent,
             android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
         )
 
@@ -144,10 +137,6 @@ class InfoInCallService : InCallService() {
             .setSubText(if (displayName != number) subText else null)
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_MAX)
             .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
-            // Full-screen intent MUST fire whether the screen is on or off —
-            // the old isScreenOn.not() flag meant a screen-off call never woke
-            // into the animated InCallActivity UI. Always true here: the
-            // activity itself decides overlay vs full UI by foreground state.
             .setFullScreenIntent(pendingIntent, true)
             .setOngoing(true)
             .setAutoCancel(false)
@@ -155,10 +144,6 @@ class InfoInCallService : InCallService() {
             .setColor(0xFFFBBF24.toInt())
             .setColorized(true)
             .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
-            // Distinct answer/decline glyphs: green-style handset for Answer,
-            // crossed handset for Decline. (System tints action icons
-            // monochrome on most versions — the glyph shapes carry the
-            // meaning; the labels stay explicit.)
             .addAction(
                 androidx.core.app.NotificationCompat.Action.Builder(
                     androidx.core.graphics.drawable.IconCompat.createWithBitmap(
@@ -177,7 +162,7 @@ class InfoInCallService : InCallService() {
                     declinePendingIntent,
                 ).build()
             )
-            
+
         val photoUrl = enrichment?.profileImageUrl ?: com.infocaller.app.util.PhoneNumberUtils.getContactPhotoUri(this, number)
         if (photoUrl != null) {
             try {
@@ -186,8 +171,6 @@ class InfoInCallService : InCallService() {
                     .data(photoUrl)
                     .target(
                         onSuccess = { result ->
-                            // Coil may return non-bitmap drawables (placeholders/errors) —
-                            // only set the icon when we actually got a bitmap.
                             val bitmap = (result as? android.graphics.drawable.BitmapDrawable)?.bitmap
                             if (bitmap != null) {
                                 notification.setLargeIcon(bitmap)

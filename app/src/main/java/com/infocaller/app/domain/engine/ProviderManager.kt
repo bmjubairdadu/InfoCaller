@@ -74,6 +74,6 @@ class ProviderManager(private val context: Context) {
         val avgDurationMs: Long = 0,
         val status: ProviderStatus = ProviderStatus.HEALTHY
     )
-    
+
     fun getHealth(providerId: String): ProviderHealth? = healthStats[providerId]
 }

@@ -9,7 +9,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 
-
 class HoleheEmailProviderImpl(
     private val httpClient: OkHttpClient
 ) : LookupProvider {
@@ -20,11 +19,8 @@ class HoleheEmailProviderImpl(
     override val priority = 60
     override val costClass = CostClass.FREE
 
-    // Verified: en.gravatar.com/<email> 404s — Gravatar needs the MD5 hash
-    // URL (covered by EmailLookup/EmailSocialBridge), so no Gravatar probe here.
-    // Remaining 5 checks derive usernames from the email prefix.
     private val checks = listOf(
-        Site("GitHub", "https://github.com/%s", null), // username derived from email prefix
+        Site("GitHub", "https://github.com/%s", null),
         Site("AboutMe", "https://about.me/%s", null),
         Site("Pinterest", "https://www.pinterest.com/%s/", "pinterest"),
         Site("Spotify", "https://open.spotify.com/user/%s", null),
@@ -40,8 +36,6 @@ class HoleheEmailProviderImpl(
             val target = if (site.urlTemplate.contains("%s.wordpress.com")) site.urlTemplate.format(prefix)
             else if (site.keyword == null) site.urlTemplate.format(prefix)
             else site.urlTemplate.format(email)
-            // Keyword sites (Pinterest) need page-specific presence text;
-            // plain profile probes use the shared heuristic.
             val found = if (site.keyword != null) keywordExists(site, target)
             else UsernameExistenceChecker.exists(httpClient, target)
             if (found) SocialProfile(site.name, prefix, target, SocialLookupStatus.POSSIBLE_MATCH) else null

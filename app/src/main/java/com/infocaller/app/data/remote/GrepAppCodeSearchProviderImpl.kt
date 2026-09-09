@@ -10,15 +10,6 @@ import okhttp3.Request
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * Grep.app code search — free, no key.
- * Indexes public GitHub code. Endpoint: https://grep.app/api/search?q=<query>
- * Great for finding phone numbers / emails / usernames leaked in source,
- * configs, paste mirrors and sample data.
- *
- * Docs pattern observed: { "hits": { "hits": [ { "repo": {"raw": "o/r"},
- * "path": {"raw": "..."}, "content": {"snippet": "..."} } ] } }
- */
 class GrepAppCodeSearchProviderImpl(
     private val httpClient: OkHttpClient
 ) : LookupProvider {
@@ -37,7 +28,6 @@ class GrepAppCodeSearchProviderImpl(
                 IdentifierType.PHONE -> {
                     val digits = identifier.filter { it.isDigit() }
                     if (digits.length < 7) return@withContext null
-                    // Try full digits + last-7 variant implicitly via grep relevance
                     "\"$digits\""
                 }
                 IdentifierType.EMAIL -> {
@@ -64,7 +54,6 @@ class GrepAppCodeSearchProviderImpl(
                     .header("User-Agent", "InfoCaller-OSINT/2.0")
                     .header("Accept", "application/json")
                     .build()
-                // Response must be closed (use{}) or connections leak.
                 val body = httpClient.newCall(req).await().use { r ->
                     if (!r.isSuccessful) return@withContext null
                     r.body?.string()

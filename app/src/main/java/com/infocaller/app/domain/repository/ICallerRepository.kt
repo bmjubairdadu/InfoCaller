@@ -14,7 +14,7 @@ interface ICallerRepository {
     suspend fun saveCaller(caller: Caller)
     suspend fun saveLookupResult(result: LookupResult)
     suspend fun contributeCallerInfo(caller: Caller)
-    
+
     fun getScanStates(): StateFlow<Map<String, ScanState>>
     fun startScan(identifier: String, priority: ScanPriority, type: String = IdentifierType.PHONE): Flow<ScanState>
     fun cancelScan(identifier: String)

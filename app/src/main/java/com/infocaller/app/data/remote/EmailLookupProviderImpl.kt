@@ -34,9 +34,9 @@ class EmailLookupProviderImpl(
         context: LookupContext
     ): PartialResult? = withContext(Dispatchers.IO) {
         if (type != IdentifierType.EMAIL) return@withContext null
-        
+
         val gravatarResult = fetchGravatar(identifier)
-        
+
         gravatarResult
     }
 

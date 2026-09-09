@@ -10,7 +10,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
-
 class EyeconProviderImpl(private val context: Context) : LookupProvider {
     override val id: String = "eyecon_authorized"
     override val name: String = "Eyecon Visual ID"
@@ -32,12 +31,8 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
         val cleanNumber = identifier.replace("+", "")
 
         try {
-            // Shape from the user's own Reqable capture (eyecon.har):
-            // GET /app/getnames.jsp?cli=..&lang=en&is_callerid=true&is_ic=true
-            //   &cv=..&requestApi=URLconnection&source=..
-            // with Accept: application/json + e-auth-v/e-auth/e-auth-c/e-auth-k
-            // headers; answer [{"name":"...","type":""}].
             val cv = authStore.cv()?.takeIf { it.isNotBlank() } ?: "vc_786_vn_4.2026.09.06.1153_a"
+            var clientId = authStore.cid()
             val nameBodies = mutableListOf<String>()
             val hosts = listOf(
                 "https://api.eyecon-app.com/app/getnames.jsp?",
@@ -45,6 +40,7 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                 "https://eyecon-app.com/app/getnames.jsp?"
             )
             var ok = false
+            var sawUnauthorized = false
             for (base in hosts) {
                 try {
                     val nameUrl = base +
@@ -56,7 +52,7 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                         "requestApi=URLconnection&" +
                         "source=StatisticBars"
 
-                    val nameRequest = authStore.attach(Request.Builder().url(nameUrl))
+                    val nameRequest = authStore.attachWith(Request.Builder().url(nameUrl), clientId)
                         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
                         .header("Accept", "application/json")
                         .header("Accept-Charset", "UTF-8")
@@ -67,11 +63,44 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                     val (okHost, code, nameBody) = client.newCall(nameRequest).await().use { r ->
                         Triple(r.isSuccessful, r.code, r.body?.string() ?: "")
                     }
+                    if (code == 401 || code == 403) sawUnauthorized = true
                     if (!okHost) continue
                     ok = true
                     nameBodies.add(nameBody)
                     break
                 } catch (_: Exception) { continue }
+            }
+            if (!ok && sawUnauthorized) {
+                val fresh = refreshClientId(cv)
+                if (!fresh.isNullOrBlank()) {
+                    clientId = fresh
+                    for (base in hosts) {
+                        try {
+                            val nameUrl = base +
+                                "cli=$cleanNumber&" +
+                                "lang=en&" +
+                                "is_callerid=true&" +
+                                "is_ic=true&" +
+                                "cv=$cv&" +
+                                "requestApi=URLconnection&" +
+                                "source=StatisticBars"
+                            val retry = authStore.attachWith(Request.Builder().url(nameUrl), clientId)
+                                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+                                .header("Accept", "application/json")
+                                .header("Accept-Charset", "UTF-8")
+                                .header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+                                .header("Accept-Language", "en-US,en;q=0.9")
+                                .build()
+                            val (okHost, _, nameBody) = client.newCall(retry).await().use { r ->
+                                Triple(r.isSuccessful, r.code, r.body?.string() ?: "")
+                            }
+                            if (!okHost) continue
+                            ok = true
+                            nameBodies.add(nameBody)
+                            break
+                        } catch (_: Exception) { continue }
+                    }
+                }
             }
             if (!ok || nameBodies.isEmpty()) return@withContext null
             val foundName = nameBodies.firstNotNullOfOrNull { nameBody -> parseEyeconName(nameBody) }
@@ -79,9 +108,6 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
             if (foundName.isNullOrBlank()) return@withContext null
 
             val photoCandidates = mutableListOf<com.infocaller.app.domain.model.PhotoCandidate>()
-            // Captured photo shape: GET /app/pic?cli=..&size=big&type=1 serves
-            // image/jpeg directly (324KB in the capture). Authenticated URL
-            // first, legacy param set as fallback.
             val picUrlCandidates = mutableListOf<String>()
             for (base in listOf(
                 "https://api.eyecon-app.com/app/pic?",
@@ -103,8 +129,8 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
             var picUrl: String? = null
             for (candidate in picUrlCandidates) {
                 try {
-                    if (headServesImage(candidate)) { picUrl = candidate; break }
-                    if (getServesImage(candidate)) {
+                    if (headServesImage(candidate, clientId)) { picUrl = candidate; break }
+                    if (getServesImage(candidate, clientId)) {
                         picUrl = candidate
                         photoCandidates.add(com.infocaller.app.domain.model.PhotoCandidate(provider = "Eyecon", url = candidate, sourcePriority = 40, timestamp = System.currentTimeMillis()))
                         break
@@ -141,21 +167,19 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                     if (obj.has("status") && obj.get("status").asString.contains("not", true)) null
                     else obj.get("name")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() && it.lowercase() != "unknown" }
                 }
-                // Some Eyecon mirrors return plain "Name" or "name: Name" text.
                 Regex("(?i)^name\\s*[:=]\\s*(.+)$").find(nameBodyTrim)?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.length in 2..60 } != null -> {
                     Regex("(?i)^name\\s*[:=]\\s*(.+)$").find(nameBodyTrim)!!.groupValues[1].trim().takeIf { it.length in 2..60 }
                 }
                 nameBodyTrim.isEmpty() || nameBodyTrim.equals("null", true) -> null
-                // Bare display name with no JSON wrapper (2-60 chars, has a letter).
                 nameBodyTrim.length in 2..60 && nameBodyTrim.any { it.isLetter() } && !nameBodyTrim.contains("<") -> nameBodyTrim
                 else -> null
             }
         } catch (_: Exception) { null }
     }
 
-    private suspend fun headServesImage(url: String): Boolean {
+    private suspend fun headServesImage(url: String, clientId: String? = null): Boolean {
         return try {
-            val headReq = authStore.attach(Request.Builder().url(url).head())
+            val headReq = authStore.attachWith(Request.Builder().url(url).head(), clientId ?: authStore.cid())
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
                 .header("Accept-Charset", "UTF-8")
                 .build()
@@ -165,11 +189,9 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
         } catch (_: Exception) { false }
     }
 
-    private suspend fun getServesImage(url: String): Boolean {
-        // GET fallback: some mirrors 405 HEAD but serve the JPEG on GET.
-        // Read at most the first byte to confirm content without downloading.
+    private suspend fun getServesImage(url: String, clientId: String? = null): Boolean {
         return try {
-            val getReq = authStore.attach(Request.Builder().url(url))
+            val getReq = authStore.attachWith(Request.Builder().url(url), clientId ?: authStore.cid())
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
                 .header("Accept-Charset", "UTF-8")
                 .header("Range", "bytes=0-0").build()
@@ -177,6 +199,34 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                 r.isSuccessful && (r.header("Content-Type")?.contains("image", true) == true || (r.header("Content-Length")?.toLongOrNull() ?: 0) > 0 || r.code == 206)
             }
         } catch (_: Exception) { false }
+    }
+
+    private suspend fun refreshClientId(cv: String): String? {
+        return try {
+            val joinUrl = "https://api.eyecon-app.com/app/join.jsp?" +
+                "cli=&username=New_User_Eyecon&devicename=Android" +
+                "&user_lang=en&os=Android&public_id=&adv_id=&mc=&viral_id=" +
+                "&cli_cc=BD&transport=so_flash&imei=" +
+                "&os_id=" + java.util.UUID.randomUUID().toString().take(13) +
+                "&cv=" + java.net.URLEncoder.encode(cv, "UTF-8")
+            val req = Request.Builder().url(joinUrl)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+                .header("Accept", "*/*")
+                .header("Accept-Charset", "UTF-8")
+                .header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+                .build()
+            val body = client.newCall(req).await().use { r ->
+                if (!r.isSuccessful) return null
+                r.body?.string()?.trim()
+            }?.takeIf { it.matches(Regex("[0-9a-fA-F-]{36}")) } ?: return null
+            if (authStore.isUsingBuiltIn()) {
+                try {
+                    authStore.save(body, authStore.c() ?: "", authStore.k() ?: "", null)
+                } catch (_: Exception) { }
+            }
+            try { Log.i("Eyecon", "client id refreshed via join.jsp") } catch (_: Exception) { }
+            body
+        } catch (_: Exception) { null }
     }
 
     override suspend fun bulkLookup(identifiers: List<String>, type: String, context: LookupContext): Map<String, PartialResult> = withContext(Dispatchers.IO) {

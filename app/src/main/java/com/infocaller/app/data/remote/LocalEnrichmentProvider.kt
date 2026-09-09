@@ -22,12 +22,12 @@ class LocalEnrichmentProvider(
         if (type != IdentifierType.PHONE) return@withContext null
         val normalizedPhoneNumber = identifier
         val entity = enrichmentDao.getEnrichmentSync(normalizedPhoneNumber) ?: return@withContext null
-        
+
         val isStale = entity.expiresAt < System.currentTimeMillis()
         val baseConfidence = entity.confidence?.toFloatOrNull() ?: 0.5f
-        
+
         val finalConfidence = if (isStale) minOf(0.4f, baseConfidence) else baseConfidence
-        
+
         PartialResult(
             name = entity.publicName,
             alternateName = entity.alternateName,

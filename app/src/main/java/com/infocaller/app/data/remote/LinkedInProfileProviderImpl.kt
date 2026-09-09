@@ -9,14 +9,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import org.jsoup.Jsoup
 
-/**
- * LinkedIn public-profile extractor (no login, keyless).
- * Scrapes the public vanity URL https://www.linkedin.com/in/{handle} og:* tags:
- * display name, headline/bio, avatar. LinkedIn serves a login wall to bots, so
- * this ALSO resolves the handle via the email-prefix bridge (many users reuse
- * their email prefix as their LinkedIn vanity) and via the found-name slug.
- * Never hallucinates: returns null unless og:title names a real person.
- */
 class LinkedInProfileProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "linkedin_profile"
     override val name = "LinkedIn Profile"
@@ -38,12 +30,10 @@ class LinkedInProfileProviderImpl(private val httpClient: OkHttpClient) : Lookup
             }
             else -> {}
         }
-        // Found-name slug from the photo-OSINT context (e.g. "John Doe" -> "john-doe").
         contextFoundNameSlug()?.let { if (it.length in 3..60 && it !in out) out.add(it) }
         return out.distinct().take(2)
     }
 
-    // Carried via LookupContext.foundName by the engine.
     private var ctxName: String? = null
     private fun contextFoundNameSlug(): String? {
         val n = ctxName?.trim()?.lowercase() ?: return null

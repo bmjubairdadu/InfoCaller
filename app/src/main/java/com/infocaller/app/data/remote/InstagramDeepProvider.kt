@@ -8,7 +8,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 
-
 class InstagramDeepProvider(private val context: Context) : LookupProvider {
     override val id = "instagram_deep"
     override val name = "Instagram Deep Profile"
@@ -22,16 +21,9 @@ class InstagramDeepProvider(private val context: Context) : LookupProvider {
         val username = identifier.trim().lowercase().replace(Regex("[^a-z0-9._]"), "")
         if (username.length < 3 || username.length > 40) return@withContext null
         try {
-            // Your Instagram.har shows the logged-out web flow lands on the
-            // Bloks login route (com.bloks.www.caa.login.igmweb.delegate), so
-            // a plain GET usually returns a login page, not the profile.
-            // Strategy: public oEmbed first (no login, exact display name),
-            // then the HTML page with a strict login-wall check.
             val oembedName = fetchOembedName(username)
             val url = "https://www.instagram.com/$username/"
             val doc = fetchDoc(url) ?: run {
-                // No public page, but oEmbed confirmed the handle exists —
-                // still return the handle as a possible match.
                 if (oembedName == null) return@withContext null
                 return@withContext PartialResult(
                     name = oembedName,
@@ -58,7 +50,7 @@ class InstagramDeepProvider(private val context: Context) : LookupProvider {
                 if (m != null) name = m.groupValues[1].trim()
                 else name = ogTitle.substringBefore("(").trim().takeIf{ it.length in 3..50 } ?: name
                 if (ogDesc != null) {
-                    Regex("""([\d,.]+[KM]?)\s+Followers""").find(ogDesc)?.groupValues?.getOrNull(1)?.let { fl -> 
+                    Regex("""([\d,.]+[KM]?)\s+Followers""").find(ogDesc)?.groupValues?.getOrNull(1)?.let { fl ->
                         bio = "IG $fl Followers | ${bio ?: ""}".take(400)
                     }
                 }
@@ -66,7 +58,6 @@ class InstagramDeepProvider(private val context: Context) : LookupProvider {
             if (name.isNullOrBlank()) name = oembedName
             if (name.isNullOrBlank() && ogTitle.isNullOrBlank()) return@withContext null
             if (doc.text().contains("Sorry, this page isn't available", true)) {
-                // Page gone, but oEmbed proved the handle — keep a weak hit.
                 if (oembedName == null) return@withContext null
                 return@withContext PartialResult(
                     name = oembedName,
@@ -87,7 +78,6 @@ class InstagramDeepProvider(private val context: Context) : LookupProvider {
         } catch (_: Exception) { null }
     }
 
-    /** Public oEmbed endpoint — no login, confirms the handle + display name. */
     private fun fetchOembedName(username: String): String? {
         return try {
             val doc = Jsoup.connect("https://www.instagram.com/$username/embed/captioned/")
@@ -106,7 +96,6 @@ class InstagramDeepProvider(private val context: Context) : LookupProvider {
             doc.selectFirst("form[action*=login], #loginForm") != null
     }
 
-    /** Returns the doc, or null on login wall / failure. */
     private fun fetchDoc(url: String): org.jsoup.nodes.Document? {
         return try {
             val doc = Jsoup.connect(url)

@@ -3,7 +3,6 @@ package com.infocaller.app.util
 import android.content.ContentResolver
 import android.net.Uri
 
-
 interface IContextResolver {
     fun query(uri: Uri, projection: Array<String>?, selection: String?, selectionArgs: Array<String>?, sortOrder: String?): android.database.Cursor?
 }

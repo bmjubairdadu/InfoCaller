@@ -7,15 +7,6 @@ import okhttp3.OkHttpClient
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * AI-assisted deep search ("Google AI Mode" style): builds precision queries
- * (exact-match + platform-constrained + breach-constrained) and opens them as
- * one-tap links, AND queries the free keyless AI-answer mirrors that accept
- * GET (Perplexity-style public search + Brave AI summaries via search URLs).
- * No key, no login, no upload: pure GET deep links + query synthesis, so it
- * can never hallucinate a name into the result — it only returns links and
- * the synthesized query strings for the user to open.
- */
 class AiAssistDeepSearchProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "ai_assist_deep_search"
     override val name = "AI-Assist Deep Search"
@@ -36,7 +27,6 @@ class AiAssistDeepSearchProviderImpl(private val httpClient: OkHttpClient) : Loo
                 else -> "\"$id\""
             }
             val enc = URLEncoder.encode(q, StandardCharsets.UTF_8.toString())
-            // Keyless AI-answer / AI-mode style endpoints (GET, no login).
             val about = buildString {
                 append("AI-mode deep queries for this identifier. Open: ")
                 append("Perplexity https://www.perplexity.ai/search?q=$enc • ")

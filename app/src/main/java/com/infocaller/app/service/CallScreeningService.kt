@@ -6,9 +6,7 @@ import com.infocaller.app.data.local.database.AppDatabase
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
-
 class CallScreeningService : CallScreeningService() {
-
     private val serviceScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
     )
@@ -21,7 +19,6 @@ class CallScreeningService : CallScreeningService() {
             return
         }
 
-        // Non-incoming calls must still be answered promptly — never leave the framework waiting.
         if (details.callDirection != Call.Details.DIRECTION_INCOMING) {
             respondToCall(details, CallResponse.Builder().build())
             return
@@ -29,10 +26,6 @@ class CallScreeningService : CallScreeningService() {
 
         serviceScope.launch {
             try {
-                // Ordered on-device decision engine (anonymous -> exact blocklist ->
-                // prefix -> unknown-not-in-contacts). Pattern source: humanjuan/iOG26.
-                // Fails open: any error allows the call. Bounded so we always answer
-                // the framework promptly.
                 val decision = kotlinx.coroutines.withTimeoutOrNull(3500) {
                     val app = applicationContext
                     val db = AppDatabase.getDatabase(app)

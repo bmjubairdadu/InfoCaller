@@ -10,12 +10,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 
-/**
- * Music/creator extractor: Spotify public search page + SoundCloud profile
- * (both keyless, server-rendered og tags). Catches musicians/creators whose
- * handle is their artist name — a segment username sweeps miss because the
- * sweep only checks existence, never extracts the display name or avatar.
- */
 class MusicCreatorProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "music_creator"
     override val name = "Music/Creator Profiles"
@@ -35,7 +29,6 @@ class MusicCreatorProviderImpl(private val httpClient: OkHttpClient) : LookupPro
         val photos = mutableListOf<PhotoCandidate>()
         val socials = mutableListOf<SocialProfile>()
 
-        // SoundCloud profile og tags.
         try {
             val url = "https://soundcloud.com/$slug"
             val doc = Jsoup.connect(url)
@@ -49,7 +42,6 @@ class MusicCreatorProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                 socials.add(SocialProfile("SoundCloud", handle, url, SocialLookupStatus.PUBLIC_MATCH))
             }
         } catch (_: Exception) { }
-        // Spotify artist search (keyless web page, og tags on match).
         try {
             val enc = java.net.URLEncoder.encode(handle, "UTF-8")
             val doc = Jsoup.connect("https://open.spotify.com/search/$enc")

@@ -96,10 +96,6 @@ fun SettingsScreen(
                     Button(
                         onClick = {
                             if (searchNumber.isNotBlank()) {
-                                // Manual search: pause background work and focus
-                                // exclusively on this number (CRITICAL priority).
-                                // Kill any in-flight search first so a previous
-                                // result can never bleed into the new view.
                                 viewModel.cancelAllSearches()
                                 viewModel.clearSearch()
                                 viewModel.searchNumberManual(searchNumber)
@@ -150,8 +146,6 @@ fun SettingsScreen(
                             val cleaned = searchEmail.trim().lowercase()
                             if (!cleaned.contains("@") || !cleaned.contains(".")) { emailError = "Enter a valid email address"; return@Button }
                             emailError = null
-                            // CRITICAL scan over EMAIL providers (Gravatar, GitHub,
-                            // breach check, presence). Same focus semantics as NID.
                             viewModel.cancelAllSearches()
                             viewModel.clearSearch()
                             viewModel.searchEmailManual(cleaned)
@@ -199,9 +193,6 @@ fun SettingsScreen(
                             val cleaned = searchUsername.trim().lowercase().removePrefix("@")
                             if (cleaned.length < 2 || cleaned.contains(" ") || cleaned.contains("@")) { usernameError = "Enter a valid username (letters, digits, . _ -)"; return@Button }
                             usernameError = null
-                            // CRITICAL scan over USERNAME providers (Sherlock 40-site
-                            // sweep, WhatsMyName, GitHub, profile extractors).
-                            // Same focus semantics as NID/email.
                             viewModel.cancelAllSearches()
                             viewModel.clearSearch()
                             viewModel.searchUsernameManual(cleaned)
@@ -254,7 +245,7 @@ fun SettingsScreen(
 
                 val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
                 var currentRingtoneUri by remember { mutableStateOf(prefs.getString("custom_ringtone_uri", null)) }
-                
+
                 val ringtoneLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.StartActivityForResult()
                 ) { result ->
@@ -288,7 +279,7 @@ fun SettingsScreen(
                     subtitle = "Automatically record calls",
                     icon = Icons.Default.FiberManualRecord,
                     checked = recordingEnabled,
-                    onCheckedChange = { 
+                    onCheckedChange = {
                         if (it) recordingLauncher.launch(PermissionManager.RECORD_AUDIO_PERMISSION)
                         else recordingEnabled = false
                     }
@@ -301,7 +292,7 @@ fun SettingsScreen(
 
             SettingsSection("Appearance") {
                 val darkTheme by viewModel.themeMode.collectAsState()
-                
+
                 ListItem(
                     headlineContent = { Text("Theme") },
                     supportingContent = { Text("Select your preferred visual style") },
@@ -346,17 +337,12 @@ fun SettingsScreen(
                     onClick = onNavigateToPrivacy
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }
 
-/**
- * Self-update row: auto-checked once a day at launch; manual "Check" here.
- * New version -> Download button with progress -> Install opens the system
- * installer. Failures show inline, never block Settings.
- */
 @Composable
 private fun AppUpdateRow() {
     val context = LocalContext.current
@@ -365,7 +351,6 @@ private fun AppUpdateRow() {
     var checking by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        // Silent daily check when About is opened.
         try {
             com.infocaller.app.util.AppUpdateManager.checkForUpdate(context, force = false)
         } catch (_: Exception) { }
@@ -508,11 +493,6 @@ fun SettingsInfoRow(title: String, value: String, icon: ImageVector) {
     )
 }
 
-/**
- * Eyecon device auth from the user's own Reqable capture: paste the e-auth
- * values the Eyecon app used on this device (join.jsp answer + the e-auth /
- * e-auth-c / e-auth-k request headers). Enhances caller-ID name+photo hits.
- */
 @Composable
 private fun EyeconAuthSettingsContent() {
     val context = LocalContext.current
@@ -522,9 +502,10 @@ private fun EyeconAuthSettingsContent() {
     var k by remember { mutableStateOf(store.k() ?: "") }
     var savedTick by remember { mutableStateOf(0) }
     val connected = remember(savedTick) { store.hasAuth() }
+    val usingBuiltIn = remember(savedTick) { store.isUsingBuiltIn() }
     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
-            "From Reqable eyecon.har: open the join.jsp response (the e-auth client id) and any getnames.jsp request headers (e-auth, e-auth-c, e-auth-k), then paste them here.",
+            "Built-in key verified live (getnames + photo return 200). Paste your own values from Reqable eyecon.har (join.jsp response + getnames.jsp headers) only if you want to override it.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -549,13 +530,16 @@ private fun EyeconAuthSettingsContent() {
                 modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
             ) { Text("SAVE") }
             OutlinedButton(
-                onClick = { store.clear(); cid = ""; c = ""; k = ""; savedTick++ },
+                onClick = { store.clear(); cid = store.cid() ?: ""; c = store.c() ?: ""; k = store.k() ?: ""; savedTick++ },
                 modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp),
-            ) { Text("Clear") }
+            ) { Text("Reset to built-in") }
         }
         Text(
-            if (connected) "Status: connected — Eyecon lookups use your captured auth."
-            else "Status: anonymous — Eyecon lookups still try without auth.",
+            when {
+                !connected -> "Status: anonymous — Eyecon lookups still try without auth."
+                usingBuiltIn -> "Status: connected (built-in key) — Eyecon name + photo lookups active, no login needed."
+                else -> "Status: connected (your key) — Eyecon name + photo lookups active."
+            },
             style = MaterialTheme.typography.bodySmall,
             color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -599,9 +583,6 @@ private fun EmojiPickerGrid(
     selected: String,
     onPick: (String) -> Unit,
 ) {
-    // Inline emoji palette: tapping an emoji sets the button icon.
-    // No text box — the picker IS the input, opened from the smiley
-    // on the right of the name field.
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -717,8 +698,6 @@ private fun SoundboardSettingsContent() {
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
             singleLine = true,
-            // Emoji icon on the right of the name box: tap to open the
-            // inline emoji picker (no separate emoji box).
             trailingIcon = {
                 IconButton(onClick = { emojiTargetIsRename = false; showEmojiPicker = true }) {
                     Text(newEmoji.ifBlank { "\uD83D\uDE03" }, fontSize = 22.sp)
@@ -877,7 +856,6 @@ private fun SoundboardSettingsContent() {
             }
         )
     }
-    // Reset the picker when the dialog closes via Save too.
     LaunchedEffect(editing) {
         if (editing == null) showEmojiPicker = false
     }

@@ -8,13 +8,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/**
- * Multi-avatar harvester: for EMAIL/USERNAME identifiers, fetch every free
- * public avatar variant (Gravatar MD5 + 404-check, GitHub avatar, GitLab
- * avatar, Gravatar profile JSON, DiceBear initials fallback) and return them
- * as photo candidates. Gives the photo pipeline 2-5 real faces to verify
- * instead of one, which is what makes reverse-image + face pivots hit.
- */
 class MultiAvatarHarvesterProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "multi_avatar_harvester"
     override val name = "Multi-Avatar Harvester"

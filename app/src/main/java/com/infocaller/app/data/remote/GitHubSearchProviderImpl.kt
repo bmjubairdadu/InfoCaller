@@ -12,7 +12,6 @@ import okhttp3.Request
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-
 class GitHubSearchProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "github_osint"
     override val name = "GitHub Intelligence"
@@ -31,7 +30,6 @@ class GitHubSearchProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                         .header("User-Agent","InfoCaller-OSINT")
                         .header("Accept","application/vnd.github+json")
                         .build()
-                    // Responses must be closed (use{}) or connections leak.
                     val items = httpClient.newCall(req).await().use { r ->
                         if (!r.isSuccessful) return@withContext null
                         val json = try {

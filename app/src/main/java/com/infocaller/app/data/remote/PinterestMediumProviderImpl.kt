@@ -10,12 +10,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 
-/**
- * Pinterest + Medium + dev-platform extractor (keyless og:* scrape).
- * One provider, five profile families: Pinterest boards, Medium blogs, dev.to,
- * Hashnode, Kaggle notebooks — all serve server-rendered og:title/og:image so
- * a single bounded pass extracts name/bio/avatar per hit.
- */
 class PinterestMediumProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "pinterest_medium_profiles"
     override val name = "Pinterest/Medium/Dev Profiles"

@@ -56,14 +56,10 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
     override suspend fun bulkLookup(identifiers: List<String>, type: String, context: LookupContext): Map<String, PartialResult> = withContext(Dispatchers.IO) {
         if (type != IdentifierType.PHONE || identifiers.isEmpty()) return@withContext emptyMap()
         val token = getAuthToken() ?: return@withContext emptyMap()
-        // truecallerjs bulk: max 30 per request (Benojir/truecallerjs limit)
         val chunk = identifiers.take(30)
         tryBulkSearch(chunk, token)
     }
     private suspend fun trySearch5(q: String, countryCode: String, token: String): PartialResult? {
-        // Mirror upstream truecallerjs search(): try multiple regional endpoints (noneu, asia-south1),
-        // bearer installationId, explicit Accept-Encoding gzip (handled manually),
-        // and structured diagnosis so expired/locked tokens stop burning scan time.
         val cleanQuery = q.filter { it.isDigit() }
         if (cleanQuery.isEmpty()) {
             lastFailureReason = "empty significant number"
@@ -81,39 +77,47 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
         var lastError: String? = null
         for (host in hosts) {
             try {
-                val url = "$host/v2/search?q=$encQ&countryCode=$encCc&type=4&locAddr=&placement=SEARCHRESULTS,HISTORY,DETAILS&encoding=json"
+                val url = "$host/v2/search?q=$encQ&countryCode=$encCc&type=4&encoding=json"
                 val req = Request.Builder().url(url)
                     .addHeader("Authorization", "Bearer ${token.trim()}")
                     .addHeader("content-type", "application/json; charset=UTF-8")
                     .addHeader("Accept", "application/json")
                     .addHeader("Accept-Encoding", "gzip")
-                    .addHeader("User-Agent", "Truecaller/11.75.5 (Android;10)")
+                    .addHeader("User-Agent", "Truecaller/26.35.7 (Android;11)")
                     .build()
-                
+
                 val result = httpClient.newCall(req).await().use { resp ->
                     val code = resp.code
                     if (code == 401 || code == 403) {
+                        val probe = try { resp.body?.string()?.take(200) } catch (_: Exception) { null }
+                        if (probe?.contains("suspended", true) == true) {
+                            return@use "account suspended (HTTP $code) - fresh OTP login needed" to null
+                        }
                         clearAuthToken()
                         return@use "unauthorized token (HTTP $code)" to null
                     }
                     if (code == 429) return@use "rate limited (HTTP 429)" to null
                     if (code == 404) return@use "number not found (HTTP 404)" to null
                     if (!resp.isSuccessful) return@use "search HTTP $code" to null
-                    
+                    val ct = resp.header("Content-Type").orEmpty()
+                    if (ct.contains("protobuf", true)) {
+                        return@use "protobuf response (v2/search now binary) - OTP login via app flow" to null
+                    }
+
                     val body = readMaybeGzipBody(resp) ?: return@use "empty search body" to null
                     val json = try { gson.fromJson(body, JsonObject::class.java) } catch (_: Exception) { null } ?: return@use "invalid search JSON" to null
-                    
+
                     if (json.has("status") && json.get("status")?.asInt !in listOf(null, 0, 1, 2)) {
                         val msg = json.get("message")?.takeIf { !it.isJsonNull }?.asString ?: "search rejected"
                         return@use msg to null
                     }
-                    
+
                     val arr = json.getAsJsonArray("data") ?: return@use "search has no data array" to null
                     if (arr.size() == 0) return@use "no Truecaller record" to null
-                    
+
                     val data = arr.firstOrNull()?.asJsonObject ?: return@use "invalid search record" to null
                     if (!data.has("name")) return@use "record has no name" to null
-                    
+
                     null to TruecallerParser.mapResult(data, id, version)
                 }
 
@@ -132,10 +136,7 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
 
     private suspend fun tryBulkSearch(numbers: List<String>, token: String): Map<String, PartialResult> {
         try {
-            // truecallerjs bulk: max 30 per request; q must be URL-encoded
-            // or '+' in E.164 numbers decodes to space server-side.
             val q = numbers.joinToString(",")
-            // Default region from first number
             val rc = PhoneNumberUtils.getCountryCode(numbers.firstOrNull() ?: "") ?: "BD"
             val encQ = java.net.URLEncoder.encode(q, "UTF-8")
             val encRc = java.net.URLEncoder.encode(rc, "UTF-8")
@@ -144,7 +145,6 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
                 .addHeader("Authorization", "Bearer $token")
                 .addHeader("content-type", "application/json; charset=UTF-8")
                 .addHeader("Accept", "application/json")
-                // Same gzip note as trySearch5: let OkHttp auto-decompress.
                 .addHeader("User-Agent", "Truecaller/11.75.5 (Android;10)")
                 .build()
             httpClient.newCall(req).await().use { resp ->
@@ -176,9 +176,6 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
     }
 
     private fun getAuthToken(): String? {
-        // Upstream auth model: OTP verification returns installationId, and search
-        // uses it verbatim as the Bearer token. Normalize accidental quotes/space
-        // from manual paste so a valid token is never rejected as unauthorized.
         val prefs = try {
             context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
         } catch (_: Exception) { return TruecallerCloudStore.getInstallationId(context)?.let(::normalizeToken) }
@@ -219,9 +216,4 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
         val errorMessage: String? = null
     )
 
-
-    // NOTE: legacy startAuth/completeAuth/completeOnboarding/getDeviceId/saveAuthToken
-    // were removed - LoginScreen uses TruecallerAuthManager (single live auth path).
-    // This lookup-only provider keeps session helpers + AuthRequestResult/AuthVerifyResult
-    // DTOs (referenced by LoginScreen/AuthViewModel).
 }

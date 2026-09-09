@@ -9,14 +9,14 @@ object T9Search {
     fun matches(input: String, name: String): Boolean {
         if (input.isEmpty()) return true
         val normalizedName = name.lowercase()
-        
+
         if (normalizedName.contains(input)) return true
-        
+
         var nameIdx = 0
         var inputIdx = 0
-        
+
         val words = normalizedName.split(" ", "-", ".")
-        
+
         for (word in words) {
             if (word.length >= input.length) {
                 var match = true
@@ -32,7 +32,7 @@ object T9Search {
                 if (match) return true
             }
         }
-        
+
         return false
     }
 }

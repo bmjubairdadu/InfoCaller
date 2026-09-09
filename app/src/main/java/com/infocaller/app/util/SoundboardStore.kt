@@ -28,9 +28,6 @@ object SoundboardStore {
     private const val KEY_ENTRIES = "soundboard_entries_v4"
     private const val KEY_LEGACY_V3 = "soundboard_entries_v3"
 
-    /** Real funny sounds: each built-in is a synthesized comedic effect
-     *  (slide-whistle, trombone wah, boing, record scratch...) rendered to
-     *  PCM at play time — actual funny audio, not single beeps. */
     fun defaultEntries(): List<SoundboardEntry> = listOf(
         SoundboardEntry(name = "Airhorn blast", emoji = "\uD83D\uDCE2", kind = KIND_TONE, payload = "airhorn"),
         SoundboardEntry(name = "Sad trombone", emoji = "\uD83D\uDE1E", kind = KIND_TONE, payload = "trombone"),
@@ -46,7 +43,6 @@ object SoundboardStore {
         SoundboardEntry(name = "Suspense sting", emoji = "\uD83D\uDD75\uFE0F", kind = KIND_TONE, payload = "sting")
     )
 
-    /** Inline emoji palette for the button-name picker (no separate box). */
     val EMOJI_CHOICES: List<String> = listOf(
         "\uD83D\uDCE2", "\uD83D\uDE1E", "\uD83D\uDE31", "\uD83C\uDFB6",
         "\uD83D\uDE2D", "\uD83E\uDD2A", "\uD83D\uDCBF", "\uD83E\uDD97",
@@ -104,9 +100,6 @@ object SoundboardStore {
         return try {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             val raw = prefs.getString(KEY_ENTRIES, null)
-            // One-time v3 migration: the old beep-only defaults (chime/beep/airhorn
-            // single tones) are replaced by the real funny synth bank. User clips
-            // (KIND_FILE with a uri payload) carry over untouched.
             if (raw == null && prefs.contains(KEY_LEGACY_V3)) {
                 try { prefs.edit().remove(KEY_LEGACY_V3).apply() } catch (_: Exception) { }
                 val fresh = defaultEntries()
@@ -124,7 +117,6 @@ object SoundboardStore {
                     if (it == KIND_FILE || it == KIND_TONE) it else KIND_FILE
                 }
                 var payload = o.optString("payload", "")
-                // Drop legacy beep payloads: they re-resolve to the funny bank below.
                 if (kind == KIND_TONE && payload.lowercase() !in FunnySynth.ALL_KEYS) payload = ""
                 if (kind == KIND_TONE && payload.isBlank()) {
                     payload = FunnySynth.keyForName(name) ?: "boing"
@@ -219,7 +211,6 @@ object FunnySynth {
         val out = ShortArray(n)
         for (i in 0 until n) {
             val t = i.toDouble() / SR
-            // Fast attack, smooth release so it hits like a horn, not a click.
             val env = (t / 0.02).coerceAtMost(1.0) * (1.0 - t / durSec * 0.55)
             var s = 0.0
             freqs.forEach { f -> s += sample(wave, 2 * Math.PI * f * t) }
@@ -258,7 +249,6 @@ object FunnySynth {
     }
 
     private fun trombone(): ShortArray {
-        // Classic sad "womp womp womp womp": four descending wahs with vibrato.
         val notes = listOf(392.0 to 0.24, 370.0 to 0.24, 349.0 to 0.24, 311.0 to 0.62)
         val total = notes.sumOf { (SR * it.second).toInt() }
         val out = ShortArray(total)
@@ -283,7 +273,6 @@ object FunnySynth {
         var phase = 0.0
         for (i in 0 until n) {
             val t = i.toDouble() / SR
-            // Pitch dives while wobbling: the cartoon spring signature.
             val f = (320.0 - 180.0 * (t / dur)) * (1.0 + 0.25 * kotlin.math.sin(2 * Math.PI * 11 * t) * kotlin.math.exp(-t * 4))
             phase += 2 * Math.PI * f / SR
             val env = kotlin.math.exp(-t * 3.2)
@@ -297,7 +286,6 @@ object FunnySynth {
         val n = (SR * dur).toInt()
         val out = ShortArray(n)
         val rnd = java.util.Random(21)
-        // Three gritty back-and-forth scratches: banded noise with pitch zigzag.
         for (i in 0 until n) {
             val t = i.toDouble() / SR
             val seg = (t / dur * 3).toInt() % 2
@@ -316,7 +304,6 @@ object FunnySynth {
         val out = ShortArray(n)
         for (i in 0 until n) {
             val t = i.toDouble() / SR
-            // 4.2kHz chirp pulsed ~18 times/sec: awkward-silence crickets.
             val gate = if ((t * 18) % 1.0 < 0.45) 1.0 else 0.06
             val env = (t / 0.05).coerceAtMost(1.0) * (1.0 - t / dur * 0.4)
             out[i] = toShort(kotlin.math.sin(2 * Math.PI * 4200 * t) * gate * env * 0.5)
@@ -331,7 +318,6 @@ object FunnySynth {
         val rnd = java.util.Random(3)
         for (i in 0 until n) {
             val t = i.toDouble() / SR
-            // Stick crack (noise) + shell thump (180Hz) decaying fast.
             val env = kotlin.math.exp(-t * 22)
             val s = rnd.nextGaussian() * 0.6 + kotlin.math.sin(2 * Math.PI * 180 * t) * 0.55
             out[i] = toShort(s * env * 0.9)
@@ -340,7 +326,6 @@ object FunnySynth {
     }
 
     private fun fanfare(): ShortArray {
-        // C-E-G-C major arpeggio + held tonic: instant victory.
         val notes = listOf(523.25 to 0.13, 659.25 to 0.13, 783.99 to 0.13, 1046.5 to 0.45)
         val total = notes.sumOf { (SR * it.second).toInt() }
         val out = ShortArray(total)
@@ -396,8 +381,6 @@ object SoundboardPlayer {
             val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
             try { audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION } catch (_: Exception) { }
         } catch (_: Exception) { }
-        // Media files AND the built-in funny clips both play as real audio —
-        // no TTS voiceover anywhere. Video files play their audio track.
         if (entry.kind == SoundboardStore.KIND_FILE && entry.payload.isNotBlank()) {
             playFile(appContext, entry, wasSpeakerOn, onDone)
         } else {
@@ -414,8 +397,6 @@ object SoundboardPlayer {
     }
 
     private fun playTone(appContext: Context, entry: SoundboardEntry, wasSpeakerOn: Boolean, onDone: (() -> Unit)?) {
-        // Built-in funny clips are real synthesized comedy effects rendered to
-        // PCM and played through the speaker — actual funny audio, no beeps.
         try {
             val id = entry.id
             val key = entry.payload.lowercase().ifBlank { FunnySynth.keyForName(entry.name) ?: "boing" }
@@ -440,8 +421,6 @@ object SoundboardPlayer {
     ) {
         val id = entry.id
         try {
-            // 16-bit mono 22050Hz PCM straight into a static AudioTrack —
-            // no temp files, no beeps, full funny effect.
             val sr = 22050
             val vol = entry.volume.coerceIn(0f, 1f)
             val scaled = ShortArray(pcm.size) { i -> (pcm[i] * vol).toInt().toShort() }

@@ -7,15 +7,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 
-/**
- * Free community spam-reputation scraper — no key.
- * Fans out (IO) over three clearnet complaint boards that render server-side:
- *  - shouldianswer.net  -> https://www.shouldianswer.net/phone/<digits>
- *  - whocallsme.com     -> https://whocallsme.com/Phone-Number-<digits>
- *  - spamcalls.net      -> https://spamcalls.net/en/phone/<digits>
- * Parses score / report counts from title + body text with lightweight regexes.
- * Never uploads anything; pure GET lookups.
- */
 class SpamReputationScraperProviderImpl : LookupProvider {
     override val id = "spam_reputation_scraper"
     override val name = "Spam Reputation Scraper"
@@ -35,11 +26,8 @@ class SpamReputationScraperProviderImpl : LookupProvider {
             val normalized = PhoneNumberUtils.normalize(identifier)
             val digits = normalized.filter { it.isDigit() }
             if (digits.length < 7) return@withContext null
-            // shouldianswer/whocallsme index by national significant number; try full + last-10
             val candidates = listOf(digits, digits.takeLast(10)).distinct().filter { it.length >= 7 }
 
-            // Strictly one-by-one: each spam board completes before the next
-            // starts — no simultaneous fan-out.
             val hits: List<BoardHit> = try {
                 val out = mutableListOf<BoardHit>()
                 try { checkShouldIAnswer(candidates)?.let { out.add(it) } } catch (_: Exception) { }
@@ -94,7 +82,6 @@ class SpamReputationScraperProviderImpl : LookupProvider {
     }
 
     private fun extractScore(text: String): String? {
-        // e.g. "Negative 4.2", "Score: 8/10", "Dangerous", "Spam"
         val m = Regex(
             "(negative|positive|neutral|dangerous|harassing|spam|telemarketer|debt collector|score\\s*[:\\-]?\\s*\\d[\\d./]*)",
             RegexOption.IGNORE_CASE

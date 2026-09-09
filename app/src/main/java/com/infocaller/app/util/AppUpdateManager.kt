@@ -22,25 +22,7 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
-/**
- * Self-update against GitHub Releases (bmjubairdadu/InfoCaller).
- *
- * There was NO update path at all — no Play In-App Update, no version check —
- * so installed copies never learned about new releases. This manager:
- *  1. [checkForUpdate]: GETs api.github.com/repos/.../releases/latest,
- *     compares semantic version against [BuildConfig.VERSION_NAME].
- *  2. [downloadUpdate]: enqueues the release APK via DownloadManager into
- *     the app-private external Downloads dir (no storage permission needed).
- *  3. On completion: fires ACTION_VIEW with a FileProvider URI so the
- *     system installer opens (needs REQUEST_INSTALL_PACKAGES on Android 8+;
- *     the system prompts the user once to allow unknown-source installs).
- *
- * Check runs once per day max (prefs timestamp) from MainScreen launch and
- * on demand from Settings → About. All network failures degrade silently
- * to [UpdateState.Idle] — update must never block the app.
- */
 object AppUpdateManager {
-
     private const val REPO = "bmjubairdadu/InfoCaller"
     private const val PREFS = "app_update"
     private const val KEY_LAST_CHECK = "last_check_ms"
@@ -69,7 +51,6 @@ object AppUpdateManager {
 
     fun currentVersion(): String = try { BuildConfig.VERSION_NAME } catch (_: Exception) { "0.0.0" }
 
-    /** True when [force] or 24h elapsed since the last check. */
     private fun shouldCheck(context: Context, force: Boolean): Boolean {
         if (force) return true
         return try {
@@ -101,7 +82,7 @@ object AppUpdateManager {
                     .build()
                 val body = client.newCall(req).await().use { r ->
                     if (r.code == 403 || r.code == 429) {
-                        _state.value = UpdateState.Idle // rate-limited: try tomorrow
+                        _state.value = UpdateState.Idle
                         markChecked(context)
                         return@withContext null
                     }
@@ -149,7 +130,6 @@ object AppUpdateManager {
                 val url = a.optString("browser_download_url", "")
                 if (url.isBlank()) continue
                 val size = a.optLong("size", 0L)
-                // Prefer debug APKs (the published artifacts); biggest wins.
                 if (size >= bestSize) { bestSize = size; bestUrl = url }
             }
             if (bestUrl.isBlank()) return null
@@ -157,7 +137,6 @@ object AppUpdateManager {
         } catch (_: Exception) { null }
     }
 
-    /** Semantic compare: true when [latest] > [current]. */
     internal fun isNewer(latest: String, current: String): Boolean {
         return try {
             val l = latest.split(".", "-").mapNotNull { it.toIntOrNull() }
@@ -172,7 +151,6 @@ object AppUpdateManager {
         } catch (_: Exception) { false }
     }
 
-    /** Enqueues the APK download; progress/completion observed via [state]. */
     fun downloadUpdate(context: Context, info: ReleaseInfo) {
         try {
             _state.value = UpdateState.Downloading(0)
@@ -222,7 +200,6 @@ object AppUpdateManager {
                         val uri = dm.getUriForDownloadedFile(id)
                         val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
                             "InfoCaller-update.apk")
-                        // Resolve content uri -> open installer directly.
                         openInstaller(context, uri)
                         _state.value = UpdateState.Ready(file)
                     } else if (status == DownloadManager.STATUS_FAILED) {
@@ -237,7 +214,6 @@ object AppUpdateManager {
     }
 
     private fun pollProgress(appContext: Context, id: Long, fileName: String) {
-        // Lightweight progress pump on a daemon thread (no WorkManager needed).
         Thread({
             try {
                 val dm = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
@@ -268,7 +244,6 @@ object AppUpdateManager {
         }, "update-progress").apply { isDaemon = true }.start()
     }
 
-    /** Opens the system installer for a downloaded APK uri. */
     fun openInstaller(context: Context, apkUri: Uri) {
         try {
             val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),

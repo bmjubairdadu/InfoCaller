@@ -19,12 +19,8 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Instant first frame: with no window preview, edge-to-edge must be
-        // enabled BEFORE setContent so the Compose launcher animation draws
-        // under the system bars from frame one (no black flash).
         enableEdgeToEdge()
         try {
             val workRequest = androidx.work.PeriodicWorkRequestBuilder<com.infocaller.app.worker.EnrichmentWorker>(
@@ -54,8 +50,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             val app = application as InfoCallerApplication
             val enrichmentService = com.infocaller.app.data.repository.ContactEnrichmentService(
-                this, 
-                app.lookupEngine, 
+                this,
+                app.lookupEngine,
                 app.repository,
                 app.database
             )
@@ -64,9 +60,9 @@ class MainActivity : ComponentActivity() {
 
             val viewModel: CallerViewModel = viewModel(factory = viewModelFactory)
             val authViewModel: AuthViewModel = viewModel(factory = authViewModelFactory)
-            
+
             val context = androidx.compose.ui.platform.LocalContext.current
-            
+
             LaunchedEffect(Unit) {
                 val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
                 val stored = if (prefs.contains("dark_theme")) prefs.getBoolean("dark_theme", true) else null
@@ -74,8 +70,6 @@ class MainActivity : ComponentActivity() {
             }
 
             val themeMode by viewModel.themeMode.collectAsState()
-            // null = follow system; Light must apply everywhere (all screens
-            // below read MaterialTheme, never hard-coded black/white).
             val darkTheme = when (themeMode) {
                 true -> true
                 false -> false
@@ -89,9 +83,9 @@ class MainActivity : ComponentActivity() {
                     navController = navController,
                     viewModel = viewModel,
                     authViewModel = authViewModel
-                ) { number -> 
+                ) { number ->
                     viewModel.searchNumber(number)
-                    makeCall(viewModel, number) 
+                    makeCall(viewModel, number)
                 }
 
                 LaunchedEffect(intent) {
@@ -114,7 +108,6 @@ class MainActivity : ComponentActivity() {
                 viewModel.updateDialerInput(number)
             }
         } else if (uri.scheme == "infocaller" && uri.host == "details") {
-            // Missed-call notification tap: path holds the number.
             val raw = (uri.path ?: "").trimStart('/').takeIf { it.isNotBlank() }
                 ?: uri.getQueryParameter("number")
             val number = try {
@@ -125,7 +118,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
 
     private fun makeCall(viewModel: CallerViewModel, phoneNumber: String) {
         val needCall = com.infocaller.app.permissions.PermissionManager.DIALER_PERMISSIONS

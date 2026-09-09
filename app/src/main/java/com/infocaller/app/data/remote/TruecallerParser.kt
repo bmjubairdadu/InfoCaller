@@ -6,9 +6,7 @@ import com.infocaller.app.domain.model.SocialLookupStatus
 import com.infocaller.app.domain.model.SocialProfile
 import com.infocaller.app.domain.model.PhotoCandidate
 
-
 object TruecallerParser {
-
     fun mapResult(data: JsonObject, providerId: String, providerVersion: String): PartialResult {
         val name = data.get("name")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
         val altName = data.get("altName")?.takeIf { !it.isJsonNull }?.asString
@@ -25,17 +23,17 @@ object TruecallerParser {
         val spamInfo = data.getAsJsonObject("spamInfo")
         val spamType = spamInfo?.get("spamType")?.takeIf { !it.isJsonNull }?.asString
         val spamScore = spamInfo?.get("spamScore")?.takeIf { !it.isJsonNull }?.asInt
-        
+
         val internetAddresses = data.getAsJsonArray("internetAddresses")
         val socialProfiles = mutableListOf<SocialProfile>()
         var email: String? = null
-        
-        internetAddresses?.forEach { 
+
+        internetAddresses?.forEach {
             val addr = it.asJsonObject
             val service = addr.get("service")?.asString?.lowercase()
             val id = addr.get("id")?.asString
             val caption = addr.get("caption")?.asString
-            
+
             if (service == "email") {
                 email = id
             } else if (!service.isNullOrBlank() && !id.isNullOrBlank()) {
@@ -53,7 +51,7 @@ object TruecallerParser {
                 }
             }
         }
-        
+
         val carrier = data.getAsJsonArray("phones")?.firstOrNull()?.asJsonObject?.get("carrier")?.takeIf { !it.isJsonNull }?.asString
         val lineType = data.getAsJsonArray("phones")?.firstOrNull()?.asJsonObject?.get("numberType")?.takeIf { !it.isJsonNull }?.asString
         val about = if (spamType != null) "Spam: $spamType${if (spamScore != null) " ($spamScore)" else ""}" else null

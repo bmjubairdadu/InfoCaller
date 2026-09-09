@@ -32,7 +32,6 @@ class ContactEnrichmentService(
     private val repository: CallerRepository? = null,
     private val database: AppDatabase? = null
 ) {
-
     suspend fun saveContactFast(
         phoneNumber: String,
         displayName: String,
@@ -56,15 +55,15 @@ class ContactEnrichmentService(
                 isVerified = false,
                 socialMediaLinks = lookupResult?.socialProfiles?.mapNotNull { it.profileUrl } ?: emptyList()
             )
-            
+
             val rawContactId = saveToContacts(caller, accountName, accountType)
-            
+
             if (lookupResult != null) {
                 saveLookupResultToCache(lookupResult, rawContactId)
             }
-            
+
             enrichSingleContact(normalized, rawContactId)
-            
+
             true
         } catch (e: Exception) {
             Log.e("EnrichmentService", "Save contact failed", e)
@@ -91,8 +90,6 @@ class ContactEnrichmentService(
                 whatsappStatus = result.socialProfiles.find { it.platform == "WhatsApp" }?.status?.name,
                 telegramStatus = result.socialProfiles.find { it.platform == "Telegram" }?.status?.name,
                 socialProfilesJson = SocialUtils.toJson(result.socialProfiles),
-                // Auto-photo fix: persist candidates so the cached photo survives
-                // for the Details Lens button + next-scan LookupContext.
                 photoCandidatesJson = if (result.photoCandidates.isNotEmpty()) SocialUtils.photosToJson(result.photoCandidates) else null,
                 source = result.sources.joinToString(","),
                 confidence = result.confidence.toString(),
@@ -103,10 +100,6 @@ class ContactEnrichmentService(
     }
 
     private fun saveToContacts(caller: Caller, accountName: String? = null, accountType: String? = null): Long {
-        // Standard Android format every contacts app understands: one
-        // RawContact + StructuredName + Mobile Phone + (optional) Email +
-        // (optional) Organization rows. Email uses the real Email mimetype
-        // (not a note) so Gmail/Dialer/people apps file it correctly.
         val ops = mutableListOf<ContentProviderOperation>()
 
         ops.add(ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
@@ -173,28 +166,17 @@ class ContactEnrichmentService(
 
             if (contactId == -1L) return@withContext false
 
-            // Never overwrite a saved contact's own name. Previously this
-            // method would rename the row when a public caller-ID arrived;
-            // that is now removed. Names are shown side-by-side in UI and
-            // enrichment-cache only.
             val isSavedRealName = !ContactUtils.isPlaceholderName(existingName) && existingName != normalized && existingName?.filter { it.isDigit() } != normalized.filter { it.isDigit() }
 
             val enrichment = database?.enrichmentDao()?.getEnrichmentSync(normalized)
             val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(enrichment)
 
-            // Always mirror whatever the scan actually returned — enrichment
-            // rows + app-visible notes — even when phonebook fields are saved.
-            // Phonebook is a best-effort mirror for structured fields; nothing
-            // is allowed to hide because it can't go into ContactsContract.
             syncEnrichmentToPhonebookNotes(contactId, enrichment, caller)
 
             val shouldUpdatePhoto = photoId == -1L && gaps.missingPhoto && caller.photoUrl != null
             if (shouldUpdatePhoto) {
                 val bitmap = downloadBitmap(caller.photoUrl)
                 if (bitmap != null) {
-                    // JPEG-90, capped at 720px: PNG-100 blobs render
-                    // differently per contacts app (huge + slow sync); JPEG
-                    // is the standard phonebook photo format everywhere.
                     val scaled = scaleDown(bitmap, 720)
                     val stream = ByteArrayOutputStream()
                     scaled.compress(Bitmap.CompressFormat.JPEG, 90, stream)
@@ -211,8 +193,6 @@ class ContactEnrichmentService(
                 }
             }
 
-            // Email gap-fill into the REAL Email field (not just notes): skip
-            // when a matching address already exists on the row.
             val scanEmail = caller.email?.trim()?.takeIf { it.contains("@") }
                 ?: enrichment?.email?.trim()?.takeIf { it.contains("@") }
             if (scanEmail != null && !hasEmailRow(contactId, scanEmail)) {
@@ -228,9 +208,42 @@ class ContactEnrichmentService(
             }
 
             if (isSavedRealName && caller.displayName != null) {
-                // Saved name kept; caller-ID name is displayed alongside it and
-                // also written into the notes line below — never as the row name.
             }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    suspend fun forcePhonebookPhoto(phoneNumber: String, url: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val normalized = try { PhoneNumberUtils.normalize(phoneNumber) } catch (_: Exception) { phoneNumber }
+            val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(normalized))
+            var rawContactId = -1L
+            context.contentResolver.query(
+                uri, arrayOf(ContactsContract.PhoneLookup._ID), null, null, null
+            )?.use { c ->
+                if (c.moveToFirst()) rawContactId = resolveWritableRawContactId(c.getLong(0))
+            }
+            if (rawContactId == -1L) return@withContext false
+            val bitmap = try { downloadBitmap(url) } catch (_: Exception) { null } ?: return@withContext false
+            val scaled = scaleDown(bitmap, 720)
+            val stream = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 90, stream)
+            val bytes = stream.toByteArray()
+            try {
+                context.contentResolver.delete(
+                    ContactsContract.Data.CONTENT_URI,
+                    "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                    arrayOf(rawContactId.toString(), ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                )
+            } catch (_: Exception) { }
+            val op = ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
+                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, bytes)
+                .build()
+            context.contentResolver.applyBatch(ContactsContract.AUTHORITY, arrayListOf(op))
             true
         } catch (_: Exception) {
             false
@@ -243,11 +256,6 @@ class ContactEnrichmentService(
         caller: Caller?,
     ) {
         try {
-            // Build a compact, human-readable block from enrichment fields that
-            // have no ContactsContract slot: about, alt-name, social presence,
-            // NID context, business tags, carrier/region deltas, etc. This is
-            // stored as a NOTE so the phonebook carries it even when the app
-            // cache is cleared. Existing notes are preserved.
             val lines = mutableListOf<String>()
             val publicName = enrichment?.publicName ?: caller?.displayName
             if (!publicName.isNullOrBlank() && !ContactUtils.isPlaceholderName(publicName)) {
@@ -277,7 +285,6 @@ class ContactEnrichmentService(
             val noteBody = lines.joinToString("\n")
             val newNote = "$noteHeader\n$noteBody"
 
-            // Read any existing note so we don't clobber user text.
             val noteUri = ContactsContract.Data.CONTENT_URI
             val sel = "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?"
             val selArgs = arrayOf(rawContactId.toString(), ContactsContract.CommonDataKinds.Note.CONTENT_ITEM_TYPE)
@@ -289,10 +296,8 @@ class ContactEnrichmentService(
             val merged = when {
                 existingNote.isNullOrBlank() -> newNote
                 existingNote!!.contains(noteHeader) -> {
-                    // Replace our previous block in place.
                     val before = existingNote!!.substringBefore(noteHeader).trimEnd()
                     val after = existingNote!!.substringAfter(noteHeader, "").let { tail ->
-                        // tail starts with our old block; strip up to next blank line
                         val cut = tail.indexOf("\n\n")
                         if (cut >= 0) tail.substring(cut).trimStart() else ""
                     }
@@ -344,14 +349,14 @@ class ContactEnrichmentService(
             val normalized = PhoneNumberUtils.normalize(phoneNumber)
             val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(normalized))
             val projection = arrayOf(ContactsContract.PhoneLookup._ID)
-            
+
             var contactId: Long = -1
             context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     contactId = cursor.getLong(0)
                 }
             }
-            
+
             if (contactId != -1L) {
                 val deleteUri = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contactId.toString())
                 context.contentResolver.delete(deleteUri, null, null)
@@ -365,16 +370,6 @@ class ContactEnrichmentService(
         }
     }
 
-    /**
-     * Permanent phonebook mirror for one bulk-scan result (BulkIdentityEngine).
-     * Fills ONLY gaps — never overwrites the user's own saved name or photo:
-     * - missing row photo + scan has one  -> insert Photo row
-     * - saved name is a placeholder (raw number / "Unknown") + scan has a
-     *   real name -> rename the StructuredName row to the caller-ID name
-     * - enrichment extras (about, carrier, socials, NID...) -> InfoCaller
-     *   note block (existing user notes preserved)
-     * Runs best-effort: without WRITE_CONTACTS it silently no-ops.
-     */
     suspend fun mirrorLookupResult(phoneNumber: String, result: LookupResult): Boolean = withContext(Dispatchers.IO) {
         try {
             if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(
@@ -392,8 +387,6 @@ class ContactEnrichmentService(
                 null, null, null
             )?.use { c ->
                 if (c.moveToFirst()) {
-                    // PhoneLookup._ID is the aggregate CONTACT id; resolve a
-                    // writable RAW_CONTACT id for Data-row writes below.
                     val aggregateId = c.getLong(0)
                     existingName = c.getString(1)
                     photoId = if (c.isNull(2)) -1 else c.getLong(2)
@@ -404,14 +397,11 @@ class ContactEnrichmentService(
 
             val ops = mutableListOf<ContentProviderOperation>()
 
-            // 1. Gap-fill the display name (placeholder rows only).
             val scanName = result.name?.takeIf { !ContactUtils.isPlaceholderName(it) }
             val rowIsGap = ContactUtils.isPlaceholderName(existingName) ||
                 existingName == normalized ||
                 existingName?.filter { it.isDigit() } == normalized.filter { it.isDigit() }
             if (scanName != null && rowIsGap) {
-                // Update-or-insert: some placeholder rows have no
-                // StructuredName row yet (number-only imports).
                 val hasNameRow = hasDataRow(rawContactId, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
                 if (hasNameRow) {
                     ops.add(
@@ -434,7 +424,6 @@ class ContactEnrichmentService(
                 }
             }
 
-            // 2. Gap-fill the photo (rows without one only).
             val photoUrl = result.imageUrl?.takeIf { it.startsWith("http") }
                 ?: result.photoCandidates.firstOrNull()?.url?.takeIf { it.startsWith("http") }
             if (photoId == -1L && photoUrl != null) {
@@ -458,9 +447,6 @@ class ContactEnrichmentService(
                 } catch (_: Exception) { }
             }
 
-            // 3. Notes block with everything that has no structured slot.
-            // Email ALSO goes in notes (searchable) even though it now has
-            // its own row — every other app reads the row, humans read notes.
             val caller = Caller(
                 phoneNumber = normalized,
                 displayName = result.name,
@@ -476,7 +462,6 @@ class ContactEnrichmentService(
                 socialMediaLinks = result.socialProfiles.mapNotNull { it.profileUrl }
             )
             syncEnrichmentToPhonebookNotes(rawContactId, null, caller)
-            // 4. Same-row email gap-fill for the bulk path.
             val bulkEmail = result.email?.trim()?.takeIf { it.contains("@") }
             if (bulkEmail != null && !hasEmailRow(rawContactId, bulkEmail)) {
                 try {
@@ -495,7 +480,6 @@ class ContactEnrichmentService(
         }
     }
 
-    /** First writable (non-deleted) raw-contact row for an aggregate contact. */
     private fun resolveWritableRawContactId(aggregateId: Long): Long {
         return try {
             context.contentResolver.query(
@@ -520,7 +504,6 @@ class ContactEnrichmentService(
         } catch (_: Exception) { false }
     }
 
-    /** True when this raw-contact already holds the address in its Email row. */
     private fun hasEmailRow(rawContactId: Long, email: String): Boolean {
         return try {
             context.contentResolver.query(
@@ -533,7 +516,6 @@ class ContactEnrichmentService(
         } catch (_: Exception) { false }
     }
 
-    /** Downscales huge avatars to a phonebook-standard size (keeps aspect). */
     private fun scaleDown(bitmap: Bitmap, maxSide: Int): Bitmap {
         return try {
             val w = bitmap.width
@@ -552,7 +534,7 @@ class ContactEnrichmentService(
             val res = lookupEngine?.performLookup(contact.phoneNumber, com.infocaller.app.domain.engine.IdentifierType.PHONE, setOf(Capability.WHATSAPP, Capability.PROFILE_PHOTO))
             if (res?.imageUrl != null) {
                 updateExistingContact(contact.phoneNumber, Caller(
-                    phoneNumber = contact.phoneNumber, 
+                    phoneNumber = contact.phoneNumber,
                     photoUrl = res.imageUrl,
                     displayName = null,
                     alias = null,
@@ -588,4 +570,3 @@ class ContactEnrichmentService(
         }
     }
 }
-

@@ -10,15 +10,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/**
- * Phone → social bridge: many people reuse their number as a handle fragment
- * (Telegram/WhatsApp deep links already cover presence). This provider adds:
- *  - Truecaller-web name for the E.164 (server-rendered title),
- *  - Sync.ME name + og:image (already partially covered — deeper parse here
- *    extracts bio/about text the phone pivot skips),
- *  - GetContact-style public directory title (BD-friendly mirrors).
- * All keyless GET; null unless at least a name or photo resolves.
- */
 class PhoneSocialBridgeProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "phone_social_bridge"
     override val name = "Phone → Social Bridge"
@@ -38,7 +29,6 @@ class PhoneSocialBridgeProviderImpl(private val httpClient: OkHttpClient) : Look
         var photo: String? = null
         var about: String? = null
         val socials = mutableListOf<SocialProfile>()
-        // Truecaller web title (BD path first, global fallback).
         for (path in listOf("bd/${digits.takeLast(10)}", "search/${digits.takeLast(10)}")) {
             try {
                 val doc = org.jsoup.Jsoup.connect("https://www.truecaller.com/$path")
@@ -49,7 +39,6 @@ class PhoneSocialBridgeProviderImpl(private val httpClient: OkHttpClient) : Look
                 if (cand != null) { name = cand; break }
             } catch (_: Exception) { }
         }
-        // Sync.ME deep parse: name + og:image + meta description.
         try {
             val req = Request.Builder()
                 .url("https://sync.me/search/?number=${java.net.URLEncoder.encode(e164, "UTF-8")}")
@@ -74,7 +63,6 @@ class PhoneSocialBridgeProviderImpl(private val httpClient: OkHttpClient) : Look
         if (name != null) {
             socials.add(SocialProfile("Sync.ME", name, "https://sync.me/search/?number=${java.net.URLEncoder.encode(e164, "UTF-8")}", SocialLookupStatus.PUBLIC_MATCH))
         }
-        // WhatsApp/Telegram presence links are always actionable for a phone.
         socials.add(SocialProfile("WhatsApp", digits, "https://wa.me/$digits", SocialLookupStatus.POSSIBLE_MATCH))
         socials.add(SocialProfile("Telegram", digits, "https://t.me/+$digits", SocialLookupStatus.POSSIBLE_MATCH))
         if (name == null && photo == null) return@withContext null

@@ -57,12 +57,8 @@ fun RecentsScreen(
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
         hasPermission = results.values.all { it }
-        // The call-log flow closes itself when permission is missing; restart it
-        // now so the list populates immediately instead of staying empty.
         if (hasPermission) viewModel.refreshDeviceData()
     }
-    // WRITE_CALL_LOG is requested only when the user taps Clear All — never
-    // with the read side, never up front.
     val writeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
         if (results.values.all { it }) viewModel.clearAllCallLogs()
     }
@@ -71,8 +67,6 @@ fun RecentsScreen(
         if (missing.isEmpty()) viewModel.clearAllCallLogs()
         else writeLauncher.launch(missing)
     }
-    // One-shot, contextual, minimal: request ONLY the still-missing call-log
-    // permission when this tab is first opened — never a bulk set.
     var permissionRequested by rememberSaveable { mutableStateOf(false) }
     fun requestMissingCallLog() {
         val missing = PermissionManager.missingPermissions(context, PermissionManager.CALL_LOG_PERMISSIONS)
@@ -88,7 +82,7 @@ fun RecentsScreen(
 
     val recentCalls by viewModel.recentCalls.collectAsState()
     val simInfos by viewModel.simInfos.collectAsState()
-    
+
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var searchQuery by rememberSaveable { mutableStateOf("") }
 
@@ -242,8 +236,6 @@ fun CallLogItem(entry: CallLogEntry, enrichment: com.infocaller.app.data.local.e
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(text = "• $durationText", style = MaterialTheme.typography.bodySmall, color = if (entry.duration > 0) Success.copy(alpha = 0.7f) else Error.copy(alpha = 0.7f))
                 }
-                // Automatic NID match: any recent-call number present in
-                // database.json shows its NID here with no manual step.
                 val recentNid = enrichment?.nid
                 if (!recentNid.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(2.dp))

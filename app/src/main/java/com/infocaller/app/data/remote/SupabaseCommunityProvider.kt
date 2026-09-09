@@ -61,7 +61,6 @@ class SupabaseCommunityProvider(
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         if (type != IdentifierType.PHONE) return@withContext null
-        // Opt-in only: disabled by default, explicit consent required.
         if (!CommunityConsent.isEnabled(this@SupabaseCommunityProvider.context)) return@withContext null
         val (baseUrl, anonKey) = config() ?: return@withContext null
         val normalized = PhoneNumberUtils.normalize(identifier)
@@ -69,7 +68,6 @@ class SupabaseCommunityProvider(
         val hash = try { PhoneHash.sha256Hex(normalized) } catch (_: Exception) { return@withContext null }
 
         try {
-            // Lookup-first by hash. No bulk upload. Table: community_lookups(phone_hash PK, display_name, updated_at)
             val url = "$baseUrl/rest/v1/community_lookups?phone_hash=eq.$hash&select=display_name,updated_at,report_count"
             val req = Request.Builder().url(url)
                 .addHeader("apikey", anonKey)

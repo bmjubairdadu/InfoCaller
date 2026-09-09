@@ -92,7 +92,4 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.androidx.savedstate.ktx)
     implementation(libs.androidx.work.runtime.ktx)
-    implementation("com.google.mlkit:face-detection:16.1.7")
-    implementation(libs.mlkit.text.recognition)
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.1")
 }

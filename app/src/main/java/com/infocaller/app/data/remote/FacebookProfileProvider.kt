@@ -7,12 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 
-/**
- * Facebook public profile data extractor (no login, based on facebook-scraper logic: kevinzg/facebook-scraper).
- * Uses public web profile scrape: https://www.facebook.com/{username} via Jsoup.
- * Extracts: name, bio/about, profile photo, cover, work/education if present in og tags, following.
- * Free, no API key. Inspired by Osintgram's profile approach but for Facebook.
- */
 class FacebookProfileProvider : LookupProvider {
     override val id = "facebook_profile"
     override val name = "Facebook Profile (public)"
@@ -26,11 +20,6 @@ class FacebookProfileProvider : LookupProvider {
         val username = identifier.trim().lowercase().replace(Regex("[^a-z0-9._-]"), "")
         if (username.length < 3 || username.length > 40) return@withContext null
         try {
-            // Your m.facebook.com.har shows the logged-out web flow lands on
-            // Bloks login / account-recovery screens (com.bloks.www.caa.*),
-            // so www.facebook.com usually answers with a login wall instead
-            // of the profile. Try www first, then the lightweight mbasic
-            // host which still renders public pages without JS.
             val doc = fetchWww(username) ?: fetchMbasic(username) ?: return@withContext null
             val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.takeIf { it.isNotBlank() }
                 ?: doc.selectFirst("title")?.text()?.substringBefore("|")?.trim()
@@ -66,7 +55,6 @@ class FacebookProfileProvider : LookupProvider {
             doc.selectFirst("#login_form, form[action*=login]") != null
     }
 
-    /** Returns the doc, or null when it is a login wall / failure. */
     private fun fetchDoc(url: String, ua: String): org.jsoup.nodes.Document? {
         return try {
             val doc = Jsoup.connect(url)

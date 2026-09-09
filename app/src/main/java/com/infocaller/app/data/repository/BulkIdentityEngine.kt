@@ -26,19 +26,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-/**
- * Parallel bulk identity engine: scans many contacts at once using the
- * Truecaller bulk endpoint (30 numbers per request) plus Eyecon lookups run
- * concurrently across numbers, then merges, caches and permanently mirrors
- * every hit into the phonebook.
- *
- * Runs 24/7 via [com.infocaller.app.worker.EnrichmentWorker] (hourly,
- * connectivity-gated), on boot ([com.infocaller.app.receiver.BootReceiver]
- * re-arms the worker) and once at app launch from MainActivity. Rows that
- * already have a name + photo are skipped, so repeat passes are cheap.
- */
 object BulkIdentityEngine {
-
     data class Progress(
         val total: Int = 0,
         val done: Int = 0,
@@ -52,15 +40,10 @@ object BulkIdentityEngine {
     @Volatile
     private var running = false
 
-    /** Max numbers enriched per pass (rate-limit + battery friendly). */
     private const val MAX_NUMBERS_PER_PASS = 300
 
     fun isRunning(): Boolean = running
 
-    /**
-     * Full pass over call-log numbers + all contacts. Returns how many
-     * numbers gained new identity data, or -1 when a pass is already running.
-     */
     suspend fun runFullPass(context: Context): Int = withContext(Dispatchers.IO) {
         if (running) return@withContext -1
         val app = context.applicationContext as InfoCallerApplication
@@ -82,7 +65,6 @@ object BulkIdentityEngine {
         }
     }
 
-    /** Recents + contacts, normalized, de-duplicated, dialable only. */
     private suspend fun collectNumbers(app: InfoCallerApplication): List<String> {
         return try {
             val recents = try {
@@ -101,16 +83,9 @@ object BulkIdentityEngine {
         } catch (_: Exception) { emptyList() }
     }
 
-    /**
-     * Core fan-out: Truecaller bulk first (1 request per 30 numbers), then
-     * Eyecon concurrently for whatever still lacks a name or photo.
-     */
     suspend fun scanNumbers(app: Context, numbers: List<String>): Int = supervisorScope {
         val application = app.applicationContext as InfoCallerApplication
         val dao = application.database.enrichmentDao()
-        // Chunked cache reads: Room generates one bind var per number and
-        // SQLite caps variables (~999), so a 2k-contact list must be read
-        // in pages, never one giant IN (...) query.
         val cached = mutableMapOf<String, com.infocaller.app.data.local.entity.ContactEnrichmentEntity>()
         for (page in numbers.chunked(400)) {
             try {
@@ -131,10 +106,33 @@ object BulkIdentityEngine {
 
         val partialsByNumber = mutableMapOf<String, MutableList<PartialResult>>()
         fun addPartial(number: String, p: PartialResult) {
-            partialsByNumber.getOrPut(number) { mutableListOf() }.add(p)
+            synchronized(partialsByNumber) {
+                partialsByNumber.getOrPut(number) { mutableListOf() }.add(p)
+            }
         }
 
-        // ---- Phase 1: Truecaller bulk, 30 per request, sequential (rate limits).
+        val service = ContactEnrichmentService(
+            application, application.lookupEngine, application.repository, application.database
+        )
+        var enriched = 0
+
+        suspend fun saveNumber(n: String): Boolean {
+            return try {
+                val partials = synchronized(partialsByNumber) { partialsByNumber[n].orEmpty().toList() }
+                if (partials.isEmpty()) return false
+                val merged: LookupResult = ConfidenceEngine.merge(n, partials)
+                val hasName = !merged.name.isNullOrBlank() && !ContactUtils.isPlaceholderName(merged.name)
+                val hasPhoto = !merged.imageUrl.isNullOrBlank() || merged.photoCandidates.isNotEmpty()
+                if (!hasName && !hasPhoto) return false
+                try { application.repository.saveLookupResult(merged) } catch (_: Exception) { }
+                try { service.mirrorLookupResult(n, merged) } catch (_: Exception) { }
+                true
+            } catch (e: Exception) {
+                Log.w("BulkIdentity", "save failed for $n", e)
+                false
+            }
+        }
+
         if (tc != null) {
             for (chunk in todo.chunked(30)) {
                 try {
@@ -150,10 +148,9 @@ object BulkIdentityEngine {
             }
         }
 
-        // ---- Phase 2: Eyecon in parallel for numbers still missing name/photo.
         if (eyecon != null) {
             val eyeconTargets = todo.filter { n ->
-                val have = partialsByNumber[n].orEmpty()
+                val have = synchronized(partialsByNumber) { partialsByNumber[n].orEmpty().toList() }
                 val hasName = have.any { !it.name.isNullOrBlank() && !ContactUtils.isPlaceholderName(it.name) }
                 val hasPhoto = have.any { !it.imageUrl.isNullOrBlank() || it.photoCandidates.isNotEmpty() }
                 !hasName || !hasPhoto
@@ -167,7 +164,7 @@ object BulkIdentityEngine {
                                 val r = withTimeoutOrNull(9_000L) {
                                     eyecon.lookup(n, IdentifierType.PHONE, LookupContext())
                                 }
-                                if (r != null) synchronized(partialsByNumber) { addPartial(n, r) }
+                                if (r != null) addPartial(n, r)
                             } catch (_: Exception) { }
                         }
                     }
@@ -175,41 +172,62 @@ object BulkIdentityEngine {
             }
         }
 
-        // ---- Phase 3: merge + cache + permanent phonebook mirror.
-        val service = ContactEnrichmentService(
-            application, application.lookupEngine, application.repository, application.database
-        )
-        var enriched = 0
         var done = 0
         for (n in todo) {
-            try {
-                val partials = partialsByNumber[n].orEmpty()
-                if (partials.isNotEmpty()) {
-                    val merged: LookupResult = ConfidenceEngine.merge(n, partials)
-                    val hasName = !merged.name.isNullOrBlank() && !ContactUtils.isPlaceholderName(merged.name)
-                    val hasPhoto = !merged.imageUrl.isNullOrBlank() || merged.photoCandidates.isNotEmpty()
-                    if (hasName || hasPhoto) {
-                        try { application.repository.saveLookupResult(merged) } catch (_: Exception) { }
-                        try { service.mirrorLookupResult(n, merged) } catch (_: Exception) { }
-                        enriched++
-                        _progress.value = Progress(
-                            total = todo.size, done = done + 1,
-                            lastLabel = merged.name ?: n, running = true
-                        )
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w("BulkIdentity", "scan failed for $n", e)
+            if (saveNumber(n)) {
+                enriched++
+                _progress.value = Progress(total = todo.size, done = done + 1, lastLabel = n, running = true)
             }
             done++
-            if (done % 5 == 0 || done == todo.size) {
+            if (done % 10 == 0 || done == todo.size) {
                 _progress.value = Progress(total = todo.size, done = done, running = true)
             }
         }
+
+        try {
+            val wave2Providers = providers.filter { p ->
+                (p.costClass == com.infocaller.app.domain.engine.CostClass.FREE ||
+                    p.costClass == com.infocaller.app.domain.engine.CostClass.LOW) &&
+                    p.id != "truecaller_authorized" && p.id != "eyecon_authorized" &&
+                    p.id != "bd_nid_database" &&
+                    p.id != "local_enrichment" &&
+                    p.id != "face_matched_reverse_search" &&
+                    application.providerManager.getHealth(p.id)?.status !=
+                        com.infocaller.app.domain.engine.ProviderStatus.BROKEN
+            }.sortedByDescending { it.priority }.take(8)
+            if (wave2Providers.isNotEmpty()) {
+                val numberSemaphore = Semaphore(4)
+                coroutineScope {
+                    todo.map { n ->
+                        async {
+                            numberSemaphore.withPermit {
+                                val providerSemaphore = Semaphore(3)
+                                coroutineScope {
+                                    wave2Providers.map { provider ->
+                                        async {
+                                            providerSemaphore.withPermit {
+                                                try {
+                                                    val r = withTimeoutOrNull(8_000L) {
+                                                        provider.lookup(n, IdentifierType.PHONE, LookupContext())
+                                                    }
+                                                    if (r != null) addPartial(n, r)
+                                                } catch (_: Exception) { }
+                                            }
+                                        }
+                                    }.awaitAll()
+                                }
+                                if (saveNumber(n)) {
+                                    _progress.value = Progress(total = todo.size, done = done, lastLabel = n, running = true)
+                                }
+                            }
+                        }
+                    }.awaitAll()
+                }
+            }
+        } catch (_: Exception) { }
         enriched
     }
 
-    /** Matches a bulk-response key back to one of our normalized numbers. */
     private fun matchKey(respKey: String, candidates: List<String>): String? {
         val norm = try { PhoneNumberUtils.normalize(respKey) } catch (_: Exception) { "" }
         if (norm.isNotBlank() && candidates.contains(norm)) return norm

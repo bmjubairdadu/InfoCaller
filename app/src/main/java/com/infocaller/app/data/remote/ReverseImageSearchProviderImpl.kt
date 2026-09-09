@@ -8,14 +8,6 @@ import okhttp3.OkHttpClient
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * Reverse-image search links for a found photo: Google Lens, TinEye, Bing
- * Visual Search. Android cannot upload-to-search programmatically without a
- * key, so this provider attaches one-tap deep links (photo URL embedded)
- * plus a direct Lens upload URL, and surfaces any additional photo
- * candidates scraped from Gravatar/GitHub og:image for the identifier.
- * One provider, zero keys, works for PHONE/EMAIL/USERNAME.
- */
 class ReverseImageSearchProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "reverse_image_search"
     override val name = "Reverse Image Search"
@@ -26,10 +18,6 @@ class ReverseImageSearchProviderImpl(private val httpClient: OkHttpClient) : Loo
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         try {
-            // Auto-photo mode: when an earlier provider already found a profile
-            // photo (Truecaller/Eyecon/Gravatar/GitHub...), build reverse-image
-            // links against THAT real photo — not a guessed seed. This is what
-            // makes deep OSINT "work automatically when any profile pic is found".
             val autoPhotos = context.foundPhotos.filter { it.startsWith("http") }.distinct().take(3)
             if (autoPhotos.isNotEmpty()) {
                 val links = autoPhotos.flatMap { photo ->
@@ -64,13 +52,10 @@ class ReverseImageSearchProviderImpl(private val httpClient: OkHttpClient) : Loo
                 IdentifierType.USERNAME, IdentifierType.FULL_NAME -> {
                     val u = identifier.trim()
                     if (u.length < 3) return@withContext null
-                    // GitHub avatar is fetchable without a key.
                     seedPhoto = "https://github.com/$u.png"
                     name = u
                 }
                 IdentifierType.PHONE -> {
-                    // Phone has no deterministic avatar; only attach the Lens
-                    // upload helper + generic image-search dorks.
                     val digits = identifier.filter { it.isDigit() }
                     if (digits.length < 7) return@withContext null
                 }

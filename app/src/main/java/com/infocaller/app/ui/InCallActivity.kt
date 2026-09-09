@@ -102,15 +102,15 @@ fun InCallScreen(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
     val enrichmentEngine = app.enrichmentEngine
-    
+
     val call by CallManager.activeCall.collectAsState()
     val isMuted by CallManager.isMuted.collectAsState()
     val isSpeakerOn by CallManager.isSpeakerOn.collectAsState()
     val isHolding by CallManager.isHolding.collectAsState()
     val isRecording by CallManager.isRecording.collectAsState()
-    
+
     var showDtmf by remember { mutableStateOf(false) }
-    
+
     if (call == null) {
         onDismiss()
         return
@@ -119,11 +119,11 @@ fun InCallScreen(onDismiss: () -> Unit) {
     val number = call?.details?.handle?.schemeSpecificPart ?: "Unknown"
     val normalizedNumber = remember(number) { com.infocaller.app.util.PhoneNumberUtils.normalize(number) }
     val enrichment by enrichmentEngine.getEnrichment(normalizedNumber).collectAsState(initial = null)
-    
+
     var contactName by remember { mutableStateOf<String?>(null) }
     var contactPhotoUri by remember { mutableStateOf<String?>(null) }
     var isBlocked by remember { mutableStateOf(false) }
-    
+
     @Suppress("DEPRECATION")
     var callState by remember { mutableStateOf(call?.state ?: Call.STATE_DISCONNECTED) }
 
@@ -138,7 +138,7 @@ fun InCallScreen(onDismiss: () -> Unit) {
         }
     }
 
-    DisposableEffect(callState, isSpeakerOn) 
+    DisposableEffect(callState, isSpeakerOn)
     {
         val hold = com.infocaller.app.util.ProximityPolicy.shouldHold(callState, isSpeakerOn)
         try {
@@ -264,7 +264,7 @@ fun InCallScreen(onDismiss: () -> Unit) {
                             color = Color.White,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
-                        
+
                         Text(
                             text = com.infocaller.app.util.PhoneNumberUtils.formatAsYouType(number),
                             style = MaterialTheme.typography.titleLarge,
@@ -277,7 +277,7 @@ fun InCallScreen(onDismiss: () -> Unit) {
                 val location = LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
                 if (location.isNotBlank()) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically, 
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(top = 16.dp).alpha(0.8f)
                     ) {
                         Icon(Icons.Default.Place, null, tint = themeColor, modifier = Modifier.size(16.dp))
@@ -285,7 +285,7 @@ fun InCallScreen(onDismiss: () -> Unit) {
                         Text(location, style = MaterialTheme.typography.bodyLarge, color = Color.White)
                     }
                 }
-                
+
                 val usedSocials = remember(socialProfiles) { com.infocaller.app.util.SocialUtils.filteredUsedProfiles(socialProfiles) }
                 if (usedSocials.isNotEmpty()) {
                     Row(modifier = Modifier.padding(top = 24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -294,7 +294,7 @@ fun InCallScreen(onDismiss: () -> Unit) {
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
-                
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (callState == Call.STATE_RINGING) {
                         val infiniteIconTransition = rememberInfiniteTransition(label = "IconPulse")
@@ -303,8 +303,8 @@ fun InCallScreen(onDismiss: () -> Unit) {
                             animationSpec = infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "IconScale"
                         )
                         Icon(
-                            Icons.Rounded.PhoneInTalk, null, 
-                            tint = Secondary, 
+                            Icons.Rounded.PhoneInTalk, null,
+                            tint = Secondary,
                             modifier = Modifier.size(24.dp).scale(iconScale)
                         )
                         Spacer(Modifier.width(12.dp))
@@ -330,9 +330,6 @@ fun InCallScreen(onDismiss: () -> Unit) {
                             }
                         }
 
-                        // Big tap targets: red decline (left) + green answer
-                        // (right) with handset glyphs, kept alongside the
-                        // swipe gesture for users who prefer it.
                         TapAnswerRow(
                             onAccept = { call?.answer(VideoProfile.STATE_AUDIO_ONLY) },
                             onDecline = { call?.reject(false, null); onDismiss() }
@@ -366,7 +363,7 @@ fun InCallScreen(onDismiss: () -> Unit) {
 @Composable
 fun SocialActionCircle(profile: com.infocaller.app.domain.model.SocialProfile) {
     val context = LocalContext.current
-    
+
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
             onClick = { SocialUtils.openSocialProfile(context, profile) },
@@ -394,9 +391,9 @@ fun SocialActionCircle(profile: com.infocaller.app.domain.model.SocialProfile) {
             }
         }
         Text(
-            profile.platform.uppercase(), 
-            modifier = Modifier.padding(top = 8.dp), 
-            fontSize = 9.sp, 
+            profile.platform.uppercase(),
+            modifier = Modifier.padding(top = 8.dp),
+            fontSize = 9.sp,
             color = Color.White.copy(alpha = 0.5f),
             fontWeight = FontWeight.Bold
         )
@@ -405,8 +402,6 @@ fun SocialActionCircle(profile: com.infocaller.app.domain.model.SocialProfile) {
 
 @Composable
 fun SwipeToAnswer(onAccept: () -> Unit, onDecline: () -> Unit) {
-    // Vertical swipe: drag UP to answer, DOWN to decline. A bouncing chevron
-    // hint above the handle teaches the gesture on first sight.
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
     val sliderHeight = 240.dp
@@ -569,7 +564,6 @@ fun SocialBrandIcon(
     showLabel: Boolean = false,
 ) {
     val context = LocalContext.current
-    // Brand-tinted ring per platform so each social account reads as its logo.
     val brand = SocialBrandColors.forPlatform(profile.platform)
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -632,11 +626,6 @@ object SocialBrandColors {
     }
 }
 
-/**
- * Big tap accept/decline: red decline circle (left) + green answer circle
- * (right) with handset glyphs + labels. Haptic on press. Kept alongside
- * SwipeToAnswer for users who prefer the gesture.
- */
 @Composable
 fun TapAnswerRow(onAccept: () -> Unit, onDecline: () -> Unit) {
     val haptic = LocalHapticFeedback.current
@@ -689,7 +678,6 @@ private fun TapAnswerButton(
                 modifier = Modifier.fillMaxSize().background(Brush.linearGradient(listOf(base, deep))),
                 contentAlignment = Alignment.Center
             ) {
-                // White circular badge behind the glyph = logo-button look.
                 Box(
                     modifier = Modifier.size(52.dp).clip(CircleShape).background(Color.White),
                     contentAlignment = Alignment.Center
@@ -708,11 +696,6 @@ private fun TapAnswerButton(
     }
 }
 
-/**
- * Active-call control grid: mute / speaker / record / hold / keypad on row
- * one, a "More" button opening mic-routes, add-call, video, and contacts
- * shortcuts on row two, and the red end-call button below.
- */
 @Composable
 fun ActiveCallControls(number: String, isMuted: Boolean, isSpeakerOn: Boolean, isHolding: Boolean, isRecording: Boolean, onMute: () -> Unit, onSpeaker: () -> Unit, onHold: () -> Unit, onEnd: () -> Unit, onKeypad: () -> Unit) {
     val context = LocalContext.current
@@ -744,8 +727,6 @@ fun ActiveCallControls(number: String, isMuted: Boolean, isSpeakerOn: Boolean, i
                 } catch (_: Exception) { }
             })
             InCallButton(icon = Icons.Rounded.Videocam, label = "Video", onClick = {
-                // Video upgrade needs carrier/IMS support — fall back to the
-                // system dialer for video-capable handling instead of a no-op.
                 try {
                     val intent = android.content.Intent(android.content.Intent.ACTION_DIAL)
                     context.startActivity(intent)

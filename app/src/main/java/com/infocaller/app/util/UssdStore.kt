@@ -25,10 +25,6 @@ object UssdStore {
     fun run(context: Context, rawCode: String, phoneAccountHandle: android.telecom.PhoneAccountHandle? = null) {
         val code = rawCode.trim()
         if (code.isEmpty()) return
-        // USSD must go through ACTION_CALL with the SAME encoding the dialer
-        // uses for '#', plus the caller's chosen PhoneAccountHandle so dual-SIM
-        // users can pick the SIM. Route through the shared placeCall so USSD
-        // hits the telephony stack correctly.
         try {
             com.infocaller.app.util.SimManager.placeCall(context, code, phoneAccountHandle)
         } catch (_: Exception) {

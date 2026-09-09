@@ -20,4 +20,7 @@ interface EnrichmentDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEnrichment(enrichment: ContactEnrichmentEntity)
+
+    @Query("UPDATE contact_enrichment SET profileImageUrl = :url, profileImageSource = :source, lastChecked = :now WHERE normalizedPhoneNumber = :number")
+    suspend fun setPrimaryPhoto(number: String, url: String, source: String, now: Long = System.currentTimeMillis())
 }

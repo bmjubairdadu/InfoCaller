@@ -9,7 +9,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-
 class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvider {
     override val id = "email_social_bridge"
     override val name = "Email → Social Bridge"
@@ -32,8 +31,6 @@ class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvid
                 .header("User-Agent","Mozilla/5.0 (Linux; Android 14)").build()
             var gravName: String? = null
             var gravPhoto: String? = null
-            // Responses must be closed (use{}) or connections leak; string()
-            // self-closes only when called on the body inside use{}.
             client.newCall(gravReq).await().use { gravResp ->
                 if (gravResp.isSuccessful) {
                     val j = gravResp.body?.string() ?: ""
@@ -58,10 +55,6 @@ class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvid
                     }
                 }
             } catch(_:Exception){}
-            // NOTE: the old DuckDuckGo "site:linkedin.com/in" probe was removed —
-            // DDG scraping was pruned repo-wide (blocks/hallucinations) and a raw
-            // HTML href is not a verified LinkedIn match. GitHub API provider
-            // covers username search with display names.
 
             if (profiles.isEmpty() && gravName == null && gravPhoto == null) return@withContext null
             PartialResult(

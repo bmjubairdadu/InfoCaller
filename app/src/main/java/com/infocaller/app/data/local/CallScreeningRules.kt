@@ -9,19 +9,7 @@ import com.infocaller.app.util.ContactUtils
 import com.infocaller.app.util.PhoneNumberUtils
 import kotlinx.coroutines.flow.Flow
 
-/**
- * On-device call-screening decision engine.
- *
- * Check order adapted from humanjuan/iOG26 ("How Call Blocking Works"):
- *  1. anonymous/hidden number + setting enabled
- *  2. exact personal blocklist match
- *  3. blocked prefix match
- *  4. unknown (not in contacts) + setting enabled
- *
- * Everything runs locally: Room + ContactsContract only. No uploads.
- */
 object CallScreeningRules {
-
     sealed class Decision {
         data object Allow : Decision()
         data class Block(val reason: String) : Decision()
@@ -76,7 +64,6 @@ object CallScreeningRules {
         try { dao.removePrefix(prefix) } catch (_: Exception) { }
     }
 
-    /** Keep prefixes as digit strings, optional leading '+'. */
     fun normalizePrefix(raw: String): String? {
         val trimmed = raw.trim()
         if (trimmed.isEmpty()) return null
@@ -103,9 +90,6 @@ object CallScreeningRules {
         return digits.startsWith(prefixDigits)
     }
 
-    /**
-     * Full ordered decision. Never throws — screening must fail open.
-     */
     suspend fun decide(
         context: Context,
         dao: ScreeningDao,

@@ -30,9 +30,6 @@ object SocialUtils {
         }
     }
 
-    /** Best http photo across every cached source: primary url, candidates,
-     *  then social avatarUrls. Used by the Details Lens button so one tap
-     *  always scans the founded photo (never a generic upload page). */
     fun bestHttpPhoto(
         primary: String?,
         candidatesJson: String?,
@@ -56,7 +53,6 @@ object SocialUtils {
         }
     }
 
-    /** Alternate-name map (name -> provider list) from the enrichment cache. */
     fun altNamesFromJson(json: String?): Map<String, List<String>> {
         if (json.isNullOrBlank()) return emptyMap()
         return try {
@@ -72,19 +68,13 @@ object SocialUtils {
         if (url.isBlank()) return null
         val platform = profile.platform.lowercase()
         if (platform == "whatsapp") {
-            // Logos-only: open bare wa.me (no ?text= pre-filled message).
             val waUri = try { Uri.parse(url) } catch (_: Exception) { return null }
             return Intent(Intent.ACTION_VIEW).apply {
                 data = waUri
-                // Prefer the app, but openSocialProfile falls back to the
-                // browser when WhatsApp isn't installed.
                 setPackage("com.whatsapp")
             }
         }
         val uri = try { Uri.parse(url) } catch (_: Exception) { return null }
-        // Every platform gets its native app package first; the opener falls
-        // back to the browser URL when the app is missing, so a tap ALWAYS
-        // lands on the account instead of dying silently.
         val pkg = when (platform) {
             "telegram" -> "org.telegram.messenger"
             "facebook" -> "com.facebook.katana"
@@ -120,9 +110,6 @@ object SocialUtils {
     }
 
     fun openSocialProfile(context: Context, profile: SocialProfile) {
-        // Try the native app first; fall back to the plain browser URL when
-        // the app is missing; last resort re-encodes the URL in case the
-        // stored profile URL was malformed.
         val intent = getSocialIntent(context, profile) ?: return
         try {
             context.startActivity(intent)
@@ -136,14 +123,12 @@ object SocialUtils {
             context.startActivity(fallback)
         } catch (_: Exception) { }
     }
-    
+
     fun isConfirmed(profile: SocialProfile): Boolean {
-        return profile.status == SocialLookupStatus.CONFIRMED || 
+        return profile.status == SocialLookupStatus.CONFIRMED ||
                profile.status == SocialLookupStatus.PUBLIC_MATCH
     }
 
-    /** Cached official logo for any platform (disk first, live URL fallback).
-     *  Returned as Any so Coil accepts File-or-URL uniformly. */
     fun logoModel(context: Context, platform: String): Any {
         try {
             val dir = java.io.File(context.filesDir, "social_logos")
@@ -154,8 +139,6 @@ object SocialUtils {
         return getLogoUrl(platform)
     }
 
-    /** Pre-fetch official marks for every found platform (best-effort, IO).
-     *  Called once per details open so badges render instantly and offline. */
     suspend fun prefetchLogos(context: Context, platforms: List<String>) {
         try {
             val dir = java.io.File(context.filesDir, "social_logos")
@@ -182,8 +165,6 @@ object SocialUtils {
     }
 
     fun getLogoUrl(platform: String): String {
-        // Same release-build gap as operator logos: empty client id blanks every
-        // social badge, so fall back to the bundled demo key.
         val raw = try { com.infocaller.app.BuildConfig.BRANDFETCH_CLIENT_ID } catch(_:Exception) { "" }
         val id = if (raw.isNullOrBlank()) "1idt4fOOzudt9xCz11q" else raw
         val domain = when (platform.lowercase()) {
@@ -207,14 +188,10 @@ object SocialUtils {
         return "https://cdn.brandfetch.io/domain/$domain?c=$id"
     }
 
-    
     fun filteredUsedProfiles(profiles: List<SocialProfile>): List<SocialProfile> {
         return profiles.filter { p ->
             val url = p.profileUrl?.trim().orEmpty()
             if (url.isBlank()) return@filter false
-            // Accept any actionable profile: confirmed/public matches plus
-            // possible matches with a real URL (Telegram presence lands here).
-            // UNKNOWN/UNSUPPORTED only pass when the URL is a real deep link.
             val okStatus = when (p.status) {
                 SocialLookupStatus.CONFIRMED,
                 SocialLookupStatus.PUBLIC_MATCH,

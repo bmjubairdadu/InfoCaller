@@ -34,9 +34,6 @@ class ScanningService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!isRunning) {
             isRunning = true
-            // Transient resume notice only: show the foreground notification, run
-            // one queue pass, then stop. The service must NOT linger 24/7 — the
-            // user's spec is a ~3s "resumed" notice on app open / after reboot.
             startForeground(NOTIFICATION_ID, createNotification())
             scheduleAutoStop()
             startContinuousScanning()
@@ -59,7 +56,6 @@ class ScanningService : Service() {
     }
 
     private fun startContinuousScanning() {
-        // Cancel any previous collector before starting a new one (e.g. sticky restart).
         queueJob?.cancel()
         queueJob = serviceScope.launch {
             val app = applicationContext as InfoCallerApplication
@@ -68,11 +64,8 @@ class ScanningService : Service() {
             app.enrichmentEngine.isOnline.combine(orchestrator.isPriorityScanActive) { online, priorityActive ->
                 online && !priorityActive
             }.collect { active ->
-                // processQueueOneByOne loops while active; run it in a child that we cancel
-                // as soon as the condition flips so priority scans can pre-empt.
                 if (!active) return@collect
                 val child = launch { processQueueOneByOne(app, orchestrator) }
-                // Wait until inactive, then stop the child promptly.
                 app.enrichmentEngine.isOnline.combine(orchestrator.isPriorityScanActive) { o, p -> o && !p }
                     .first { !it }
                 child.cancelAndJoin()
@@ -80,7 +73,7 @@ class ScanningService : Service() {
         }
     }
 
-    private suspend fun processQueueOneByOne(app: InfoCallerApplication, orchestrator: ScanOrchestrator) 
+    private suspend fun processQueueOneByOne(app: InfoCallerApplication, orchestrator: ScanOrchestrator)
     {
         while (app.enrichmentEngine.isOnline.value && !orchestrator.isPriorityScanActive.value) {
             try {

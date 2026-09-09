@@ -24,11 +24,7 @@ data class SimInfo(
 )
 
 object SimManager {
-
     fun buildBrandfetchLogoUrl(officialDomain: String): String {
-        // Release builds ship an empty BRANDFETCH_CLIENT_ID (see app/build.gradle.kts),
-        // which makes Brandfetch return 400 and every operator logo blank. Fall back
-        // to the bundled demo key so logos load in both debug and release.
         val raw = try { com.infocaller.app.BuildConfig.BRANDFETCH_CLIENT_ID } catch(_:Exception) { "" }
         val id = if (raw.isNullOrBlank()) "1idt4fOOzudt9xCz11q" else raw
         return "https://cdn.brandfetch.io/domain/$officialDomain?c=$id"
@@ -36,12 +32,10 @@ object SimManager {
 
     suspend fun getSimInfos(context: Context): List<SimInfo> {
         val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
-        // Telephony services may be null on non-telephony devices (required=false);
-        // a hard cast here would crash first launch ("keeps stopping").
         val subscriptionManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
             ?: return emptyList()
         val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
-        
+
         val phoneAccounts = try {
             telecomManager?.callCapablePhoneAccounts ?: emptyList<PhoneAccountHandle>()
         } catch (_: Exception) {
@@ -50,14 +44,13 @@ object SimManager {
         val subInfos = try {
             subscriptionManager.activeSubscriptionInfoList ?: emptyList()
         } catch (_: SecurityException) {
-            // READ_PHONE_STATE not granted yet (e.g. first launch before onboarding) — no SIMs to show.
             emptyList()
         } catch (_: Exception) {
             emptyList()
         }
-        
+
         val simInfos = mutableListOf<SimInfo>()
-        
+
         for (subInfo in subInfos) {
             val carrierName = subInfo.carrierName?.toString() ?: "Unknown"
             val displayName = subInfo.displayName?.toString() ?: "SIM ${subInfo.simSlotIndex + 1}"
@@ -65,19 +58,19 @@ object SimManager {
             val mcc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) subInfo.mccString else subInfo.mcc.let { if (it == 0) null else it.toString() }
             val mnc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) subInfo.mncString else subInfo.mnc.let { if (it == 0) null else it.toString() }
             val slotIndex = subInfo.simSlotIndex
-            
-            val phoneAccountHandle = phoneAccounts.firstOrNull { 
-                it.id == subInfo.subscriptionId.toString() 
+
+            val phoneAccountHandle = phoneAccounts.firstOrNull {
+                it.id == subInfo.subscriptionId.toString()
             }
-            
+
             val brand = OperatorBrandResolver.resolveBrand(carrierName, displayName, mcc, mnc)
-            
+
             val iconBitmap = try {
                 subInfo.createIconBitmap(context)
             } catch (_: Exception) {
                 null
             }
-            
+
             val tempSimInfo = SimInfo(
                 subscriptionId = subInfo.subscriptionId,
                 slotIndex = slotIndex,
@@ -92,10 +85,10 @@ object SimManager {
             )
 
             val localPath = app.operatorLogoManager.getLocalLogoPath(tempSimInfo)
-            
+
             simInfos.add(tempSimInfo.copy(localLogoPath = localPath))
         }
-        
+
         return simInfos.sortedBy { it.slotIndex }
     }
 
@@ -105,7 +98,7 @@ object SimManager {
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
         val action = if (hasPermission) android.content.Intent.ACTION_CALL else android.content.Intent.ACTION_DIAL
-        
+
         val encodedNumber = if (phoneNumber.contains("#")) {
             phoneNumber.replace("#", android.net.Uri.encode("#"))
         } else {

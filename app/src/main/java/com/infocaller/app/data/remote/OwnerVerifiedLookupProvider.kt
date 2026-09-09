@@ -11,14 +11,6 @@ import okhttp3.Request
 import org.json.JSONArray
 import java.util.concurrent.TimeUnit
 
-/**
- * Owner-verified lookup (strict owner-consent model).
- *
- * Reads ONLY public directory rows from Supabase `owner_profiles`:
- * verified=true AND consent_granted=true AND visibility='public'.
- * Lookup key is SHA-256(phone_e164); plain numbers are never stored server-side.
- * No login/consent needed to READ public data; publishing requires OTP + backend.
- */
 class OwnerVerifiedLookupProvider(
     private val context: Context,
     private val httpClient: OkHttpClient? = null

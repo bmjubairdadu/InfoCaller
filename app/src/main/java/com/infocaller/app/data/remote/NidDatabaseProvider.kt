@@ -6,7 +6,6 @@ import com.infocaller.app.util.PhoneNumberUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-
 class NidDatabaseProvider(
     private val db: AppDatabase
 ) : LookupProvider {
@@ -23,9 +22,6 @@ class NidDatabaseProvider(
             when (type) {
                 IdentifierType.PHONE -> {
                     val digits = identifier.filter { it.isDigit() }
-                    // database.json stores local 11-digit numbers (017...).
-                    // Try exact normalized forms first, substring only as a
-                    // last resort — LIKE '%...%' can return a stranger's row.
                     val candidates = linkedSetOf(
                         digits,
                         if (digits.startsWith("880")) digits.substring(3) else "0$digits".takeLast(11),
@@ -73,10 +69,6 @@ class NidDatabaseProvider(
     }
 
     private fun toPartial(rec: com.infocaller.app.data.local.entity.NidEntity, exactDobMatch: Boolean = true): PartialResult {
-        // database.json rows carry ONLY number/nid/dob — no names, no photos.
-        // Show exactly NID + DOB and nothing else (no filler about-text, no
-        // Google dork links). Enriched fields render only when a real
-        // enrichment source has filled them.
         val hasEnriched = !rec.nameEn.isNullOrBlank() || !rec.photoUrl.isNullOrBlank() ||
             !rec.fatherName.isNullOrBlank() || !rec.motherName.isNullOrBlank() || !rec.address.isNullOrBlank()
         if (!hasEnriched) {

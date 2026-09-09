@@ -26,10 +26,7 @@ fun NavGraph(
     onMakeCall: (String) -> Unit
 ) {
     val context = LocalContext.current
-    
-    // Contextual-permission gate: onboarding secures dialer role + spam role +
-    // basic call permissions + overlay. Call log / contacts are requested
-    // lazily on Recent / Contacts tabs, so they are NOT part of this gate.
+
     val isCoreOk = PermissionManager.isDefaultDialer(context) &&
                   PermissionManager.isCallScreeningRoleHeld(context) &&
                   PermissionManager.hasPermissions(context, PermissionManager.REQUIRED_RUNTIME_CALL_PERMISSIONS)
@@ -40,8 +37,6 @@ fun NavGraph(
 
     val authState by authViewModel.authState.collectAsState()
     val isAuthorized = authState is com.infocaller.app.ui.viewmodel.AuthUiState.Authenticated
-    // One-time gate: once onboarding completes it never loops, permissions are
-    // re-asked lazily per screen (Recents/Contacts/Dialer) if revoked later.
     val onboardingDone = try {
         context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
             .getBoolean("onboarding_completed", false)
@@ -104,24 +99,18 @@ fun NavGraph(
                     try { android.net.Uri.decode(it) } catch (_: Exception) { it }
                 }.orEmpty()
                 androidx.compose.runtime.LaunchedEffect(argNumber) {
-                    // Clear the previous contact's result BEFORE starting the
-                    // new scan — otherwise the old Success stays visible
-                    // (greyed) under the new Loading state on re-open.
                     viewModel.clearSearch()
                     if (argNumber.isNotBlank()) viewModel.searchNumber(argNumber)
                 }
                 DetailsScreen(
                     viewModel = viewModel,
                     onBack = {
-                        // Reset on exit too, so a fast re-open never flashes
-                        // the previous contact before the new scan starts.
                         try { viewModel.clearSearch() } catch (_: Exception) { }
                         navController.popBackStack()
                     },
                     onMakeCall = onMakeCall
                 )
             }
-            // Legacy no-arg route: kept so older in-app links do not crash.
             composable("details") {
                 DetailsScreen(
                     viewModel = viewModel,
@@ -163,8 +152,6 @@ fun NavGraph(
             com.infocaller.app.ui.dialogs.SimSelectionBottomSheet(
                 phoneNumber = simSelectionPhone!!,
                 onSimSelected = { sim ->
-                    // USSD sessions need the chosen SIM's account handle too —
-                    // plain placeCall would drop it into a voice call.
                     if (com.infocaller.app.util.UssdStore.isUssd(simSelectionPhone!!)) com.infocaller.app.util.UssdStore.run(context, simSelectionPhone!!, sim.phoneAccountHandle)
                     else com.infocaller.app.util.SimManager.placeCall(context, simSelectionPhone!!, sim.phoneAccountHandle)
                     viewModel.dismissSimSelection()

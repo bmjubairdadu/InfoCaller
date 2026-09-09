@@ -10,12 +10,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import org.jsoup.Jsoup
 
-/**
- * X/Twitter public-profile extractor (keyless).
- * Tries the syndication API first (cdn.syndication.twimg.com — no login, JSON
- * with name/bio/avatar), falls back to og:* scrape of x.com/{handle}.
- * Extracts: display name, bio, avatar, follower hint.
- */
 class XProfileProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "x_profile"
     override val name = "X Profile"
@@ -31,7 +25,6 @@ class XProfileProviderImpl(private val httpClient: OkHttpClient) : LookupProvide
             else -> identifier.trim().removePrefix("@")
         }.lowercase().replace(Regex("[^a-z0-9_]"), "")
         if (handle.length !in 2..30) return@withContext null
-        // 1) Syndication API: keyless JSON, no login wall.
         try {
             val req = okhttp3.Request.Builder()
                 .url("https://cdn.syndication.twimg.com/widgets/followbutton/info.json?screen_names=$handle")
@@ -66,7 +59,6 @@ class XProfileProviderImpl(private val httpClient: OkHttpClient) : LookupProvide
                 }
             }
         } catch (_: Exception) { }
-        // 2) og:* fallback scrape.
         try {
             val url = "https://x.com/$handle"
             val doc = Jsoup.connect(url)

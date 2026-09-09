@@ -6,13 +6,6 @@ import com.infocaller.app.domain.model.SocialProfile
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 
-/**
- * Maigret-style mega username sweep: ~120 high-signal profile URLs beyond
- * Sherlock's 40. Complements (not replaces) Sherlock/WhatsMyName: covers
- * dating, gaming, crypto, music, forums, South-Asian networks, and creator
- * platforms that Sherlock misses. Bounded concurrency via
- * UsernameExistenceChecker (8-way). Free, no key.
- */
 class MaigretSweepProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "maigret_sweep"
     override val name = "Maigret Mega Sweep (120 sites)"

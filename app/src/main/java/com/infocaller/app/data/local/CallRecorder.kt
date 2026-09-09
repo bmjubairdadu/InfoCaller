@@ -21,7 +21,7 @@ class CallRecorder(private val context: Context) {
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             val displayName = "Call_${phoneNumber}_$timeStamp"
             val resolver = context.contentResolver
-            
+
             val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val contentValues = android.content.ContentValues().apply {
                     put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "$displayName.amr")
@@ -49,18 +49,18 @@ class CallRecorder(private val context: Context) {
                 setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
                 setOutputFormat(MediaRecorder.OutputFormat.AMR_NB)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
-                
+
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val pfd = resolver.openFileDescriptor(uri, "w") ?: throw IOException("Failed to open file descriptor.")
                     setOutputFile(pfd.fileDescriptor)
                 } else {
                     setOutputFile(uri.path)
                 }
-                
+
                 prepare()
                 start()
             }
-            
+
             isRecording = true
             currentUri = uri
             Log.d("CallRecorder", "Started recording: $uri")
@@ -79,7 +79,7 @@ class CallRecorder(private val context: Context) {
             }
             mediaRecorder = null
             isRecording = false
-            
+
             val uri = currentUri
             if (uri != null) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

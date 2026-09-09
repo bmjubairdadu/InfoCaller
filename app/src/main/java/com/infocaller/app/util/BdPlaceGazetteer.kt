@@ -1,13 +1,6 @@
 package com.infocaller.app.util
 
-/**
- * Offline Bangladesh place-name gazetteer for repairing truncated name
- * tokens ("sujansah" -> "sujansaha", "chittagon" -> "chittagong").
- * Pure Kotlin, no network: prefix + edit-distance match over districts,
- * major upazilas and common village-name suffixes.
- */
 object BdPlaceGazetteer {
-
     private val DISTRICTS = listOf(
         "bagerhat", "bandarban", "barguna", "barishal", "barisal", "bhola",
         "bogura", "bogra", "brahmanbaria", "chandpur", "chattogram", "chittagong",
@@ -34,22 +27,15 @@ object BdPlaceGazetteer {
 
     private val ALL: List<String> by lazy { (DISTRICTS + MAJOR_UPAZILAS).distinct() }
 
-    /**
-     * Repair a possibly-truncated token to the closest gazetteer entry.
-     * Returns the input unchanged when nothing is close enough (>= 0.80).
-     */
     fun repair(token: String): String {
         val low = token.lowercase().trim()
         if (low.length < 4) return token
         if (low in ALL) return token
-        // Fast path: unique prefix completion ("sujansah" -> "sujansaha").
         val prefixHits = ALL.filter { it.startsWith(low) }
         if (prefixHits.size == 1) return prefixHits.first()
         if (prefixHits.isNotEmpty()) {
-            // Prefer the shortest completion (least invented suffix).
             return prefixHits.minByOrNull { it.length } ?: token
         }
-        // Edit-distance fallback for transpositions ("chittagon").
         var best: String? = null
         var bestScore = 0.80
         for (entry in ALL) {
@@ -58,9 +44,6 @@ object BdPlaceGazetteer {
             if (s > bestScore) { bestScore = s; best = entry }
         }
         if (best != null) return best
-        // Suffix heuristic: BD village names often end in aha/para/ganj/pur —
-        // a token missing its tail ("sujanpur" typed "sujanpu") still resolves
-        // via Nominatim, so leave it for the network step.
         return token
     }
 

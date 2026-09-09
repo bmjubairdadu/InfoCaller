@@ -36,10 +36,6 @@ import kotlinx.coroutines.delay
 @Composable
 fun OnboardingScreen(onComplete: () -> Unit) {
     val context = LocalContext.current
-    // Popup sequence (single scaffold, system dialogs in order):
-    // 0 = Caller-ID & spam role popup -> 1 = basic-permissions popup (OK
-    // grants each runtime permission sequentially) -> 2 = default-dialer
-    // popup -> 3 = overlay -> 4 = location -> 5 = notifications -> 6 = done.
     var currentStage by rememberSaveable { mutableIntStateOf(0) }
     var permanentlyDenied by rememberSaveable { mutableStateOf(false) }
     var roleAttempted by rememberSaveable { mutableStateOf(false) }
@@ -47,10 +43,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     var spamRoleError by rememberSaveable { mutableStateOf<String?>(null) }
     var spamRoleAttempted by rememberSaveable { mutableStateOf(false) }
     var callPermsError by rememberSaveable { mutableStateOf(false) }
-    // Sequential basic-permissions queue, granted one group at a time after
-    // the popup's OK: call-logs -> contacts -> phone-state bundle -> SMS ->
-    // write-contacts (phonebook mirror). Each fires only after the previous
-    // resolves, so no two system dialogs stack.
     val basicPermQueue = remember {
         listOf(
             PermissionManager.CALL_LOG_PERMISSIONS.toList() to "Call logs",
@@ -62,7 +54,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     }
     var permQueueIndex by rememberSaveable { mutableIntStateOf(-1) }
     var showBasicPermsPopup by rememberSaveable { mutableStateOf(false) }
-
 
     val roleLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -80,7 +71,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     ) { _ ->
         if (PermissionManager.isCallScreeningRoleHeld(context)) {
             spamRoleError = null
-            // Next: basic-permissions popup (OK -> sequential grants).
             showBasicPermsPopup = true
             currentStage = 1
         } else if (spamRoleAttempted) {
@@ -88,10 +78,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
         }
     }
 
-    // Fires one permission group; on resolve, advances to the next queued
-    // group until the queue is done, then moves to the dialer popup.
-    // Nullable-var pattern: the callback references the launcher itself, so
-    // a plain val would be a forward reference at init time.
     var onePermLauncherRef: androidx.activity.result.ActivityResultLauncher<Array<String>>? by remember { mutableStateOf(null) }
     val onePermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -109,7 +95,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
             callPermsError = PermissionManager.missingPermissions(
                 context, PermissionManager.REQUIRED_RUNTIME_CALL_PERMISSIONS
             ).isNotEmpty()
-            // Next popup: default phone app.
             currentStage = 2
         }
     }
@@ -128,8 +113,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     }
 
     LaunchedEffect(currentStage) {
-        // Watchdog only for the two role stages: if the user completes the
-        // system role picker without our launcher callback firing, advance.
         if (currentStage == 0 || currentStage == 2) {
             while (currentStage == 0 || currentStage == 2) {
                 delay(1500)
@@ -163,7 +146,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
-        // Resume mid-flow after process death: skip stages already granted.
         try {
             val screeningHeld = PermissionManager.isCallScreeningRoleHeld(context)
             val dialerHeld = PermissionManager.isDefaultDialer(context)
@@ -214,7 +196,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp), contentAlignment = Alignment.Center) {
         when (currentStage) {
-            // 0 FIRST: Caller-ID & spam role popup (was stage 10).
             0 -> SpamRoleExplanation(
                 error = spamRoleError,
                 onGrant = {
@@ -246,8 +227,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 },
                 onSkip = { showBasicPermsPopup = true; currentStage = 1 }
             )
-            // 1: basic-permissions popup lives as a dialog below (OK ->
-            // sequential grants). The stage body just explains progress.
             1 -> BasicPermissionsStageBody(
                 queue = basicPermQueue,
                 queueIndex = permQueueIndex,
@@ -255,7 +234,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 onStartQueue = { showBasicPermsPopup = true },
                 onSkip = { currentStage = 2 },
             )
-            // 2 LAST role popup: default phone app, then straight to Recents.
             2 -> RoleDialerExplanation(
                 error = roleError,
                 onGrant = {
@@ -309,9 +287,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
             }
         }
 
-        // Basic-permissions popup: lists every required permission with an OK
-        // button; OK starts the sequential grant queue (one system dialog at
-        // a time), Cancel/Skip jumps to the default-dialer popup.
         if (showBasicPermsPopup && currentStage == 1) {
             AlertDialog(
                 onDismissRequest = { showBasicPermsPopup = false },
@@ -333,8 +308,6 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                     TextButton(onClick = {
                         showBasicPermsPopup = false
                         callPermsError = false
-                        // Start the sequential queue at the first UNGRANTED
-                        // group so re-entry never re-asks granted ones.
                         val firstMissing = basicPermQueue.indexOfFirst { (perms, _) ->
                             PermissionManager.missingPermissions(context, perms.toTypedArray()).isNotEmpty()
                         }
@@ -428,11 +401,6 @@ fun CallPermissionsExplanation(
     }
 }
 
-/**
- * Stage-1 body: explains the sequential basic-permissions popup while the
- * dialog (below) does the actual granting. Shows live progress through the
- * queue so a mid-flow return never looks stuck.
- */
 @Composable
 fun BasicPermissionsStageBody(
     queue: List<Pair<List<String>, String>>,
@@ -478,7 +446,6 @@ fun BasicPermissionsStageBody(
         TextButton(onClick = onSkip) { Text("Skip for now", color = contentSecondary(0.7f)) }
     }
 }
-
 
 @Composable
 fun SpamRoleExplanation(

@@ -1,14 +1,8 @@
 package com.infocaller.app.util
 
 object LocationUtils {
-
     data class LocatedSource(val label: String, val value: String)
 
-    /**
-     * EVERY location found across all sources, labeled: Truecaller city,
-     * NID address, Gravatar/GitHub location, SIM/operator region, plus the
-     * given display string. Deduped case-insensitively, order preserved.
-     */
     fun allLocatedSources(
         city: String?, region: String?, country: String?,
         nidAddress: String? = null,
@@ -33,7 +27,7 @@ object LocationUtils {
 
     fun formatCallerLocation(city: String?, region: String?, country: String?): String {
         val parts = mutableListOf<String>()
-        
+
         val cleanCity = city?.trim()
         val cleanRegion = region?.trim()
         val cleanCountry = country?.trim()
@@ -41,11 +35,11 @@ object LocationUtils {
         if (!cleanCity.isNullOrBlank()) {
             parts.add(cleanCity)
         }
-        
+
         if (!cleanRegion.isNullOrBlank() && cleanRegion != cleanCity) {
             parts.add(cleanRegion)
         }
-        
+
         if (!cleanCountry.isNullOrBlank() && cleanCountry != cleanCity && cleanCountry != cleanRegion) {
             parts.add(cleanCountry)
         }

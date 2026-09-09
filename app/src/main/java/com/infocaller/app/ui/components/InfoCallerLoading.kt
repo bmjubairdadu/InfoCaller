@@ -19,7 +19,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.infocaller.app.R
 
-
 @Composable
 fun InfoCallerLoading(
     modifier: Modifier = Modifier,
@@ -28,7 +27,7 @@ fun InfoCallerLoading(
     isFullScreen: Boolean = false
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "BrandedLoading")
-    
+
     val scale by infiniteTransition.animateFloat(
         initialValue = 0.85f,
         targetValue = 1.15f,
@@ -38,7 +37,7 @@ fun InfoCallerLoading(
         ),
         label = "PulseScale"
     )
-    
+
     val alpha by infiniteTransition.animateFloat(
         initialValue = 0.5f,
         targetValue = 1f,
@@ -57,7 +56,7 @@ fun InfoCallerLoading(
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = {} 
+                    onClick = {}
                 ),
             contentAlignment = Alignment.Center
         ) {

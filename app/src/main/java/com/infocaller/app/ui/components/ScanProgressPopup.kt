@@ -42,7 +42,6 @@ fun ScanProgressPopup(
                 modifier = Modifier.fillMaxWidth().padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // App loading animation on top.
                 InfoCallerLoading(size = 56.dp)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(

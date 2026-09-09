@@ -3,7 +3,6 @@ package com.infocaller.app.domain.engine
 import com.infocaller.app.domain.model.SocialProfile
 import com.infocaller.app.domain.model.PhotoCandidate
 
-
 interface LookupProvider {
     val id: String
     val name: String
@@ -11,7 +10,7 @@ interface LookupProvider {
     val capabilities: Set<Capability>
     val priority: Int
     val costClass: CostClass
-    
+
     suspend fun lookup(
         identifier: String,
         type: String,
@@ -24,7 +23,6 @@ interface LookupProvider {
         context: LookupContext = LookupContext()
     ): Map<String, PartialResult> = emptyMap()
 }
-
 
 enum class Capability {
     PHONE_METADATA,
@@ -52,7 +50,6 @@ enum class Capability {
     DARK_WEB_MENTION
 }
 
-
 enum class CostClass {
     FREE,
     LOW,
@@ -74,11 +71,9 @@ object IdentifierType {
 data class LookupContext(
     val forceRefresh: Boolean = false,
     val priority: Int = 0,
-    /** Photo URLs already found by earlier providers in this scan. Deep-photo
-     *  tools (reverse-image, face-search pivot, avatar harvester) read this
-     *  to auto-run against the real photo instead of guessing seeds. */
+
     val foundPhotos: List<String> = emptyList(),
-    /** Display name already found (feeds AI-assist queries). */
+
     val foundName: String? = null
 )
 

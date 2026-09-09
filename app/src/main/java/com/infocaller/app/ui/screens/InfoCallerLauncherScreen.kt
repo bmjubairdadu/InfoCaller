@@ -26,19 +26,11 @@ import kotlin.time.Duration.Companion.milliseconds
 
 val LauncherFirstFrameDrawn = androidx.compose.runtime.mutableStateOf(false)
 
-/**
- * Branded launch: animated logo (spring pop-in + continuous gentle pulse)
- * over animated per-letter "Infocaller" text rising in sequence. Runs once
- * (~2.2s) then hands off to login / onboarding / main. No separate system
- * splash animation — the window background is a plain themed color so this
- * Compose scene is the ONLY launch animation.
- */
 @Composable
 fun InfoCallerLauncherScreen(
     onLauncherComplete: () -> Unit) {
     val logoAlpha = remember { androidx.compose.animation.core.Animatable(0f) }
     val logoScale = remember { androidx.compose.animation.core.Animatable(0.6f) }
-    // Continuous pulse after the pop-in settles: 1f <-> 1.06f forever.
     val pulse = remember { androidx.compose.animation.core.Animatable(0f) }
     val taglineAlpha = remember { androidx.compose.animation.core.Animatable(0f) }
     val letterProgress = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -54,7 +46,6 @@ fun InfoCallerLauncherScreen(
                 )
             }
             scope.launch {
-                // Pop-in overshoot, then hand off to the infinite pulse below.
                 logoScale.animateTo(
                     1f,
                     animationSpec = spring(
@@ -115,7 +106,6 @@ fun InfoCallerLauncherScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Per-letter rise-in: each letter fades + slides up in sequence.
             Row(horizontalArrangement = Arrangement.Center) {
                 val visible = (letterProgress.value * brand.length).toInt().coerceIn(0, brand.length)
                 brand.forEachIndexed { i, ch ->

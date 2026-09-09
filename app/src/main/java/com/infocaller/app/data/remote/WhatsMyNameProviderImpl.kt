@@ -10,12 +10,6 @@ import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/**
- * WhatsMyName-inspired provider.
- * Uses wmn-data.json (https://raw.githubusercontent.com/WebBreacher/WhatsMyName/main/wmn-data.json)
- * to check username across ~600 sites. Caches DB 24h in memory.
- * Free. Complements Sherlock/Maigret techniques.
- */
 class WhatsMyNameProviderImpl(
     private val httpClient: OkHttpClient,
     private val gson: Gson = Gson()

@@ -2,9 +2,7 @@ package com.infocaller.app.data.remote
 
 import android.content.Context
 
-
 object TruecallerCloudStore {
-
     private const val PREFS = "app_prefs"
     private const val KEY_INSTALLATION_ID = "truecaller_token"
 

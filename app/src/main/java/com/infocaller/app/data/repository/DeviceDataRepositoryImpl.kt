@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.flowOn
 class DeviceDataRepositoryImpl(
     private val contentResolver: ContentResolver
 ) : DeviceDataRepository {
-
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     override fun getRecentCalls(): Flow<List<CallLogEntry>> = callbackFlow {
         val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
@@ -27,10 +26,6 @@ class DeviceDataRepositoryImpl(
             }
         }
 
-        // registerContentObserver throws SecurityException when READ_CALL_LOG is not
-        // granted (fresh install, revoked, or dialer role without runtime grants).
-        // Uncaught it kills the collector's scope -> "keeps stopping" on main screen.
-        // Emit empty and close instead; the flow restarts on resubscribe after grant.
         val registered = try {
             contentResolver.registerContentObserver(
                 CallLog.Calls.CONTENT_URI,
@@ -110,7 +105,6 @@ class DeviceDataRepositoryImpl(
             }
         }
 
-        // Same guard as getRecentCalls: no READ_CONTACTS -> empty + close, no crash.
         val registered = try {
             contentResolver.registerContentObserver(
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
@@ -344,7 +338,6 @@ class DeviceDataRepositoryImpl(
     }
 
     override suspend fun deleteCallLogEntry(number: String, date: Long) {
-        // Revoked permission must fail quietly, never crash the caller's scope.
         try {
             val selection = "${CallLog.Calls.NUMBER} = ? AND ${CallLog.Calls.DATE} = ?"
             val selectionArgs = arrayOf(number, date.toString())
@@ -366,7 +359,6 @@ class DeviceDataRepositoryImpl(
             }
         }
 
-        // Same guard as getRecentCalls: no READ_SMS -> empty + close, no crash.
         val registered = try {
             contentResolver.registerContentObserver(
                 Telephony.Sms.CONTENT_URI,

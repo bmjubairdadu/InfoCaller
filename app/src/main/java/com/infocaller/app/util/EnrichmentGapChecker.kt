@@ -2,9 +2,7 @@ package com.infocaller.app.util
 
 import com.infocaller.app.data.local.entity.ContactEnrichmentEntity
 
-
 object EnrichmentGapChecker {
-
     data class Gaps(
         val missingName: Boolean,
         val missingPhoto: Boolean,

@@ -30,7 +30,6 @@ class GamingProfileProviderImpl(private val httpClient: OkHttpClient) : LookupPr
         val photos = mutableListOf<PhotoCandidate>()
         val socials = mutableListOf<SocialProfile>()
 
-        // Steam vanity XML.
         try {
             val doc = Jsoup.connect("https://steamcommunity.com/id/$handle/?xml=1")
                 .userAgent("Mozilla/5.0 (Linux; Android 14)").timeout(7000)
@@ -49,7 +48,6 @@ class GamingProfileProviderImpl(private val httpClient: OkHttpClient) : LookupPr
                 socials.add(SocialProfile("Steam", handle, "https://steamcommunity.com/id/$handle", SocialLookupStatus.PUBLIC_MATCH))
             }
         } catch (_: Exception) { }
-        // Twitch og tags.
         try {
             val doc = Jsoup.connect("https://www.twitch.tv/$handle")
                 .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
@@ -62,7 +60,6 @@ class GamingProfileProviderImpl(private val httpClient: OkHttpClient) : LookupPr
                 socials.add(SocialProfile("Twitch", handle, "https://www.twitch.tv/$handle", SocialLookupStatus.PUBLIC_MATCH))
             }
         } catch (_: Exception) { }
-        // Chess.com public player API.
         try {
             val req = okhttp3.Request.Builder().url("https://api.chess.com/pub/player/$handle")
                 .header("User-Agent", "Mozilla/5.0 (Linux; Android 14)").build()

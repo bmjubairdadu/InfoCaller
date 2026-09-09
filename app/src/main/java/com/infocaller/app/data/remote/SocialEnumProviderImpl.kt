@@ -15,7 +15,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.HttpURLConnection
 import java.net.URL
 
-
 class SocialEnumProviderImpl : SocialProvider {
     override val id: String = "social_enum"
     override val name: String = "Social Registry Scan"
@@ -34,8 +33,6 @@ class SocialEnumProviderImpl : SocialProvider {
         val normalizedPhoneNumber = identifier
         val cleanNumber = normalizedPhoneNumber.filter { it.isDigit() }
 
-        // Strictly one-by-one: WhatsApp finishes, THEN Telegram starts.
-        // Simultaneous probes spiked the radio and raced the release build.
         val profiles = mutableListOf<SocialProfile>()
         try {
             checkWhatsApp(cleanNumber)?.let { profiles.add(it) }
@@ -44,7 +41,7 @@ class SocialEnumProviderImpl : SocialProvider {
             kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.ensureActive()
             checkTelegram(cleanNumber)?.let { profiles.add(it) }
         } catch (_: Exception) { }
-        
+
         if (profiles.isNotEmpty()) {
             PartialResult(
                 socialProfiles = profiles,
@@ -67,7 +64,7 @@ class SocialEnumProviderImpl : SocialProvider {
             val text = httpClient.newCall(request).await().use { response ->
                 response.body?.string() ?: ""
             }
-            
+
             if (text.contains("action=open") || text.contains("whatsapp://send")) {
                 return@withContext SocialProfile("WhatsApp", cleanNumber, "https://wa.me/$cleanNumber", SocialLookupStatus.PUBLIC_MATCH)
             }
@@ -82,7 +79,7 @@ class SocialEnumProviderImpl : SocialProvider {
             val text = httpClient.newCall(request).await().use { response ->
                 response.body?.string() ?: ""
             }
-            
+
             if (text.contains("tg://resolve") || text.contains("View in Telegram")) {
                 return@withContext SocialProfile("Telegram", cleanNumber, "https://t.me/+$cleanNumber", SocialLookupStatus.POSSIBLE_MATCH)
             }

@@ -11,7 +11,6 @@ import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.Reader
 
-
 object NidDatabaseImporter {
     private const val PREFS = "app_prefs"
     private const val KEY_IMPORTED = "nid_db_imported_v2"
@@ -55,8 +54,7 @@ object NidDatabaseImporter {
         return try {
             val inputStream = context.assets.open("database.json")
             val bufferedStream = BufferedInputStream(inputStream)
-            
-            // Robustly skip UTF-8 BOM if present (EF BB BF)
+
             bufferedStream.mark(3)
             val bom = ByteArray(3)
             if (bufferedStream.read(bom) == 3 &&
@@ -67,7 +65,7 @@ object NidDatabaseImporter {
             } else {
                 bufferedStream.reset()
             }
-            
+
             bufferedStream.bufferedReader()
         } catch (e: IOException) {
             Log.w("NidImport", "database.json not found in assets or could not be opened", e)

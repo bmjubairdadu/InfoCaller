@@ -54,7 +54,6 @@ fun ContactsScreen(
     innerPadding: PaddingValues = PaddingValues(0.dp)
 ) {
     val context = LocalContext.current
-    // Never hard-cast: previews/dialogs/wrapped contexts are not Activities.
     val activity = remember(context) { context.findActivity() }
     val scope = rememberCoroutineScope()
 
@@ -62,15 +61,11 @@ fun ContactsScreen(
         mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.CONTACTS_PERMISSIONS))
     }
     var showRationale by remember { mutableStateOf(value = false) }
-    
+
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
         hasPermission = results.values.all { it }
-        // The contacts flow closes itself when permission is missing; restart it
-        // now so the list populates immediately instead of staying empty.
         if (hasPermission) viewModel.refreshDeviceData()
     }
-    // One-shot, contextual, minimal: request ONLY the still-missing contact
-    // permissions when this tab is first opened — never a bulk set.
     var permissionRequested by rememberSaveable { mutableStateOf(false) }
     fun requestMissingContacts() {
         val missing = PermissionManager.missingPermissions(context, PermissionManager.CONTACTS_PERMISSIONS)
@@ -93,9 +88,9 @@ fun ContactsScreen(
             text = { Text("InfoCaller needs access to your contacts to show and manage them.") },
             containerColor = MaterialTheme.colorScheme.surface,
             confirmButton = {
-                TextButton(onClick = { 
+                TextButton(onClick = {
                     showRationale = false
-                    requestMissingContacts() 
+                    requestMissingContacts()
                 }) {
                     Text("Grant", color = Primary)
                 }
@@ -111,12 +106,8 @@ fun ContactsScreen(
     val enrichedContacts by viewModel.enrichedContacts.collectAsState()
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var contactToDelete by remember { mutableStateOf<LocalContactEntity?>(null) }
-    // Dial Pad lives here (bottom-right FAB). Add-contact flows through the
-    // dial pad's own auto-populated sheet, so no separate "+" button is needed.
     var showDialPad by rememberSaveable { mutableStateOf(false) }
 
-    // WorkManager may be uninitialized on some ROMs — getInstance() throws and
-    // would crash composition. Fall back to an empty flow (no sync indicator).
     val workInfos by remember {
         try {
             androidx.work.WorkManager.getInstance(context)
@@ -125,18 +116,18 @@ fun ContactsScreen(
             kotlinx.coroutines.flow.flowOf(emptyList())
         }
     }.collectAsState(initial = emptyList())
-    
+
     val isSyncing = remember(workInfos) {
         workInfos.any { it.state == androidx.work.WorkInfo.State.RUNNING }
     }
-    
+
     val filteredContacts = remember(enrichedContacts, searchQuery) {
         if (searchQuery.isEmpty()) {
             enrichedContacts
         } else {
-            enrichedContacts.filter { 
-                it.contact.displayName.contains(searchQuery, ignoreCase = true) || 
-                it.contact.phoneNumber.contains(searchQuery) 
+            enrichedContacts.filter {
+                it.contact.displayName.contains(searchQuery, ignoreCase = true) ||
+                it.contact.phoneNumber.contains(searchQuery)
             }
         }
     }
@@ -280,10 +271,10 @@ fun ContactsScreen(
                     itemsIndexed(filteredContacts, key = { _, it -> it.contact.id }) { index, enriched ->
                         var showMenu by remember { mutableStateOf(false) }
                         val contact = enriched.contact
-                        
+
                         val itemVisible = remember { mutableStateOf(false) }
                         LaunchedEffect(Unit) { itemVisible.value = true }
-                        
+
                         AnimatedVisibility(
                             visible = itemVisible.value,
                             enter = fadeIn(tween(300)) + slideInVertically(tween(300)) { it / 4 }
@@ -300,7 +291,7 @@ fun ContactsScreen(
                                         onLongClick = { showMenu = true }
                                     )
                                 )
-                                
+
                                 DropdownMenu(
                                     expanded = showMenu,
                                     onDismissRequest = { showMenu = false },
@@ -323,40 +314,40 @@ fun ContactsScreen(
                                     )
                                     DropdownMenuItem(
                                         text = { Text("Copy Number") },
-                                        onClick = { 
+                                        onClick = {
                                             val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                             clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Phone Number", contact.phoneNumber))
-                                            showMenu = false 
+                                            showMenu = false
                                         },
                                         leadingIcon = { Icon(Icons.Default.ContentCopy, null) }
                                     )
                                     DropdownMenuItem(
                                         text = { Text("Edit Contact") },
-                                        onClick = { 
+                                        onClick = {
                                             ContactUtils.editContact(context, contact.phoneNumber)
-                                            showMenu = false 
+                                            showMenu = false
                                         },
                                         leadingIcon = { Icon(Icons.Default.Edit, null) }
                                     )
                                     DropdownMenuItem(
                                         text = { Text("Share") },
-                                        onClick = { 
+                                        onClick = {
                                             val sendIntent: android.content.Intent = android.content.Intent().apply {
                                                 action = android.content.Intent.ACTION_SEND
                                                 putExtra(android.content.Intent.EXTRA_TEXT, "Contact: ${contact.displayName}\nPhone: ${contact.phoneNumber}")
                                                 type = "text/plain"
                                             }
                                             context.startActivity(android.content.Intent.createChooser(sendIntent, null))
-                                            showMenu = false 
+                                            showMenu = false
                                         },
                                         leadingIcon = { Icon(Icons.Default.Share, null) }
                                     )
                                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = faintTint(0.1f))
                                     DropdownMenuItem(
                                         text = { Text("Delete Contact", color = Error) },
-                                        onClick = { 
+                                        onClick = {
                                             contactToDelete = contact
-                                            showMenu = false 
+                                            showMenu = false
                                         },
                                         leadingIcon = { Icon(Icons.Default.Delete, null, tint = Error) }
                                     )
@@ -375,7 +366,7 @@ fun ContactsScreen(
             title = { Text("Delete Contact") },
             text = { Text("Are you sure you want to delete ${contactToDelete!!.displayName}?") },
             confirmButton = {
-                TextButton(onClick = { 
+                TextButton(onClick = {
                     val number = contactToDelete!!.phoneNumber
                     scope.launch {
                         viewModel.deleteContact(number)
@@ -410,7 +401,7 @@ fun ContactsScreen(
 fun ContactItem(enriched: com.infocaller.app.data.local.model.EnrichedContact, modifier: Modifier = Modifier) {
     val contact = enriched.contact
     val enrichment = enriched.enrichment
-    
+
     val displayName = remember(contact.displayName, enrichment?.publicName) {
         if (ContactUtils.isPlaceholderName(contact.displayName)) {
             enrichment?.publicName ?: contact.displayName
@@ -418,7 +409,7 @@ fun ContactItem(enriched: com.infocaller.app.data.local.model.EnrichedContact, m
             contact.displayName
         }
     }
-    
+
     val photoUrl = contact.photoUri ?: enrichment?.profileImageUrl
 
     Box(
@@ -462,7 +453,7 @@ fun ContactItem(enriched: com.infocaller.app.data.local.model.EnrichedContact, m
             }
 
             Spacer(modifier = Modifier.width(16.dp))
-            
+
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = displayName,
@@ -474,8 +465,6 @@ fun ContactItem(enriched: com.infocaller.app.data.local.model.EnrichedContact, m
                     style = MaterialTheme.typography.bodyMedium,
                     color = contentSecondary(0.5f)
                 )
-                // Automatic NID match: any contact number present in
-                // database.json shows its NID here with no manual step.
                 val contactNid = enrichment?.nid
                 if (!contactNid.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(2.dp))
@@ -486,7 +475,7 @@ fun ContactItem(enriched: com.infocaller.app.data.local.model.EnrichedContact, m
                     )
                 }
             }
-            
+
             if (contact.isBusiness) {
                 Icon(
                     Icons.Default.Business,

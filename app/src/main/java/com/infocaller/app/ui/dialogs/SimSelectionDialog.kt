@@ -34,12 +34,6 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 
-/**
- * Shared SIM logo with guaranteed fallback chain: cached Brandfetch file ->
- * live Brandfetch URL -> system carrier icon -> brand-color initial.
- * Every call site (picker, dialer, recents, details) uses this so a missing
- * cache or failed download shows an initial instead of a blank gap.
- */
 @Composable
 fun SimLogo(
     sim: SimInfo,
@@ -126,17 +120,15 @@ private fun SimRow(
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Operator Logo / Brand Circle (shared fallback chain: cached ->
-            // remote -> system icon -> brand initial, never a blank gap).
             Box(
                 modifier = Modifier.size(52.dp),
                 contentAlignment = Alignment.Center
             ) {
                 SimLogo(sim = sim, modifier = Modifier.size(52.dp), fontSize = 22.sp)
             }
-            
+
             Spacer(modifier = Modifier.width(16.dp))
-            
+
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = sim.carrierName,
@@ -150,8 +142,7 @@ private fun SimRow(
                     color = contentSecondary(0.6f)
                 )
             }
-            
-            // CIRCULAR CALL BUTTON (48dp target)
+
             Surface(
                 onClick = onClick,
                 modifier = Modifier.size(48.dp),
@@ -170,9 +161,9 @@ private fun SimRow(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        Icons.Default.Call, 
-                        contentDescription = "Call with ${sim.carrierName}", 
-                        tint = Color.White, 
+                        Icons.Default.Call,
+                        contentDescription = "Call with ${sim.carrierName}",
+                        tint = Color.White,
                         modifier = Modifier.size(24.dp)
                     )
                 }

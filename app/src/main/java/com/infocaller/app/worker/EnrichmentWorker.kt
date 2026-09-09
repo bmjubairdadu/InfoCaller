@@ -17,18 +17,16 @@ class EnrichmentWorker(
     context: Context,
     workerParams: WorkerParameters
 ) : CoroutineWorker(context, workerParams) {
-
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val app = applicationContext as InfoCallerApplication
         val enrichmentDao = app.database.enrichmentDao()
         val localContactDao = app.database.localContactDao()
         val deviceRepo = app.deviceDataRepository
-        
+
         if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(applicationContext, com.infocaller.app.permissions.PermissionManager.CONTACTS_PERMISSIONS)) {
-            // Missing permission is not a failure — retrying would just spin. Succeed quietly.
             return@withContext Result.success()
         }
-        
+
         try {
             val prefs = applicationContext.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             val lastFullScan = prefs.getLong("last_full_contact_scan", 0L)
@@ -36,10 +34,6 @@ class EnrichmentWorker(
 
             importSystemContacts(localContactDao)
 
-            // 24/7 identity sweep: recents + full phonebook through the
-            // parallel bulk engine (Truecaller bulk + Eyecon fan-out), with
-            // every hit permanently mirrored into the phonebook. Runs on
-            // launch, hourly (MainActivity schedule) and on boot.
             try {
                 val enriched = com.infocaller.app.data.repository.BulkIdentityEngine.runFullPass(applicationContext)
                 if (isFullScanNeeded && enriched >= 0) {
@@ -53,19 +47,17 @@ class EnrichmentWorker(
 
             val callerLogNumbers = try { deviceRepo.fetchRecentCallsSync().map { it.number } } catch (_: Exception) { emptyList() }
             val recentNumbers = callerLogNumbers
-            
+
             val contactNumbers = if (isFullScanNeeded) {
                 deviceRepo.fetchContactsSync().mapNotNull { it.phoneNumber }
             } else emptyList()
-            
+
             val numbersToProcess: List<String> = (recentNumbers + contactNumbers)
                 .map { com.infocaller.app.util.PhoneNumberUtils.normalize(it) }
                 .filter { it.isNotBlank() }
                 .distinct()
-            
+
             val currentTime = System.currentTimeMillis()
-            // Batch the cache reads (one query instead of N) and skip complete-but-
-            // expired rows: gap logic treats them as stale-forever otherwise.
             val cachedByNumber: Map<String, com.infocaller.app.data.local.entity.ContactEnrichmentEntity> = try {
                 if (numbersToProcess.isEmpty()) emptyMap()
                 else enrichmentDao.getEnrichmentsSync(numbersToProcess).associateBy { it.normalizedPhoneNumber }
@@ -83,18 +75,12 @@ class EnrichmentWorker(
                 if (shouldEnqueue) app.enrichmentEngine.enqueue(number, priority = QueuePriority.LOW)
             }
 
-            // Drain the queue continuously while online (up to 25 items per
-            // worker run): each pass scans one number, saves to the app DB,
-            // and mirrors to the phonebook when a row exists. Stops early
-            // when offline so no API calls fire without connectivity.
             var drained = 0
             while (drained < 25) {
                 if (!app.enrichmentEngine.isOnline.value) break
                 val before = System.currentTimeMillis()
                 app.enrichmentEngine.processNextOneByOne()
                 drained++
-                // processNextOneByOne no-ops when the queue is empty; detect
-                // the idle pass and stop instead of spinning 25 times.
                 if (System.currentTimeMillis() - before < 200) break
             }
 
@@ -110,8 +96,6 @@ class EnrichmentWorker(
     }
 
     private fun importSystemContacts(dao: com.infocaller.app.data.local.dao.LocalContactDao) {
-        // A throw here must never escape into doWork's retry path forever (battery
-        // drain) — and a missing column index (-1) would crash outright. Fail quiet.
         try {
             val resolver = applicationContext.contentResolver
             val currentTime = System.currentTimeMillis()

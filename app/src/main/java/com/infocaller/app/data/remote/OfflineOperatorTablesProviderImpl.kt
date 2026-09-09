@@ -5,13 +5,6 @@ import com.infocaller.app.util.PhoneNumberUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * Offline operator/country enrichment from the bundled prefix tables.
- *
- * Prefix-table approach ported from xsukax/xsukax-Phone-Validator
- * (country calling codes + operator prefix patterns), re-expressed here in
- * Kotlin over the app's existing libphonenumber data. Fully offline, FREE.
- */
 class OfflineOperatorTablesProviderImpl : LookupProvider {
     override val id = "offline_operator_tables"
     override val name = "Offline Operator Tables"
@@ -53,7 +46,6 @@ class OfflineOperatorTablesProviderImpl : LookupProvider {
         else -> null
     }
 
-    /** National-significant-number prefix -> operator (xsukax-style prefix tables). */
     private fun operatorFor(region: String?, digits: String): String? {
         val national = when {
             digits.startsWith("880") -> digits.removePrefix("880")

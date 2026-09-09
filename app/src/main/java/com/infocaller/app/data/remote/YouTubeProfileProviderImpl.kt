@@ -11,12 +11,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
 
-/**
- * YouTube channel extractor (keyless oEmbed + og:* scrape).
- * oEmbed (youtube.com/oembed?url=...) returns verified title/author with zero
- * scraping; falls back to channel-handle page og tags for avatar/about.
- * Extracts: channel name, description, avatar.
- */
 class YouTubeProfileProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "youtube_profile"
     override val name = "YouTube Channel"
@@ -30,7 +24,6 @@ class YouTubeProfileProviderImpl(private val httpClient: OkHttpClient) : LookupP
         val handle = identifier.trim().removePrefix("@").take(40)
         if (handle.length < 2 || handle.contains(" ")) return@withContext null
         val pageUrl = "https://www.youtube.com/@$handle"
-        // 1) oEmbed: authoritative title for the handle.
         var oembedTitle: String? = null
         try {
             val enc = java.net.URLEncoder.encode(pageUrl, "UTF-8")
@@ -48,7 +41,6 @@ class YouTubeProfileProviderImpl(private val httpClient: OkHttpClient) : LookupP
                 }
             }
         } catch (_: Exception) { }
-        // 2) Page og:* for avatar + description.
         var avatar: String? = null
         var desc: String? = null
         try {

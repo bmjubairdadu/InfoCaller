@@ -60,14 +60,7 @@ fun DetailsScreen(
     val caller = (uiState as? SearchUiState.Success)?.caller
     val isLive = (uiState as? SearchUiState.Success)?.isLive ?: false
     val lastProvider = (uiState as? SearchUiState.Success)?.lastProvider
-    // Cumulative live result: carries each provider's photo candidates,
-    // socials, about, carrier... the instant they arrive — merged over the
-    // cached enrichment below so NOTHING waits for scan completion.
     val livePartial = (uiState as? SearchUiState.Success)?.livePartial
-    // Non-phone scans (email/username) carry their own identifier — phone
-    // normalization would strip/mangle them. Detect first so every lookup
-    // below can route. Reads ONLY the scan result now that search no longer
-    // writes into dialerInput (dial pad keeps its own typed text).
     val rawIdentifier = remember(uiState) {
         when (uiState) {
             is SearchUiState.Success -> (uiState as SearchUiState.Success).caller.phoneNumber
@@ -88,12 +81,9 @@ fun DetailsScreen(
             PhoneNumberUtils.normalize(raw)
         }
     }
-    // Lookup key: raw lowercased identifier for non-phone scans (matches
-    // repository rows), E.164 number for phone scans.
     val lookupKey = remember(rawIdentifier, phoneNumber, isNonPhoneScan) {
         if (isNonPhoneScan) rawIdentifier.trim().lowercase().removePrefix("@") else phoneNumber
     }
-    // Identifier shown/exported: raw handle/address for non-phone scans.
     val displayIdentifier = remember(rawIdentifier, phoneNumber, isNonPhoneScan) {
         if (isNonPhoneScan) rawIdentifier.trim() else phoneNumber
     }
@@ -102,8 +92,6 @@ fun DetailsScreen(
     val contactsList by viewModel.contacts.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
-    // Copy helper: every field value copies on tap with a snackbar confirm.
-    // Declared AFTER scope/snackbar exist (Kotlin local-fun ordering).
     fun copyField(label: String, value: String) {
         scope.launch {
             val ok = try {
@@ -114,7 +102,7 @@ fun DetailsScreen(
     }
     val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
     val isOnline by app.enrichmentEngine.isOnline.collectAsState()
-    
+
     val contact = remember(phoneNumber, contactsList, isNonPhoneScan) {
         if (isNonPhoneScan) null else contactsList.find { it.phoneNumber == phoneNumber }
     }
@@ -122,9 +110,6 @@ fun DetailsScreen(
     var showAddContactDialog by remember { mutableStateOf(false) }
     val scanSteps by viewModel.scanSteps.collectAsState()
     val scanActive by viewModel.scanActive.collectAsState()
-    // Manual-scan UX: NO popup dialog — only the inline loading animation on
-    // the page itself (header shimmer + "Identifying..." state below). The
-    // step list still feeds the subtle live-provider line in the top bar.
     GlassyBackground {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -189,7 +174,6 @@ fun DetailsScreen(
                                     }
                                 }
                             }
-                            // Blocking is phone-only; non-phone scans have no block action.
                             if (!isNonPhoneScan) {
                                 IconButton(onClick = {
                                     if (isBlocked) viewModel.unblockNumber(phoneNumber)
@@ -206,7 +190,6 @@ fun DetailsScreen(
                     )
                 }
             },
-            // No call bar for non-phone scans — nothing to dial.
             bottomBar = {
                 if (!isNonPhoneScan) {
                 Surface(
@@ -237,16 +220,10 @@ fun DetailsScreen(
                 }
             }
         ) { innerPadding ->
-            // Loading UX for manual scans: full-screen animation ONLY while
-            // nothing renderable exists yet (no cache, no partial). The moment
-            // ANY field arrives the content below renders instantly and keeps
-            // updating live — no popup, no dialog, just the page filling in.
             val enr = enrichment
             val hasPartial = caller != null || livePartial != null ||
                 (enr != null && (!enr.publicName.isNullOrBlank() || !enr.profileImageUrl.isNullOrBlank()))
             if (displayIdentifier.isBlank() && caller == null) {
-                // Stale/empty navigation (deep link, process death, lost race) must not
-                // spin forever — time out with a retry path after 20s.
                 var timedOut by remember { mutableStateOf(false) }
                 LaunchedEffect(Unit) {
                     kotlinx.coroutines.delay(20000)
@@ -277,8 +254,6 @@ fun DetailsScreen(
                     }
                 }
             } else if (!hasPartial && scanActive) {
-                // Fresh manual scan, nothing cached yet: loading animation
-                // only (no popup). Shows which provider is answering live.
                 Column(
                     modifier = Modifier.padding(innerPadding).fillMaxSize().padding(32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -306,11 +281,6 @@ fun DetailsScreen(
                     modifier = Modifier.padding(innerPadding).fillMaxSize().verticalScroll(scrollState),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // INSTANT-PARTIAL merge: every field prefers the live scan
-                    // result first, cached enrichment second. Each provider's
-                    // hit (name, photo, socials, about, carrier...) renders
-                    // the moment it arrives — never held for completion.
-                    // Tapping any value copies it (see copyField above).
                     val live = livePartial
                     val liveSocials = remember(live) {
                         try {
@@ -326,17 +296,39 @@ fun DetailsScreen(
                         else -> null
                     }
                     Spacer(modifier = Modifier.height(24.dp))
-                    // Auto-photo fix: header shows the same founded photo the Lens
-                    // button scans (contact photo first, then live partial, then
-                    // every cached http source) so display == scan target.
-                    val headerPhoto = contact?.photoUri ?: remember(live?.imageUrl, enrichment?.profileImageUrl, enrichment?.photoCandidatesJson, enrichment?.socialProfilesJson, caller?.photoUrl) {
-                        live?.imageUrl?.takeIf { it.startsWith("http") } ?: SocialUtils.bestHttpPhoto(
-                            enrichment?.profileImageUrl,
-                            enrichment?.photoCandidatesJson,
-                            enrichment?.socialProfilesJson,
-                            caller?.photoUrl
-                        )
+                    val allPhotos = remember(
+                        live?.imageUrl, live?.photoCandidates,
+                        enrichment?.profileImageUrl, enrichment?.profileImageSource,
+                        enrichment?.photoCandidatesJson, enrichment?.socialProfilesJson,
+                        caller?.photoUrl
+                    ) {
+                        val seen = linkedSetOf<String>()
+                        val out = mutableListOf<com.infocaller.app.domain.model.PhotoCandidate>()
+                        fun add(url: String?, provider: String, priority: Int) {
+                            val u = url?.trim().orEmpty()
+                            if (!u.startsWith("http") || !seen.add(u)) return
+                            out.add(com.infocaller.app.domain.model.PhotoCandidate(provider = provider, url = u, sourcePriority = priority))
+                        }
+                        live?.imageUrl?.let { add(it, "scan", 100) }
+                        live?.photoCandidates?.forEach { add(it.url, it.provider, it.sourcePriority) }
+                        add(enrichment?.profileImageUrl, enrichment?.profileImageSource ?: "cache", 90)
+                        try {
+                            SocialUtils.photosFromJson(enrichment?.photoCandidatesJson).forEach { add(it.url, it.provider, it.sourcePriority) }
+                        } catch (_: Exception) { }
+                        try {
+                            SocialUtils.fromJson(enrichment?.socialProfilesJson).mapNotNull { it.avatarUrl }.forEach { add(it, "social", 10) }
+                        } catch (_: Exception) { }
+                        add(caller?.photoUrl, "scan", 5)
+                        out
                     }
+                    val primaryPhoto = contact?.photoUri
+                        ?: allPhotos.firstOrNull()?.url
+                    val headerPhoto = primaryPhoto ?: live?.imageUrl?.takeIf { it.startsWith("http") } ?: SocialUtils.bestHttpPhoto(
+                        enrichment?.profileImageUrl,
+                        enrichment?.photoCandidatesJson,
+                        enrichment?.socialProfilesJson,
+                        caller?.photoUrl
+                    )
                     Box(modifier = Modifier.size(140.dp).glassy(radius = 70.dp).shadow(24.dp, CircleShape), contentAlignment = Alignment.Center) {
                         val photoUrl = headerPhoto
                         if (photoUrl != null) {
@@ -355,6 +347,100 @@ fun DetailsScreen(
                         if (enrichment?.profileImageSource != null) {
                             Box(modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
                                 SourceBadge(enrichment?.profileImageSource)
+                            }
+                        }
+                    }
+                    if (allPhotos.size > 1) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        DetailSection("Profile Photos (${allPhotos.size})") {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    "Tap a photo to set it as the profile picture",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = contentSecondary(0.6f),
+                                )
+                                allPhotos.chunked(3).forEach { row ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        row.forEach { candidate ->
+                                            val isPrimary = candidate.url == primaryPhoto
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .aspectRatio(1f)
+                                                    .clip(RoundedCornerShape(14.dp))
+                                                    .border(
+                                                        width = if (isPrimary) 3.dp else 1.dp,
+                                                        color = if (isPrimary) Primary else contentSecondary(0.25f),
+                                                        shape = RoundedCornerShape(14.dp)
+                                                    )
+                                                    .clickable {
+                                                        if (!isPrimary) {
+                                                            viewModel.setPrimaryPhoto(
+                                                                lookupKey.ifBlank { displayIdentifier },
+                                                                candidate.url,
+                                                                candidate.provider
+                                                            )
+                                                            scope.launch {
+                                                                snackbarHostState.showSnackbar("Profile photo updated")
+                                                            }
+                                                        }
+                                                    },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                AsyncImage(
+                                                    model = candidate.url,
+                                                    contentDescription = "${candidate.provider} photo",
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop,
+                                                    error = rememberVectorPainter(Icons.Default.Person),
+                                                    placeholder = rememberVectorPainter(Icons.Default.Person)
+                                                )
+                                                if (isPrimary) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .align(Alignment.TopStart)
+                                                            .padding(6.dp)
+                                                            .background(Primary, RoundedCornerShape(8.dp))
+                                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                                    ) {
+                                                        Text(
+                                                            "PRIMARY",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = Color.White,
+                                                            fontWeight = FontWeight.Bold,
+                                                        )
+                                                    }
+                                                } else {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .align(Alignment.BottomCenter)
+                                                            .padding(6.dp)
+                                                            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+                                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                                    ) {
+                                                        Text(
+                                                            candidate.provider.take(14),
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = Color.White,
+                                                            maxLines = 1,
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        repeat(3 - row.size) {
+                                            Spacer(modifier = Modifier.weight(1f))
+                                        }
+                                    }
+                                }
+                                Text(
+                                    "Other photos (${(allPhotos.size - 1).coerceAtLeast(0)}) stay here — switch anytime",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = contentSecondary(0.5f),
+                                )
                             }
                         }
                     }
@@ -391,8 +477,6 @@ fun DetailsScreen(
                             onCopy = { copyField("Also known as", altName) },
                         )
                     }
-                    // Embedded: every alternate name from every provider
-                    // (cached map + live map), each tappable to copy.
                     val allAltNames = remember(enrichment?.alternateNamesJson, live?.alternateNames) {
                         val merged = mutableMapOf<String, MutableList<String>>()
                         try {
@@ -451,11 +535,6 @@ fun DetailsScreen(
                     )
                     val aboutText = live?.about?.takeIf { it.isNotBlank() } ?: enrichment?.about
                     if (!aboutText.isNullOrBlank()) {
-                        // Embedded about: provider about-strings carry inline
-                        // links ("Lens: https://... • TinEye: https://...").
-                        // Split them out: plain sentences stay as text, each
-                        // URL becomes its own tappable embedded card (icon +
-                        // label + open + copy) instead of raw link-text.
                         val aboutParts = remember(aboutText) { splitAboutText(aboutText) }
                         Box(modifier = Modifier.padding(top = 24.dp).padding(horizontal = 32.dp).glassy(radius = 16.dp).padding(16.dp)) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -493,11 +572,6 @@ fun DetailsScreen(
                             }
                         }
                     }
-                    // Name-location resolver: EVERY trailing place token is
-                    // resolved ("Ashraful vai sujansaha" -> sujansaha;
-                    // "Ashraful vai" -> nothing, skipped). Truncated tokens
-                    // ("sujansah") are repaired offline first. Each resolved
-                    // place renders with its own Maps link + copy.
                     val placeCandidates = remember(callerIdName, displayName) {
                         VillageResolver.extractPlaceCandidates(callerIdName ?: displayName)
                     }
@@ -511,7 +585,6 @@ fun DetailsScreen(
                         val out = mutableListOf<com.infocaller.app.util.VillageResolver.ResolvedVillage>()
                         for (c in placeCandidates.take(3)) {
                             try {
-                                // Cached display first: no network on repeat opens.
                                 val cachedHit = VillageResolver.cachedResolved(context, c.repaired)
                                 if (cachedHit != null) {
                                     if (out.none { it.query.equals(c.repaired, true) }) out.add(cachedHit)
@@ -519,8 +592,6 @@ fun DetailsScreen(
                                     val key = VillageResolver.cacheKey(callerIdName ?: displayName ?: "", c.raw)
                                     if (!VillageResolver.wasSeen(context, key)) {
                                         VillageResolver.markSeen(context, key)
-                                        // Offline repair first ("sujansah"->"sujansaha"),
-                                        // then Nominatim for admin levels.
                                         val hit = VillageResolver.resolve(context, c.repaired)
                                             ?: if (c.wasRepaired) null else VillageResolver.resolve(context, c.raw)
                                         if (hit != null) { VillageResolver.storeResolved(context, c.repaired, hit); out.add(hit) }
@@ -564,12 +635,8 @@ fun DetailsScreen(
                         val location = liveLoc.ifBlank {
                             LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
                         }
-                        // User's own location (if granted) shown so callees can see it.
                         val myLoc = cachedLoc?.display()?.takeIf { it.isNotBlank() }
                         if (!myLoc.isNullOrBlank()) DetailRow(Icons.Default.MyLocation, "Your location (on this device)", myLoc, "SIM / IP", onCopy = { copyField("Your location", myLoc) })
-                        // ALL located sources: Truecaller city, NID address,
-                        // profile location, SIM region — each labeled, each
-                        // copyable, instead of one merged line hiding the rest.
                         val locatedSources = remember(live?.city, live?.region, live?.country, live?.nid, enrichment?.city, enrichment?.region, enrichment?.country, enrichment?.nid, location) {
                             LocationUtils.allLocatedSources(
                                 city = live?.city?.takeIf { it.isNotBlank() } ?: enrichment?.city,
@@ -627,10 +694,6 @@ fun DetailsScreen(
                             val date = SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()).format(Date(enrichment!!.lastChecked))
                             DetailRow(Icons.Default.Update, "Last Updated", date)
                         }
-                        // Live-only extras: city/country arrive on different
-                        // partials than the cached row — show them instantly.
-                        // (live is a Caller: no source field — attribute to
-                        // the cached row's source or the live provider.)
                         live?.city?.takeIf { it.isNotBlank() && it != enrichment?.city }?.let {
                             DetailRow(Icons.Default.LocationCity, "City (live)", it, enrichment?.source ?: lastProvider, onCopy = { v -> copyField("City", v) })
                         }
@@ -647,11 +710,6 @@ fun DetailsScreen(
                             }
                             deepNid?.let { nid ->
                                 DetailRow(Icons.Default.Fingerprint, "National ID", nid, "BD Database", onCopy = { v -> copyField("National ID", v) })
-                                // NOTE: Google dork pivot links removed — the
-                                // repo-wide DDG/Google-scrape prune covers NID
-                                // dorks too (title-guess hallucinations on NIDs
-                                // are dangerous). Raw database.json rows render
-                                // NID + DOB only.
                             }
                             deepDob?.let { DetailRow(Icons.Default.Cake, "Date of Birth", it, "BD Database", onCopy = { v -> copyField("Date of Birth", v) }) }
                             enrichment?.plateNumber?.let { DetailRow(Icons.Default.DirectionsCar, "License Plate", it, enrichment?.plateNumberSource, onCopy = { v -> copyField("License Plate", v) }) }
@@ -660,9 +718,6 @@ fun DetailsScreen(
                             enrichment?.macAddress?.let { DetailRow(Icons.Default.Router, "MAC Address", it, enrichment?.macAddressSource, onCopy = { v -> copyField("MAC Address", v) }) }
                         }
                     }
-                    // INSTANT socials: live partial profiles merge over cached
-                    // ones so each platform appears the moment its provider
-                    // reports it — plus a copy action per account URL.
                     val socialProfiles = remember(enrichment?.socialProfilesJson, liveSocials) {
                         val cached = SocialUtils.filteredUsedProfiles(SocialUtils.fromJson(enrichment?.socialProfilesJson))
                         if (liveSocials.isEmpty()) cached
@@ -678,9 +733,6 @@ fun DetailsScreen(
                             SocialUtils.filteredUsedProfiles(merged)
                         }
                     }
-                    // Every linked account renders: Facebook, Instagram, TikTok,
-                    // YouTube, X, Telegram, GitHub... — not just WhatsApp.
-                    // Messaging deep links (always actionable) are pinned last.
                     val waNumber = remember(phoneNumber, isNonPhoneScan) {
                         if (isNonPhoneScan) "" else phoneNumber.filter { it.isDigit() }
                     }
@@ -702,11 +754,9 @@ fun DetailsScreen(
                         val (messaging, social) = merged.partition {
                             it.platform.equals("whatsapp", true) || it.platform.equals("telegram", true)
                         }
-                        // Socials first (alphabetical, stable), messaging last.
                         social.sortedBy { it.platform.lowercase() } +
                             messaging.sortedBy { it.platform.lowercase() }
                     }
-                    // Pre-fetch official marks once per details open (IO, cached).
                     LaunchedEffect(allSocialProfiles) {
                         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                             try { SocialUtils.prefetchLogos(context, allSocialProfiles.map { it.platform }) } catch (_: Exception) { }
@@ -714,8 +764,6 @@ fun DetailsScreen(
                     }
                     if (allSocialProfiles.isNotEmpty()) {
                         DetailSection("Linked Accounts (${allSocialProfiles.size})") {
-                            // Each account row: icon opens the profile, the
-                            // username/URL copies on tap (long-press selects).
                             Column(
                                 modifier = Modifier.padding(16.dp).fillMaxWidth(),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -771,9 +819,6 @@ fun DetailsScreen(
                             }
                         }
                     }
-                    // Deep OSINT Links tab removed: reverse-image now runs
-                    // automatically inside every scan (face-matched HD pass),
-                    // so no manual links section is needed anymore.
                     Spacer(modifier = Modifier.height(40.dp))
                 }
             }
@@ -819,8 +864,7 @@ fun DetailRow(
     value: String,
     source: String? = null,
     trailingContent: @Composable (() -> Unit)? = null,
-    /** When set, a copy button copies the value and the whole value text
-     *  is also tappable to copy. Pass { v -> copyField(label, v) }. */
+
     onCopy: ((String) -> Unit)? = null,
 ) {
     Row(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -850,11 +894,6 @@ fun DetailRow(
     }
 }
 
-/**
- * Tappable-to-copy text: single tap copies the full value (with a snackbar
- * confirm from the caller), long-press opens the system text toolbar for
- * selecting a specific part.
- */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CopyableText(
@@ -881,23 +920,14 @@ fun CopyableText(
     )
 }
 
-/** One inline URL pulled out of a provider about-string. */
 data class AboutLink(val label: String, val url: String)
 
-/** About text split into plain sentences + embedded link cards. */
 data class AboutParts(val texts: List<String>, val links: List<AboutLink>)
 
-/**
- * Splits provider about-strings like
- * "Face-matched HD photo for X (2 faces verified). Lens HD: https://... • TinEye: https://... • Pimeyes https://pimeyes.com"
- * into centered plain text + one embedded tappable card per URL. Bare
- * domains (no scheme) are upgraded to https. Duplicates collapse.
- */
 fun splitAboutText(about: String): AboutParts {
     val urlRegex = Regex("""(https?://[^\s•|]+|www\.[^\s•|]+|[a-z0-9-]+(?:\.[a-z0-9-]+)+\.[a-z]{2,}(?:/[^\s•|]*)?)""", RegexOption.IGNORE_CASE)
     val links = mutableListOf<AboutLink>()
     val seen = mutableSetOf<String>()
-    // Label = trailing "Label:" immediately before the URL when present.
     val labelRegex = Regex("""([A-Za-z][A-Za-z0-9 ._-]{1,40}?):\s*$""")
     val textRanges = mutableListOf<Pair<Int, Int>>()
     var lastEnd = 0
@@ -919,7 +949,6 @@ fun splitAboutText(about: String): AboutParts {
         lastEnd = m.range.first + m.value.length
     }
     textRanges.add(lastEnd to about.length)
-    // Plain text = everything outside URLs, cleaned of leftover separators.
     val texts = textRanges.mapNotNull { (s, e) ->
         if (s >= e) return@mapNotNull null
         var t = about.substring(s, e)
@@ -960,10 +989,6 @@ private fun hostLabel(url: String): String {
     } catch (_: Exception) { "Open link" }
 }
 
-/**
- * Embedded link card: icon + label + domain, tap opens, copy button copies.
- * Used for URLs pulled out of about-text so they never render as raw text.
- */
 @Composable
 fun EmbeddedLinkCard(
     label: String,
@@ -998,10 +1023,6 @@ fun EmbeddedLinkCard(
 @Composable
 fun SocialIcon(profile: SocialProfile) {
     val context = LocalContext.current
-    // Logos-only row: official mark per platform (disk cache first,
-    // live Brandfetch URL second, brand-color letter last). Tap opens the
-    // native app / browser account link. WhatsApp logo opens bare wa.me
-    // (no pre-filled message, no send button).
     val brand = remember(profile.platform) {
         when (profile.platform.lowercase()) {
             "whatsapp" -> Color(0xFF25D366)
@@ -1033,7 +1054,6 @@ fun SocialIcon(profile: SocialProfile) {
     }
     Surface(onClick = {
         try {
-            // Logos only — open the account link, never pre-fill/send a message.
             SocialUtils.openSocialProfile(context, profile)
         } catch (_: Exception) { }
     }, modifier = Modifier.size(48.dp), shape = CircleShape, color = faintTint(0.1f), border = BorderStroke(1.dp, faintTint(0.1f))) {

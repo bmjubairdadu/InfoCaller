@@ -18,8 +18,6 @@ private val DarkColorScheme = darkColorScheme(
     secondary = Secondary,
     onSecondary = Color.Black,
     tertiary = Tertiary,
-    // Inlined (NOT the composable Background/Surface getters below): scheme
-    // construction runs outside composition, so it cannot read MaterialTheme.
     background = Color(0xFF000000),
     surface = Color(0xFF121212),
     onBackground = Color(0xFFFFFFFF),
@@ -55,9 +53,8 @@ fun InfoCallerTheme(
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
     val view = LocalView.current
-    
+
     if (!view.isInEditMode) {
-        // Never hard-cast: wrapped contexts (dialogs, overlays) are not Activities.
         (view.context.findActivity())?.window?.let { window ->
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
         }

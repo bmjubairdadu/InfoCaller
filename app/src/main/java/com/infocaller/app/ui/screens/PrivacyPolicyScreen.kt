@@ -46,19 +46,19 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
 
             PolicySection("No Uploads",
                 "This version of InfoCaller never uploads your contacts, call history, or any personal data anywhere. There is no contribution queue, no shared registry, and no owner-profile publishing: the background contribution and profile-publish features were removed because their backend never existed. Lookups only query public sources for numbers, emails, or usernames you explicitly search.")
-            
-            PolicySection("Data Enrichment", 
+
+            PolicySection("Data Enrichment",
                 "We use public providers (like Truecaller, WhatsApp public data) and a shared registry to enrich caller information. This data is merged to provide the best possible identification.")
-            
+
             PolicySection("Owner Consent (Strict)",
                 "Contacts permission only lets the app read your address book on this device. It is NEVER treated as permission to publish someone else's identity. Your number is verified by Truecaller OTP at login for lookups only — nothing is published anywhere.")
 
             PolicySection("Shared Registry",
                 "Removed: there is no shared registry in this version. Caller information comes from on-device data (your NID database file, offline metadata) and public lookups you trigger.")
-            
-            PolicySection("Permissions", 
+
+            PolicySection("Permissions",
                 "InfoCaller requires access to Contacts, Phone, and Call Logs to function as a dialer and caller ID service. These permissions are used strictly for app features.")
-            
+
             Spacer(modifier = Modifier.height(32.dp))
             Text("Last Updated: September 2026", color = contentSecondary(0.4f), fontSize = 12.sp)
         }

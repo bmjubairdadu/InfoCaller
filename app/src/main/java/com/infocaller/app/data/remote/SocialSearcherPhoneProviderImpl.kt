@@ -10,13 +10,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/**
- * Social-searcher phone pivot: checks the number against public username /
- * handle directories (Truecaller-web style + WhatsApp/Telegram presence via
- * SocialEnum's verdict is NOT duplicated — this provider adds Facebook-search
- * + Sync.ME + Truecaller-web name extraction for PHONE identifiers, so phone
- * scans gain social matches they previously missed).
- */
 class SocialSearcherPhoneProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "social_searcher_phone"
     override val name = "Social Searcher (phone pivot)"
@@ -33,7 +26,6 @@ class SocialSearcherPhoneProviderImpl(private val httpClient: OkHttpClient) : Lo
         if (digits.length < 7) return@withContext null
         val e164 = if (identifier.trim().startsWith("+")) identifier.trim() else "+$digits"
         try {
-            // Sync.ME public lookup page (server-rendered name when listed).
             var name: String? = null
             var photo: String? = null
             try {

@@ -17,13 +17,13 @@ object PhoneNumberUtils {
     fun normalize(phoneNumber: String, defaultRegion: String = "BD"): String {
         val trimmed = phoneNumber.trim()
         if (trimmed.isEmpty()) return ""
-        
+
         if (trimmed.startsWith("*") || (trimmed.startsWith("#") && trimmed.endsWith("#"))) {
             return trimmed
         }
-        
+
         val filtered = trimmed.filter { it.isDigit() || it == '+' }
-        
+
         try {
             if (filtered.startsWith("+")) {
                 val parsed: PhoneNumber = phoneUtil.parse(filtered, null)
@@ -31,12 +31,12 @@ object PhoneNumberUtils {
                     return phoneUtil.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
                 }
             }
-            
+
             val parsed: PhoneNumber = phoneUtil.parse(filtered, "BD")
             if (phoneUtil.isValidNumber(parsed)) {
                 return phoneUtil.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
             }
-            
+
             if (!filtered.startsWith("+")) {
                 if (filtered.startsWith("880")) {
                     val p = phoneUtil.parse("+$filtered", null)
@@ -52,7 +52,7 @@ object PhoneNumberUtils {
         } catch (_: Exception) {
             null
         }
-        
+
         val digitsOnly = filtered.filter { it.isDigit() }
         return if (digitsOnly.startsWith("880") && digitsOnly.length == 13) {
             "+$digitsOnly"
@@ -68,7 +68,7 @@ object PhoneNumberUtils {
     fun getSearchFormats(phoneNumber: String): List<String> {
         val normalized = normalize(phoneNumber)
         val clean = normalized.replace("+", "")
-        
+
         return listOf(
             normalized,
             clean,
@@ -131,7 +131,7 @@ object PhoneNumberUtils {
 
     fun formatAsYouType(number: String, region: String = "BD"): String {
         if (number.startsWith("*") || number.startsWith("#")) return number
-        
+
         val formatter = phoneUtil.getAsYouTypeFormatter(region)
         var result = ""
         for (char in number) {

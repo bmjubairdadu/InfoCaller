@@ -67,7 +67,6 @@ class EmailDeepSocialProviderImpl(private val httpClient: OkHttpClient) : Lookup
                         ?.takeIf { it.startsWith("http") }
                     thumb?.let { photos.add(PhotoCandidate(provider = "Gravatar", url = it, sourcePriority = 63)) }
                     socials.add(SocialProfile("Gravatar", prefix, "https://gravatar.com/$hash", SocialLookupStatus.PUBLIC_MATCH))
-                    // Verified external accounts listed in the Gravatar profile.
                     try {
                         entry?.getAsJsonArray("accounts")?.forEach { a ->
                             val o = a.asJsonObject
@@ -81,12 +80,10 @@ class EmailDeepSocialProviderImpl(private val httpClient: OkHttpClient) : Lookup
                 } catch (_: Exception) { }
             }
         } catch (_: Exception) { }
-        // Gravatar avatar sizes as extra candidates.
         for (size in listOf(400, 200)) {
             val u = "https://www.gravatar.com/avatar/$hash?s=$size&d=404"
             if (headOk(u)) photos.add(PhotoCandidate(provider = "Gravatar", url = u, sourcePriority = 60))
         }
-        // GitHub exact user object by prefix (name/bio/location/avatar).
         try {
             val body = get("https://api.github.com/users/$prefix")
             if (!body.isNullOrBlank() && !body.contains("\"message\"")) {
@@ -111,7 +108,6 @@ class EmailDeepSocialProviderImpl(private val httpClient: OkHttpClient) : Lookup
                 } catch (_: Exception) { }
             }
         } catch (_: Exception) { }
-        // GitLab exact username search (keyless public API).
         try {
             val enc = java.net.URLEncoder.encode(prefix, "UTF-8")
             val body = get("https://gitlab.com/api/v4/users?username=$enc")

@@ -18,10 +18,6 @@ import java.util.concurrent.TimeUnit
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == "android.intent.action.QUICKBOOT_POWERON") {
-            // NOTE: startForegroundService() from background is blocked on Android 12+
-            // (ForegroundServiceStartNotAllowedException). ScanningService.start() is safe to
-            // call — it catches that exception internally — and WorkManager jobs below
-            // guarantee background work resumes even if the service start is deferred.
             try {
                 com.infocaller.app.service.ScanningService.start(context)
             } catch (_: Exception) { }
@@ -34,8 +30,6 @@ class BootReceiver : BroadcastReceiver() {
                             .build()
                     )
                     .build()
-                // KEEP + same constraints as MainActivity so the boot spec can never
-                // overwrite the constrained spec with an unconstrained one.
                 WorkManager.getInstance(context).enqueueUniquePeriodicWork("EnrichmentSync", ExistingPeriodicWorkPolicy.KEEP, req)
             } catch (_: Exception) { }
             showAutoCloseNotification(context)

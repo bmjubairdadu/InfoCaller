@@ -10,11 +10,6 @@ import okhttp3.Request
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * XposedOrNot free breach check — no key, CORS-open GET.
- * Endpoint: https://api.xposedornot.com/v1/check-email/{email}
- * Response: { "breaches": [[ "Breach1", ... ]] } or { "Error": "Not found" }.
- */
 class XposedOrNotBreachProviderImpl(
     private val httpClient: OkHttpClient
 ) : LookupProvider {
@@ -37,10 +32,9 @@ class XposedOrNotBreachProviderImpl(
                     .header("User-Agent", "InfoCaller-OSINT/2.0")
                     .header("Accept", "application/json")
                     .build()
-                // Response must be closed (use{}) or connections leak.
                 val body = httpClient.newCall(req).await().use { it.body?.string() } ?: return@withContext null
                 val root = try { JsonParser.parseString(body).asJsonObject } catch (_: Exception) { return@withContext null }
-                if (root.has("Error")) return@withContext null // "Not found" = clean
+                if (root.has("Error")) return@withContext null
                 val breachesEl = root.get("breaches") ?: return@withContext null
                 val names = try {
                     breachesEl.asJsonArray.flatMap { inner ->

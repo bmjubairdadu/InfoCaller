@@ -14,7 +14,6 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 object PermissionManager {
-
     val DIALER_PERMISSIONS = arrayOf(Manifest.permission.CALL_PHONE)
 
     val CALLER_ID_PERMISSIONS = arrayOf(

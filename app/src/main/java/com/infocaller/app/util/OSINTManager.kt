@@ -8,7 +8,6 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 object OSINTManager {
-
     data class DorkLink(
         val title: String,
         val description: String,
@@ -30,9 +29,9 @@ object OSINTManager {
     fun generateExtendedDorkLinks(phoneNumber: String, foundPhoto: String? = null): List<DorkLink> {
         val e164 = PhoneNumberUtils.normalize(phoneNumber)
         val clean = e164.replace("+", "")
-        
+
         val links = mutableListOf<DorkLink>()
-        
+
         links.add(DorkLink(
             "Burner Check (SMS Online)",
             "Detect if number is a public temporary VoIP",
@@ -229,8 +228,6 @@ object OSINTManager {
             )
         ))
 
-        // Auto-photo fix: when the scan already found a real photo, embed THAT photo
-        // into Lens/TinEye/Bing so one tap scans the founded photo (no manual upload).
         val autoPhoto = foundPhoto?.trim()?.takeIf { it.startsWith("http") }
         if (autoPhoto != null) {
             val encPhoto = urlEncode(autoPhoto)

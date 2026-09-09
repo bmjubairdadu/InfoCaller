@@ -12,7 +12,6 @@ import kotlinx.coroutines.*
 
 class CallBroadcastReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        // In-call notification answer/decline actions (see InfoInCallService).
         when (intent.action) {
             CallManager.ACTION_ANSWER_CALL -> {
                 try { CallManager.answer() } catch (_: Exception) { }
@@ -32,15 +31,9 @@ class CallBroadcastReceiver : BroadcastReceiver() {
         val phoneNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
         val lastState = prefs.getString("last_state", TelephonyManager.EXTRA_STATE_IDLE)
         val lastNumber = prefs.getString("last_number", null)
-        
+
         if (state == TelephonyManager.EXTRA_STATE_RINGING) {
             prefs.edit().putString("last_number", phoneNumber).apply()
-            // Flash-call verification: publish the tail digits on the dedicated
-            // missed-call channel (NOT the SMS channel) and auto-reject the
-            // verification call so it never rings through. The tail is bound
-            // to its SOURCE number — LoginScreen only auto-fills when the
-            // source matches the pending verification caller, so an ordinary
-            // missed call can never verify someone else's OTP.
             if (phoneNumber != null) {
                 val digits = phoneNumber.filter { it.isDigit() }.takeLast(6)
                 if (digits.length == 6) {
@@ -52,9 +45,6 @@ class CallBroadcastReceiver : BroadcastReceiver() {
                     } catch (_: Exception) { }
                 }
             } else {
-                // Android 9+: EXTRA_INCOMING_NUMBER is often null at RINGING
-                // (needs READ_CALL_LOG, granted later). Resolve via the call
-                // log after a beat so flash-call tails are still captured.
                 val pendingResult = goAsync()
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
@@ -118,12 +108,6 @@ class CallBroadcastReceiver : BroadcastReceiver() {
         prefs.edit().putString("last_state", state ?: TelephonyManager.EXTRA_STATE_IDLE).apply()
     }
 
-    /**
-     * True when a ringing call looks like a Truecaller flash-call verification
-     * for the number currently awaiting OTP: the prefs hold last_tc_phone while
-     * a login is in flight, and the tail digits match the missed-call channel.
-     * Only then is auto-reject safe — never for ordinary calls.
-     */
     private fun isVerificationCall(context: Context, ringingNumber: String): Boolean {
         return try {
             val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
@@ -139,19 +123,15 @@ class CallBroadcastReceiver : BroadcastReceiver() {
 
     private fun identifyMissedCall(context: Context, phoneNumber: String) {
         val pendingResult = goAsync()
-        // Bound the async work: finish() is guaranteed even on timeout/cancel
-        // so we never exceed the ~10s broadcast limit (ANR/kill fix).
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 withTimeoutOrNull(9000) {
                     val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
                     val normalized = PhoneNumberUtils.normalize(phoneNumber)
                     val online = try { app.enrichmentEngine.isOnline.value } catch (_: Exception) { true }
-                    // ContentResolver on IO, not onReceive's main thread.
                     val known = PhoneNumberUtils.getContactName(context, phoneNumber) != null
                     val startedAt = System.currentTimeMillis()
                     if (online && !known) {
-                        // Online: scan, then notify with the found identity.
                         app.enrichmentEngine.enqueue(normalized, priority = com.infocaller.app.data.local.entity.QueuePriority.HIGH)
                         app.enrichmentEngine.getEnrichment(normalized).collect { enrichment ->
                             if (enrichment != null && !enrichment.publicName.isNullOrBlank()) {
@@ -160,9 +140,6 @@ class CallBroadcastReceiver : BroadcastReceiver() {
                             }
                         }
                     } else {
-                        // Offline (or known contact): notify from cache only —
-                        // no scan, no API calls, no crash. Shows "scan
-                        // successful" when the cache hit, else time-since-call.
                         val cached = try {
                             app.database.enrichmentDao().getEnrichmentSync(normalized)
                         } catch (_: Exception) { null }
@@ -196,8 +173,6 @@ class CallBroadcastReceiver : BroadcastReceiver() {
             scanned && enrichment?.publicName != null -> "Scan successful · ${elapsedSec}s · Number: $number${if (carrier.isNotEmpty()) " - $carrier" else ""}"
             else -> "Called ${elapsedSec}s ago · Number: $number${if (carrier.isNotEmpty()) " - $carrier" else ""}"
         }
-        // Tapping opens the scan popup for this number (live steps when
-        // online, cached result when offline).
         val detailsIntent = android.content.Intent(context, com.infocaller.app.MainActivity::class.java).apply {
             action = android.content.Intent.ACTION_VIEW
             data = android.net.Uri.parse("infocaller://details/${android.net.Uri.encode(number)}")

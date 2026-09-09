@@ -46,11 +46,6 @@ import com.infocaller.app.ui.theme.*
 import com.infocaller.app.ui.viewmodel.CallerViewModel
 import com.infocaller.app.ui.viewmodel.SearchUiState
 
-/**
- * Full dial pad as a bottom sheet hosted inside Contacts (bottom-right FAB).
- * Same lookup + add-contact behavior as the former standalone Dialer tab:
- * typing debounces into a scan, "+ Add" opens the auto-populated sheet.
- */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun DialPadBottomSheet(
@@ -116,8 +111,6 @@ private fun DialPadContent(
         } catch (_: Exception) { }
     }
 
-    // Cancellable debounce: each keystroke cancels the previous pending lookup
-    // so fast typing fires exactly one search instead of one per keystroke.
     val scope = rememberCoroutineScope()
     var debounceJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     LaunchedEffect(textFieldValue.text) {
@@ -225,9 +218,6 @@ private fun DialPadContent(
             val isUssdInput = remember(textFieldValue.text) { com.infocaller.app.util.UssdStore.isUssd(textFieldValue.text) }
             Surface(onClick = {
                 if (textFieldValue.text.isEmpty()) return@Surface
-                // USSD goes through onCall -> MainActivity.makeCall so the CALL_PHONE
-                // permission check + manual SIM picker run first. Direct UssdStore.run
-                // here would dial immediately with no SIM choice (the reported bug).
                 onCall(textFieldValue.text)
             }, modifier = Modifier.size(72.dp).shadow(12.dp, CircleShape), shape = CircleShape, color = Color.Transparent) {
                 Box(modifier = Modifier.fillMaxSize().background(Brush.linearGradient(colors = listOf(GradientStart, GradientEnd))), contentAlignment = Alignment.Center) {

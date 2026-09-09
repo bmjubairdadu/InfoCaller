@@ -21,7 +21,7 @@ data class LookupResult(
     val emailSource: String? = null,
     val carrier: String? = null,
     val lineType: String? = null,
-    
+
     val plateNumber: String? = null,
     val iban: String? = null,
     val vatId: String? = null,

@@ -20,7 +20,7 @@ class LocalRegionalMetadataProvider : PhoneMetadataProvider {
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         if (type != IdentifierType.PHONE) return@withContext null
         val cleanNumber = identifier.filter { it.isDigit() }
-        
+
         if (cleanNumber.startsWith("880")) {
             val prefix = cleanNumber.substring(3, 5)
             val operator = when (prefix) {
@@ -30,7 +30,7 @@ class LocalRegionalMetadataProvider : PhoneMetadataProvider {
                 "15" -> "Teletalk"
                 else -> null
             }
-            
+
             val city = when {
                 cleanNumber.startsWith("8802") -> "Dhaka"
                 cleanNumber.startsWith("88031") -> "Chattogram"

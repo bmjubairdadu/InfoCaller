@@ -13,32 +13,32 @@ import androidx.room.PrimaryKey
 data class ContactEnrichmentEntity(
     @PrimaryKey val normalizedPhoneNumber: String,
     val contactId: Long? = null,
-    
+
     val publicName: String? = null,
     val publicNameSource: String? = null,
     val publicNameConfidence: Float? = null,
-    
+
     val alternateName: String? = null,
-    
+
     val profileImageUrl: String? = null,
     val profileImageSource: String? = null,
-    
+
     val about: String? = null,
     val aboutSource: String? = null,
-    
+
     val email: String? = null,
     val emailSource: String? = null,
-    
+
     val city: String? = null,
     val country: String? = null,
     val carrier: String? = null,
     val lineType: String? = null,
     val region: String? = null,
     val timezone: String? = null,
-    
+
     val whatsappStatus: String? = null,
     val telegramStatus: String? = null,
-    
+
     val plateNumber: String? = null,
     val plateNumberSource: String? = null,
     val iban: String? = null,
@@ -56,7 +56,7 @@ data class ContactEnrichmentEntity(
     val photoCandidatesJson: String? = null,
     val alternateNamesJson: String? = null,
     val lastScannedAt: Long = 0,
-    
+
     val source: String? = null,
     val confidence: String? = null,
     val lastChecked: Long = System.currentTimeMillis(),

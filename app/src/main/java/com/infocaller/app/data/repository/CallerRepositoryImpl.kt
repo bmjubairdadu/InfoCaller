@@ -27,7 +27,6 @@ class CallerRepositoryImpl(
     private val orchestrator: IScanOrchestrator,
     private val contextResolver: com.infocaller.app.util.IContextResolver
 ) : com.infocaller.app.domain.repository.ICallerRepository {
-
     private val gson = Gson()
 
     override fun getCaller(phoneNumber: String): Flow<Caller?> {
@@ -37,7 +36,7 @@ class CallerRepositoryImpl(
 
     override suspend fun searchCaller(phoneNumber: String): Caller? {
         val normalized = PhoneNumberUtils.normalize(phoneNumber)
-        
+
         val cached = callerDao.getCallerSync(normalized)
         if (cached != null) {
             val age = System.currentTimeMillis() - cached.lastUpdated
@@ -46,10 +45,10 @@ class CallerRepositoryImpl(
         }
 
         return try {
-            val finalState = orchestrator.startScan(phoneNumber, ScanPriority.FOREGROUND).first { 
-                it is ScanState.Completed || it is ScanState.Error 
+            val finalState = orchestrator.startScan(phoneNumber, ScanPriority.FOREGROUND).first {
+                it is ScanState.Completed || it is ScanState.Error
             }
-            
+
             if (finalState is ScanState.Completed) {
                 saveLookupResult(finalState.result)
                 getCaller(phoneNumber).first()
@@ -62,10 +61,6 @@ class CallerRepositoryImpl(
     }
 
     override suspend fun saveLookupResult(result: LookupResult) {
-        // Email/username (and NID) identifiers must NOT go through phone
-        // normalization — normalize() strips an address to digits and mangles
-        // handles. Phone rows stay keyed by E.164; non-phone results are
-        // surfaced live and cached under their own lowercased key.
         val raw = result.phoneNumber
         val isEmailAddr = com.infocaller.app.util.IdentifierRouter.isEmail(raw)
         val isNonPhone = isEmailAddr ||
@@ -77,13 +72,6 @@ class CallerRepositoryImpl(
         }
         val existing = enrichmentDao.getEnrichmentSync(normalized)
 
-        // INSTANT-PARTIAL rule: never hold back fresh fields. The old
-        // gaps.isComplete gate meant early partials (name-only from
-        // Truecaller, photo-only from Eyecon) were DROPPED when a complete
-        // row already existed — the UI then waited for the final Completed
-        // instead of rendering each hit the moment it arrived. Now every
-        // non-empty incoming field merges over the row immediately, so each
-        // provider's hit displays the instant it is retrieved.
         if (existing != null) {
             val hasNew = (result.name != null && (existing.publicName.isNullOrBlank() || com.infocaller.app.util.ContactUtils.isPlaceholderName(existing.publicName))) ||
                     (result.imageUrl != null && existing.profileImageUrl.isNullOrBlank()) ||
@@ -99,17 +87,12 @@ class CallerRepositoryImpl(
         }
 
         val existingCaller = callerDao.getCallerSync(normalized)
-        // PhoneLookup with an email/username is meaningless — skip the query.
         val localName = if (isNonPhone) existingCaller?.localName else existingCaller?.localName ?: findLocalNameInSystem(normalized)
 
-        // mapToEntity keys rows by res.phoneNumber; store under the normalized
-        // key so non-phone rows (lowercased) are retrievable instead of mixed-case.
         val resultToStore = if (isNonPhone && result.phoneNumber != normalized) result.copy(phoneNumber = normalized) else result
         val merged = mapToEntity(resultToStore, existing)
         enrichmentDao.insertEnrichment(merged)
 
-        // localName (user's private name) is preserved; displayName tracks the public
-        // caller-ID result. Placeholders never overwrite a real saved name.
         val incomingPublicName =
             result.name?.takeIf { !com.infocaller.app.util.ContactUtils.isPlaceholderName(it) }
         callerDao.insertCaller(CallerEntity(

@@ -60,7 +60,7 @@ fun LoginScreen(
         app.providerManager.providers.value.filterIsInstance<com.infocaller.app.data.remote.TruecallerProviderImpl>().firstOrNull()
             ?: com.infocaller.app.data.remote.TruecallerProviderImpl(context.applicationContext)
     }
-    
+
     val scope = rememberCoroutineScope()
     val uiState by viewModel.authState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -71,11 +71,6 @@ fun LoginScreen(
     var tcOtp by rememberSaveable { mutableStateOf("") }
     var tcLoading by remember { mutableStateOf(false) }
 
-    // SMS auto-fill is opt-in from the OTP screen itself. We deliberately NEVER
-    // request it on the SEND button: popping a system dialog the moment the
-    // user taps SEND reads as "skipped OTP, went to permissions".
-    // autoFillEnabled is read on the OTP screen to decide whether to offer
-    // the "enable auto-fill" row.
     var autoFillEnabled by remember {
         mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.SMS_PERMISSION))
     }
@@ -89,28 +84,16 @@ fun LoginScreen(
     var autoVerifying by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
     var verifyError by remember { mutableStateOf<String?>(null) }
-    // SEND-gate: tapping SEND VERIFICATION CODE first shows an Allow/Deny
-    // consent popup (OTP delivery + optional SMS auto-read). Allow fires the
-    // OTP request; Deny dismisses and stays on the number entry.
     var showOtpConsent by remember { mutableStateOf(false) }
 
     LaunchedEffect(tcAuthResult) {
         if (tcAuthResult == null) return@LaunchedEffect
         val method = tcAuthResult!!.method.lowercase()
-        // NOTE: no permission requests here. Call/flashcall auto-detection needs
-        // call permissions, but popping a system dialog the instant the OTP box
-        // should appear reads as "skipped OTP, went to permissions". Those grants
-        // happen in onboarding stage 2; the manual 6-digit entry below always works.
         if (method == "already_logged_in") {
             viewModel.loginWithTruecaller(null)
             snackbarHostState.showSnackbar("Already verified ✓")
             return@LaunchedEffect
         }
-        // SMS auto-fill (only when RECEIVE_SMS was granted from this screen).
-        // Manual entry below always stays visible — the code may be on another phone.
-        // Guard: only auto-fill codes that arrived AFTER this OTP request (the
-        // bus now expires entries after 10 min, and any pre-request code is
-        // cleared below when a fresh requestId lands).
         if (autoFillEnabled) {
             val last: String? = OtpManager.lastOtpFlow.value
             if (last != null && last.length == 6 && tcOtp.isEmpty()) {
@@ -124,17 +107,11 @@ fun LoginScreen(
                     OtpManager.clearOtp()
                     return@LaunchedEffect
                 } else {
-                    // Stale/wrong code must not sit in the box masquerading as
-                    // the fresh one — clear it so the user types the new code.
                     tcOtp = ""
                     OtpManager.clearOtp()
                 }
             }
         }
-        // Missed-call (flash-call) auto-verify: tail digits arrive on the
-        // dedicated channel and the verification call was already rejected.
-        // Guards: same requestId + TTL-checked bus + SOURCE NUMBER match —
-        // an ordinary missed call's tail must never verify this OTP.
         val servedRequestId = tcAuthResult!!.requestId
         launch {
             OtpManager.missedCallFlow.collectLatest { tail: String? ->
@@ -146,7 +123,6 @@ fun LoginScreen(
                 if (!tailSource.isNullOrBlank() && pendingDigits.length >= 7 &&
                     !tailSource.endsWith(pendingDigits.takeLast(6))
                 ) {
-                    // Tail came from an unrelated caller — ignore, keep box clean.
                     return@collectLatest
                 }
                 autoVerifying = true
@@ -157,16 +133,12 @@ fun LoginScreen(
                     viewModel.loginWithTruecaller(null)
                     snackbarHostState.showSnackbar("Auto-verified from missed call ✓")
                 } else {
-                    // Wrong tail (e.g. ordinary missed call) — clear the box so
-                    // it never looks like the verification code.
                     tcOtp = ""
                     snackbarHostState.showSnackbar("Auto-verify failed: ${verifyResult.message ?: "Invalid code"} - enter the code manually")
                 }
                 OtpManager.clearMissedCallTail()
             }
         }
-        // WhatsApp codes cannot be auto-read (no API) — but if the user pastes
-        // or the SMS channel fires, still attempt. Manual entry is the path.
         launch {
             OtpManager.otpFlow.collectLatest { code: String? ->
                 if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collectLatest
@@ -221,14 +193,14 @@ fun LoginScreen(
                 verticalArrangement = Arrangement.Center
             ) {
                 Icon(
-                    Icons.Default.Security, 
-                    contentDescription = null, 
+                    Icons.Default.Security,
+                    contentDescription = null,
                     modifier = Modifier.size(72.dp),
                     tint = Primary
                 )
-                
+
                 Spacer(modifier = Modifier.height(24.dp))
-                
+
                 Text(
                     text = "Identity Verification",
                     style = MaterialTheme.typography.headlineLarge,
@@ -284,8 +256,6 @@ fun LoginScreen(
 
                             Spacer(modifier = Modifier.height(32.dp))
 
-                            // Persistent inline error: snackbars vanish, so a failed
-                            // OTP request must leave a visible reason on screen.
                             authError?.let { err ->
                                 Text(
                                     err,
@@ -303,8 +273,6 @@ fun LoginScreen(
                                     .alpha(if (tcPhone.length >= 7 && !tcLoading) 1f else 0.5f)
                                     .brandGradient(radius = 16.dp)
                                     .clickable(enabled = tcPhone.length >= 7 && !tcLoading) {
-                                        // Allow/Deny gate first: the OTP request
-                                        // fires only after Allow in the popup.
                                         showOtpConsent = true
                                     },
                                 contentAlignment = Alignment.Center
@@ -342,11 +310,9 @@ fun LoginScreen(
                                 color = contentSecondary(0.6f),
                                 modifier = Modifier.padding(top = 4.dp).align(Alignment.Start)
                             )
-                            
+
                             Spacer(modifier = Modifier.height(8.dp))
 
-                            // Auto-fill is opt-in HERE on the OTP screen — never on
-                            // the SEND button. Manual entry always works regardless.
                             if (!autoFillEnabled && (tcAuthResult!!.method == "sms" || tcAuthResult!!.method == "whatsapp")) {
                                 TextButton(
                                     onClick = { smsPermissionLauncher.launch(PermissionManager.SMS_PERMISSION) },
@@ -376,8 +342,6 @@ fun LoginScreen(
 
                                 TextButton(
                                     onClick = {
-                                        // Accept a bare code OR pull digits out of a
-                                        // copied message ("Your code is 123456").
                                         val raw = clipboardManager.getText()?.text?.toString().orEmpty()
                                         val digits = raw.filter { it.isDigit() }
                                         val code = when {
@@ -402,10 +366,6 @@ fun LoginScreen(
                                     Text("Paste Code", color = contentSecondary(0.5f), fontSize = 12.sp)
                                 }
                             } else {
-                                // Flash-call / missed-call path: the verification call is
-                                // auto-rejected by the receiver and the tail digits
-                                // auto-fill above. Manual entry stays visible for
-                                // codes arriving on a different phone.
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
                                         "Waiting for the verification call — it will be rejected automatically. Or enter the last 6 digits of the caller number:",
@@ -414,20 +374,19 @@ fun LoginScreen(
                                         textAlign = TextAlign.Center,
                                         modifier = Modifier.padding(bottom = 16.dp)
                                     )
-                                    
+
                                     OtpInputField(
                                         otpText = tcOtp,
                                         onOtpTextChange = { tcOtp = it; verifyError = null },
                                         modifier = Modifier.wrapContentWidth()
                                     )
-                                    
+
                                     Spacer(modifier = Modifier.height(16.dp))
                                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp), color = Primary.copy(alpha = 0.3f))
                                 }
                             }
 
                             Spacer(modifier = Modifier.height(24.dp))
-                            // Persistent verify error — snackbars vanish too fast.
                             verifyError?.let { err ->
                                 Text(
                                     err,
@@ -471,10 +430,7 @@ fun LoginScreen(
                                     )
                                 }
                             }
-                            
-                            // Resend with cooldown: hammering SEND is what triggers
-                            // Truecaller rate limits (status 5/6 = 1-hour lockout).
-                            // 60s cooldown + code-box reset + stale-bus clearing.
+
                             var resendCooldown by remember { mutableStateOf(0) }
                             LaunchedEffect(resendCooldown) {
                                 if (resendCooldown > 0) {
@@ -530,7 +486,7 @@ fun LoginScreen(
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
-                
+
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
@@ -557,9 +513,6 @@ fun LoginScreen(
             }
         }
 
-        // Allow/Deny consent popup for the OTP step. Allow fires the exact
-        // same OTP request the SEND button used to fire directly (plus an
-        // optional SMS auto-read grant); Deny dismisses back to number entry.
         if (showOtpConsent && tcAuthResult == null) {
             AlertDialog(
                 onDismissRequest = { if (!tcLoading) showOtpConsent = false },
@@ -580,8 +533,6 @@ fun LoginScreen(
                             tcLoading = true
                             authError = null
                             scope.launch {
-                                // Optional auto-read grant, taken here so the
-                                // system dialog appears as part of Allow.
                                 try {
                                     if (!PermissionManager.hasPermissions(context, PermissionManager.SMS_PERMISSION)) {
                                         smsPermissionLauncher.launch(PermissionManager.SMS_PERMISSION)
@@ -623,8 +574,6 @@ fun LoginScreen(
                                     }
                                 }
                                 tcLoading = false
-                                // Close the popup once the OTP box is up (or
-                                // when an error left inline text behind).
                                 if (viewModel.tcAuthResult.value != null) showOtpConsent = false
                             }
                         }

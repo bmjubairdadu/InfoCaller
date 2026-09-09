@@ -9,14 +9,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
-/**
- * Community spam-CSV feed provider (opt-in dataset, no key).
- *
- * Dataset format source: tareknahas85-star/block-number-data
- * (number,category,negative,positive,neutral,name — E.164).
- * Default feed URL points at that repo's raw spamdb.csv; override via
- * constructor for forks/mirrors. Cached 24h in memory. Read-only GETs only.
- */
 class CommunitySpamCsvProviderImpl(
     httpClient: OkHttpClient? = null,
     private val feedUrl: String = DEFAULT_FEED_URL
@@ -64,7 +56,6 @@ class CommunitySpamCsvProviderImpl(
                     val line = rawLine.trim()
                     if (line.isEmpty()) continue
                     if (first) { first = false; if (line.startsWith("number")) continue }
-                    // Minimal CSV split that tolerates a quoted trailing name.
                     val parts = splitCsv(line)
                     if (parts.size < 5) continue
                     val number = parts[0].trim()

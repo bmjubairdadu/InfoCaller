@@ -8,7 +8,6 @@ import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-
 class SherlockProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "sherlock_osint"
     override val name = "Sherlock Username Scan"

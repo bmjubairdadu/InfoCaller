@@ -23,27 +23,10 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 
-/**
- * Premium portrait caller-ID card (1080x1920) saved to Downloads/InfoCaller.
- *
- * Layout (top to bottom):
- *  1. Gradient header band with circular photo (gold ring) or initial avatar.
- *  2. Name (large, centered) + identifier (accent, centered).
- *  3. About quote in a glass pill (if present).
- *  4. Detail rows: label (dim, uppercase) over value (white), grouped in a
- *     rounded card. Social URLs render as platform names.
- *  5. Footer brand line + source line.
- *
- * Missing fields are skipped — no "N/A". Photo always renders: real photo
- * when a URL loads, otherwise a monogram circle from the name initials.
- */
 object DetailsPngExporter {
-
-    // Portrait 9:16.
     private const val WIDTH = 1080
     private const val HEIGHT = 1920
 
-    // Palette.
     private const val BG_TOP = 0xFF101A30
     private const val BG_BOTTOM = 0xFF070B16
     private const val ACCENT = 0xFF4FC3F7
@@ -71,8 +54,6 @@ object DetailsPngExporter {
             val photo = loadPhoto(
                 context,
                 contactPhotoUri,
-                // Auto-photo fix: same founded-photo resolution as Details so the
-                // export never misses a candidates/avatar-only picture.
                 SocialUtils.bestHttpPhoto(
                     enrichment?.profileImageUrl,
                     enrichment?.photoCandidatesJson,
@@ -91,8 +72,6 @@ object DetailsPngExporter {
             Result.failure(e)
         }
     }
-
-    // ── Card model ──────────────────────────────────────────────
 
     private data class Row(val label: String, val value: String)
     private data class Card(
@@ -186,7 +165,6 @@ object DetailsPngExporter {
         val bmp = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
 
-        // Background: vertical gradient + soft radial glows.
         val bg = Paint().apply {
             shader = LinearGradient(
                 0f, 0f, 0f, HEIGHT.toFloat(),
@@ -201,7 +179,6 @@ object DetailsPngExporter {
         glow.alpha = 18
         canvas.drawCircle(WIDTH * 0.1f, HEIGHT * 0.75f, 380f, glow)
 
-        // Header band.
         val headerH = 640f
         val headerPaint = Paint().apply {
             shader = LinearGradient(
@@ -210,21 +187,17 @@ object DetailsPngExporter {
             )
         }
         canvas.drawRect(0f, 0f, WIDTH.toFloat(), headerH, headerPaint)
-        // Gold hairline under header.
         val hairline = Paint().apply { color = GOLD.toInt(); strokeWidth = 3f; alpha = 200 }
         canvas.drawLine(120f, headerH, (WIDTH - 120).toFloat(), headerH, hairline)
 
         var y = 150f
 
-        // Circular photo with gold ring — ALWAYS drawn (photo or monogram).
         val photoD = 300f
         val cx = WIDTH / 2f
         val cy = y + photoD / 2f
         drawCircularPhoto(canvas, photo, cx, cy, photoD, card.name)
         y += photoD + 56f
 
-        // Name block: name lines first, THEN the cursor advances past them,
-        // THEN the number pill draws below — never drawn over the name.
         val namePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = NAME_COLOR.toInt(); textSize = 68f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
@@ -240,8 +213,6 @@ object DetailsPngExporter {
         }
         y = nameY + 28f
 
-        // Identifier pill: number sits INSIDE its own rounded pill below the
-        // name — own background, own padding, own vertical slot.
         if (card.identifier.isNotBlank()) {
             val idPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = ACCENT.toInt(); textSize = 38f
@@ -267,7 +238,6 @@ object DetailsPngExporter {
             y += 12f
         }
 
-        // About quote pill.
         if (!card.about.isNullOrBlank()) {
             y += 12f
             val quotePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -290,7 +260,6 @@ object DetailsPngExporter {
             y += pillH + 36f
         }
 
-        // Detail rows card.
         val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = DIM_COLOR.toInt(); textSize = 26f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
@@ -316,7 +285,6 @@ object DetailsPngExporter {
             var contentH = 56f
             for ((isLabel, _, _) in allLines) contentH += if (isLabel) 40f else 50f
             contentH += 40f
-            // Clamp the card so footer always fits.
             val maxCardH = HEIGHT - y - 200f
             var shown: List<Triple<Boolean, String, Paint>> = allLines
             if (contentH > maxCardH && maxCardH > 300f) {
@@ -341,13 +309,11 @@ object DetailsPngExporter {
             var ry = y + 56f
             for ((_, text, p) in shown) {
                 canvas.drawText(text, 150f, ry, p)
-                // Label rows are shorter; recompute step from paint size.
                 ry += if (p.textSize < 30f) 40f else 50f
             }
             y += contentH + 24f
         }
 
-        // Footer brand line.
         val footPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = DIM_COLOR.toInt(); textSize = 28f; textAlign = Paint.Align.CENTER
         }
@@ -365,7 +331,6 @@ object DetailsPngExporter {
         canvas: Canvas, photo: Bitmap?, cx: Float, cy: Float, d: Float, name: String,
     ) {
         val r = d / 2f
-        // Gold ring + dark underlay.
         val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = GOLD.toInt() }
         canvas.drawCircle(cx, cy, r + 10f, ring)
         val ringInner = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF0B1220.toInt() }
@@ -374,7 +339,6 @@ object DetailsPngExporter {
         val circle = Bitmap.createBitmap(d.toInt(), d.toInt(), Bitmap.Config.ARGB_8888)
         val cc = Canvas(circle)
         if (photo != null && !photo.isRecycled && photo.width > 1 && photo.height > 1) {
-            // Center-crop scale into the circle.
             val scale = maxOf(d / photo.width, d / photo.height)
             val sw = photo.width * scale
             val sh = photo.height * scale
@@ -385,7 +349,6 @@ object DetailsPngExporter {
             mask.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
             cc.drawBitmap(photo, Rect(0, 0, photo.width, photo.height), RectF(dx, dy, dx + sw, dy + sh), mask)
         } else {
-            // Monogram fallback — always a circle, never empty.
             val bgP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF243B63.toInt() }
             cc.drawCircle(r, r, r, bgP)
             val t = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -405,7 +368,6 @@ object DetailsPngExporter {
         while (rest.isNotEmpty() && out.size < 8) {
             var cut = paint.breakText(rest, true, maxW, null)
             if (cut <= 0) cut = rest.length
-            // Prefer word boundary.
             if (cut < rest.length) {
                 val space = rest.lastIndexOf(' ', cut)
                 if (space > cut / 2) cut = space
@@ -433,7 +395,6 @@ object DetailsPngExporter {
     }
 
     private fun savePng(context: Context, bitmap: Bitmap, phoneNumber: String): String {
-        // Non-phone filenames use a sanitized identifier instead of digits.
         val digits = when {
             com.infocaller.app.util.IdentifierRouter.isEmail(phoneNumber) -> phoneNumber.substringBefore("@").filter { it.isLetterOrDigit() }.take(24).ifBlank { "email" }
             com.infocaller.app.util.IdentifierRouter.routeType(phoneNumber) == "USERNAME" -> phoneNumber.removePrefix("@").filter { it.isLetterOrDigit() }.take(24).ifBlank { "username" }

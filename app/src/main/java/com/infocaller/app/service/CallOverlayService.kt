@@ -48,7 +48,6 @@ import com.infocaller.app.util.*
 import kotlinx.coroutines.*
 
 class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
-
     companion object {
         @Volatile
         private var repositoryInstance: CallerRepository? = null
@@ -83,7 +82,6 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val phoneNumber = intent?.getStringExtra("EXTRA_PHONE_NUMBER")
         if (phoneNumber.isNullOrBlank()) {
-            // Sticky restart with no number: nothing to show — do not leak a foreground service.
             stopSelf()
             return START_NOT_STICKY
         }
@@ -144,7 +142,7 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
             setViewTreeLifecycleOwner(this@CallOverlayService)
             setViewTreeViewModelStoreOwner(this@CallOverlayService)
             setViewTreeSavedStateRegistryOwner(this@CallOverlayService)
-            
+
             setContent {
                 MaterialTheme {
                     OverlayUI(phoneNumber)
@@ -165,8 +163,6 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
     private fun OverlayUI(phoneNumber: String) {
         val context = LocalContext.current
         val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
-        // Prefer the application repository; fall back to the static instance for
-        // legacy callers. Never crash composition — show a degraded card instead.
         val repository = try { app.repository } catch (_: Exception) { getRepository() }
         val enrichmentEngine = try { app.enrichmentEngine } catch (_: Exception) { null }
         val enrichmentService = remember { ContactEnrichmentService(context) }
@@ -180,7 +176,6 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
         var isBlocked by remember { mutableStateOf(value = false) }
 
         LaunchedEffect(normalizedNumber) {
-            // ContentResolver + Room must stay off the main thread (ANR fix).
             val (name, photo) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 PhoneNumberUtils.getContactName(context, phoneNumber) to
                     PhoneNumberUtils.getContactPhotoUri(context, phoneNumber)
@@ -371,9 +366,6 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
     }
 
     private fun openInCallScreen(context: Context) {
-        // The overlay window cannot answer calls directly (NOT_FOCUSABLE +
-        // no Telecom handle here) — deep-link to the full-screen incoming UI
-        // where the red/green buttons answer for real.
         try {
             val intent = Intent(context, com.infocaller.app.ui.InCallActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -458,7 +450,7 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
         val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(phoneNumber))
         val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME)
         val cursor = context.contentResolver.query(uri, projection, null, null, null)
-        
+
         cursor?.use {
             if (it.moveToFirst()) {
                 val nameIndex = it.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)

@@ -17,17 +17,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-// Theme-aware glass: white tint on dark theme, dark tint on light theme, so
-// cards/borders stay visible in BOTH modes. Must be @Composable to read the
-// scheme — all call sites are composable.
 @Composable
 fun Modifier.glassy(
     radius: Dp = 16.dp,
     borderWidth: Dp = 1.dp,
     blur: Dp = 0.dp
 ): Modifier {
-    // Derive from the actual scheme background luminance so an explicit
-    // Light/Dark override is honored, not just the system setting.
     val schemeBg = androidx.compose.material3.MaterialTheme.colorScheme.background
     val dark = schemeBg.red * 0.299f + schemeBg.green * 0.587f + schemeBg.blue * 0.114f < 0.5f
     val tint = if (dark) Color.White else Color.Black
@@ -80,7 +75,7 @@ fun GlassyBackground(
                 )
             )
         }
-        
+
         content()
     }
 }

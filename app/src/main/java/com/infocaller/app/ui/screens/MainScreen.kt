@@ -56,8 +56,6 @@ fun MainScreen(
             app.operatorLogoManager.initialize(sims)
         } catch (_: Exception) { }
 
-        // Silent self-update check (max once a day): new GitHub release ->
-        // banner above the tabs. Failures are silent — update never blocks.
         try {
             launchScope.launch {
                 try {
@@ -68,11 +66,6 @@ fun MainScreen(
             }
         } catch (_: Exception) { }
 
-        // Identity engine on launch: recents + full phonebook through the
-        // parallel Truecaller-bulk + Eyecon sweep, permanently mirrored into
-        // the phonebook (gap-fill only). Skips rows that already have a
-        // name + photo, so repeat launches are cheap. Continues 24/7 via
-        // the hourly EnrichmentWorker (re-armed on boot).
         if (com.infocaller.app.permissions.PermissionManager.hasPermissions(
                 context, com.infocaller.app.permissions.PermissionManager.CONTACTS_PERMISSIONS
             )
@@ -87,8 +80,6 @@ fun MainScreen(
                 }
             } catch (_: Exception) { }
         } else {
-            // No contacts grant yet: queue the throttled worker so the sweep
-            // starts automatically once the grant lands (lazy tab requests).
             val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
             val isFirstSyncDone = prefs.getBoolean("is_first_sync_done", false)
             if (!isFirstSyncDone) {
@@ -109,8 +100,6 @@ fun MainScreen(
     }
 
     val tabs = remember {
-        // Requested order: Recent, then Contacts, then Settings.
-        // Dial Pad lives inside Contacts (FAB), NID lives in search/details.
         listOf(
             BottomNavItem("recents", "Recent", Icons.Default.History),
             BottomNavItem("contacts", "Contacts", Icons.Default.ContactPhone),
@@ -118,7 +107,6 @@ fun MainScreen(
         )
     }
 
-    // Theme-aware shell: bar + labels follow Light/Dark instead of fixed navy/white.
     val navBarContainer = if (MaterialTheme.colorScheme.background.red * 0.299f + MaterialTheme.colorScheme.background.green * 0.587f + MaterialTheme.colorScheme.background.blue * 0.114f < 0.5f) Color(0xFF0B1322) else MaterialTheme.colorScheme.surface
     val navContent = MaterialTheme.colorScheme.onBackground
     Scaffold(
@@ -179,9 +167,6 @@ fun MainScreen(
                             ),
                             onClick = {
                                 if (currentRoute != item.route) {
-                                    // Heat fix: no full re-scan on tab switch. The
-                                    // throttled worker handles gap-aware enrichment;
-                                    // syncWhatsAppPhotos() re-ran every contact here.
                                     if (item.route == "settings") {
                                         parentNavController.navigate("settings")
                                     } else {
@@ -240,9 +225,6 @@ fun MainScreen(
                     )
                 }
             }
-            // Bulk identity sweep banner: floats above the tabs while the
-            // launch / 24-7 pass (Truecaller bulk + Eyecon) enriches recents
-            // + contacts and mirrors hits into the phonebook.
             if (bulkProgress.running && bulkProgress.total > 0) {
                 val pct = (bulkProgress.done.toFloat() / bulkProgress.total.coerceAtLeast(1)).coerceIn(0f, 1f)
                 Card(
@@ -283,9 +265,6 @@ fun MainScreen(
                     }
                 }
             }
-            // Self-update banner: new GitHub release found by the silent
-            // launch check. Tap downloads, progress shows inline, then the
-            // system installer opens. Dismissable, reappears next launch.
             val update = updateState as? com.infocaller.app.util.AppUpdateManager.UpdateState.Available
             if (update != null && !updateDismissed) {
                 val mb = if (update.sizeBytes > 0) " • ${(update.sizeBytes / 1048576)} MB" else ""
@@ -342,7 +321,6 @@ fun MainScreen(
                     }
                 }
             }
-            // Download progress bar under the banner position.
             if (updateState is com.infocaller.app.util.AppUpdateManager.UpdateState.Downloading) {
                 val pct = (updateState as com.infocaller.app.util.AppUpdateManager.UpdateState.Downloading).progress
                 Card(

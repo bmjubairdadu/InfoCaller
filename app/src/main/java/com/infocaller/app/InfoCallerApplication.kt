@@ -48,7 +48,7 @@ class InfoCallerApplication : Application() {
         operatorLogoManager = com.infocaller.app.util.OperatorLogoManager(this, database)
 
         truecallerAuthManager = TruecallerAuthManager(this)
-        
+
         val sharedGson = com.google.gson.Gson()
         providerManager.registerProviders(listOf(
             LocalEnrichmentProvider(database.enrichmentDao()),
@@ -62,10 +62,7 @@ class InfoCallerApplication : Application() {
             TruecallerProviderImpl(this),
             EyeconProviderImpl(this),
             DisposablePhoneProviderImpl(),
-            NominatimGeocodingProviderImpl(commonHttpClient, sharedGson),
             NidDatabaseProvider(database),
-            NidGovEnrichmentProvider(database),
-            NidSmartCardAutoProvider(database),
             EmailLookupProviderImpl(commonHttpClient, sharedGson),
             HoleheEmailProviderImpl(commonHttpClient),
             WhatsMyNameProviderImpl(commonHttpClient, sharedGson),
@@ -76,15 +73,11 @@ class InfoCallerApplication : Application() {
             SpamReputationScraperProviderImpl(),
             XposedOrNotBreachProviderImpl(commonHttpClient),
             DisifyEmailValidationProviderImpl(commonHttpClient),
-            HackerTargetDomainReconProviderImpl(commonHttpClient),
             EmailSocialBridgeProvider(commonHttpClient),
-            NameSocialVerifierProvider(),
-            ImageSocialVerifierProvider(),
             FacebookProfileProvider(),
             InstagramDeepProvider(this),
             TikTokProfileProvider(),
             MaigretSweepProviderImpl(commonHttpClient),
-            HudsonRockEmailIntelProviderImpl(commonHttpClient),
             SocialSearcherPhoneProviderImpl(commonHttpClient),
             SocialAccountEnumeratorProviderImpl(commonHttpClient),
             MultiAvatarHarvesterProviderImpl(commonHttpClient),
@@ -95,7 +88,6 @@ class InfoCallerApplication : Application() {
             LinkedInProfileProviderImpl(commonHttpClient),
             XProfileProviderImpl(commonHttpClient),
             YouTubeProfileProviderImpl(commonHttpClient),
-            RedditProfileProviderImpl(commonHttpClient),
             PinterestMediumProviderImpl(commonHttpClient),
             GamingProfileProviderImpl(commonHttpClient),
             TelegramDeepProviderImpl(commonHttpClient),
@@ -120,13 +112,13 @@ class InfoCallerApplication : Application() {
             orchestrator,
             com.infocaller.app.util.AndroidContextResolver(this)
         )
-        
+
         scanOrch.setResultSaver { result ->
             repository.saveLookupResult(result)
         }
-        
+
         val enrichmentService = ContactEnrichmentService(this, lookupEngine, repository, database)
-        
+
         enrichmentEngine = ContinuousEnrichmentEngine(
             this,
             database.queueDao(),

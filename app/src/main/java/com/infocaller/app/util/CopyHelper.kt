@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 
-/** One-tap copy of any scan field value to the system clipboard. */
 object CopyHelper {
     fun copy(context: Context, label: String, text: String): Boolean {
         if (text.isBlank()) return false

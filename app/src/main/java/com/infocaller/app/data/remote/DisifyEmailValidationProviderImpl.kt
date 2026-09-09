@@ -10,12 +10,6 @@ import okhttp3.Request
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-/**
- * Disify free email validation — no key.
- * Endpoint: https://api.disify.com/api/email/{email}
- * Response: { "format": bool, "domain": "...", "dns": bool,
- *   "disposable": bool, "whitelist": bool, ... }
- */
 class DisifyEmailValidationProviderImpl(
     private val httpClient: OkHttpClient
 ) : LookupProvider {
@@ -32,15 +26,12 @@ class DisifyEmailValidationProviderImpl(
             val email = identifier.trim().lowercase()
             if (!email.contains("@") || email.length > 120) return@withContext null
             try {
-                // Verified live: api.disify.com is dead; www.disify.com returns
-                // {format,domain,disposable,dns,...} for the same path.
                 val url = "https://www.disify.com/api/email/" +
                     URLEncoder.encode(email, StandardCharsets.UTF_8.toString())
                 val req = Request.Builder().url(url)
                     .header("User-Agent", "InfoCaller-OSINT/2.0")
                     .header("Accept", "application/json")
                     .build()
-                // Response must be closed (use{}) or connections leak.
                 val body = httpClient.newCall(req).await().use { r ->
                     if (!r.isSuccessful) return@withContext null
                     r.body?.string()
