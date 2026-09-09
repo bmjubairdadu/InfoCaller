@@ -79,7 +79,7 @@ class PublicLookupEngine(
             val phonePrimary = mutableListOf<LookupProvider>()
             tc?.let { phonePrimary.add(it) }
             eyecon?.let { phonePrimary.add(it) }
-            val nidFirst = others.filter { it.id == "bd_nid_database" || it.id == "nid_gov_enrichment" }
+            val nidFirst = others.filter { it.id == "bd_nid_database" || it.id == "nid_gov_enrichment" || it.id == "nid_smartcard_auto" }
                 .sortedByDescending { it.priority }
             phonePrimary.addAll(nidFirst)
             // Multi-account social enumeration runs right after identity: one
@@ -88,7 +88,7 @@ class PublicLookupEngine(
             val enumerator = others.filter { it.id == "social_account_enumerator" }
             phonePrimary.addAll(enumerator)
             executionPlan.addAll(phonePrimary)
-            executionPlan.addAll(others.filter { it.id != "bd_nid_database" && it.id != "nid_gov_enrichment" && it.id != "social_account_enumerator" })
+            executionPlan.addAll(others.filter { it.id != "bd_nid_database" && it.id != "nid_gov_enrichment" && it.id != "nid_smartcard_auto" && it.id != "social_account_enumerator" })
         } else {
             val typeFirstIds: Set<String> = when (type) {
                 IdentifierType.EMAIL -> setOf(

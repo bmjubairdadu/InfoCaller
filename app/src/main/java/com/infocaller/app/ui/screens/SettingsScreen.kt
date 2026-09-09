@@ -38,7 +38,6 @@ fun SettingsScreen(
     onBack: () -> Unit,
     viewModel: com.infocaller.app.ui.viewmodel.CallerViewModel,
     onNavigateToPrivacy: () -> Unit = {},
-    onNavigateToNidPortal: () -> Unit = {},
     onNavigateToDetails: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -333,28 +332,12 @@ fun SettingsScreen(
                 )
             }
 
-            SettingsSection("NID Portal (services.nidw.gov.bd)") {
-                Text(
-                    "Guided claim-account + smart-card status using your own details and the portal captcha. No bypass, no stored credentials.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp)
-                )
-                SettingsClickRow(
-                    title = "Open NID Portal",
-                    subtitle = "Claim account / card status with captcha",
-                    icon = Icons.Default.Fingerprint,
-                    onClick = onNavigateToNidPortal
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
             SettingsSection("Eyecon Caller ID (captured auth)") {
                 EyeconAuthSettingsContent()
             }
 
             SettingsSection("About") {
-                SettingsInfoRow("Version", "2.2.5", Icons.Default.Info)
+                SettingsInfoRow("Version", "2.2.7", Icons.Default.Info)
                 SettingsClickRow(
                     title = "Privacy Policy",
                     subtitle = "Read our data policy",

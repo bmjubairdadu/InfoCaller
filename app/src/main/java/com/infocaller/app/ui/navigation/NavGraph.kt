@@ -147,15 +147,11 @@ fun NavGraph(
                     onBack = { navController.popBackStack() },
                     viewModel = viewModel,
                     onNavigateToPrivacy = { navController.navigate("privacy") },
-                    onNavigateToNidPortal = { navController.navigate("nid_portal") },
                     onNavigateToDetails = { number ->
                         viewModel.searchNumber(number)
                         navController.navigate("details/" + android.net.Uri.encode(number))
                     }
                 )
-            }
-            composable("nid_portal") {
-                NidPortalScreen(onBack = { navController.popBackStack() })
             }
             composable("privacy") {
                 PrivacyPolicyScreen(onBack = { navController.popBackStack() })

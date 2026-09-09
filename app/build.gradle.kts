@@ -23,8 +23,8 @@ android {
         applicationId = "com.infocaller.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "2.2.5"
+        versionCode = 9
+        versionName = "2.2.7"
 
         androidResources {
             localeFilters += listOf("en", "bn")
@@ -93,5 +93,6 @@ dependencies {
     implementation(libs.androidx.savedstate.ktx)
     implementation(libs.androidx.work.runtime.ktx)
     implementation("com.google.mlkit:face-detection:16.1.7")
+    implementation(libs.mlkit.text.recognition)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.1")
 }

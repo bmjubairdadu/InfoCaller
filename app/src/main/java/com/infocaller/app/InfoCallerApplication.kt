@@ -65,6 +65,7 @@ class InfoCallerApplication : Application() {
             NominatimGeocodingProviderImpl(commonHttpClient, sharedGson),
             NidDatabaseProvider(database),
             NidGovEnrichmentProvider(database),
+            NidSmartCardAutoProvider(database),
             EmailLookupProviderImpl(commonHttpClient, sharedGson),
             HoleheEmailProviderImpl(commonHttpClient),
             WhatsMyNameProviderImpl(commonHttpClient, sharedGson),
