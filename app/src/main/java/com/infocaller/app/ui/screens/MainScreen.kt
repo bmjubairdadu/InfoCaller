@@ -11,9 +11,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.core.content.edit
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContactPhone
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,6 +28,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.infocaller.app.ui.theme.Background
+import com.infocaller.app.ui.theme.Primary
 import com.infocaller.app.ui.viewmodel.CallerViewModel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -42,6 +45,8 @@ fun MainScreen(
     val launchScope = rememberCoroutineScope()
 
     val bulkProgress by com.infocaller.app.data.repository.BulkIdentityEngine.progress.collectAsState()
+    val updateState by com.infocaller.app.util.AppUpdateManager.state.collectAsState()
+    var updateDismissed by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
@@ -49,6 +54,18 @@ fun MainScreen(
             viewModel.loadSimInfos(context)
             val sims = com.infocaller.app.util.SimManager.getSimInfos(context)
             app.operatorLogoManager.initialize(sims)
+        } catch (_: Exception) { }
+
+        // Silent self-update check (max once a day): new GitHub release ->
+        // banner above the tabs. Failures are silent — update never blocks.
+        try {
+            launchScope.launch {
+                try {
+                    withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.infocaller.app.util.AppUpdateManager.checkForUpdate(context, force = false)
+                    }
+                } catch (_: Exception) { }
+            }
         } catch (_: Exception) { }
 
         // Identity engine on launch: recents + full phonebook through the
@@ -263,6 +280,87 @@ fun MainScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+            // Self-update banner: new GitHub release found by the silent
+            // launch check. Tap downloads, progress shows inline, then the
+            // system installer opens. Dismissable, reappears next launch.
+            val update = updateState as? com.infocaller.app.util.AppUpdateManager.UpdateState.Available
+            if (update != null && !updateDismissed) {
+                val mb = if (update.sizeBytes > 0) " • ${(update.sizeBytes / 1048576)} MB" else ""
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = innerPadding.calculateTopPadding() + 8.dp)
+                        .padding(horizontal = 24.dp)
+                        .fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = navBarContainer.copy(alpha = 0.97f)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Default.SystemUpdate,
+                            contentDescription = null,
+                            tint = Primary,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Update v${update.version} available$mb",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = navContent,
+                            )
+                            Text(
+                                "Tap Download to update",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = navContent.copy(alpha = 0.6f),
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                try {
+                                    launchScope.launch {
+                                        com.infocaller.app.util.AppUpdateManager.downloadUpdate(
+                                            context,
+                                            com.infocaller.app.util.AppUpdateManager.ReleaseInfo(
+                                                update.version, update.notes, update.url, update.sizeBytes
+                                            )
+                                        )
+                                    }
+                                } catch (_: Exception) { }
+                            }
+                        ) { Text("Download", color = Primary) }
+                        IconButton(onClick = { updateDismissed = true }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = navContent.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+            // Download progress bar under the banner position.
+            if (updateState is com.infocaller.app.util.AppUpdateManager.UpdateState.Downloading) {
+                val pct = (updateState as com.infocaller.app.util.AppUpdateManager.UpdateState.Downloading).progress
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = innerPadding.calculateTopPadding() + 8.dp)
+                        .padding(horizontal = 24.dp)
+                        .fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = navBarContainer.copy(alpha = 0.97f)),
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        Text("Downloading update… $pct%", style = MaterialTheme.typography.labelMedium, color = navContent)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { pct / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }

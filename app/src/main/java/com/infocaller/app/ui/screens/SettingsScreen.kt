@@ -337,7 +337,8 @@ fun SettingsScreen(
             }
 
             SettingsSection("About") {
-                SettingsInfoRow("Version", "2.2.7", Icons.Default.Info)
+                SettingsInfoRow("Version", com.infocaller.app.util.AppUpdateManager.currentVersion(), Icons.Default.Info)
+                AppUpdateRow()
                 SettingsClickRow(
                     title = "Privacy Policy",
                     subtitle = "Read our data policy",
@@ -347,6 +348,117 @@ fun SettingsScreen(
             }
             
             Spacer(modifier = Modifier.height(32.dp))
+        }
+    }
+}
+
+/**
+ * Self-update row: auto-checked once a day at launch; manual "Check" here.
+ * New version -> Download button with progress -> Install opens the system
+ * installer. Failures show inline, never block Settings.
+ */
+@Composable
+private fun AppUpdateRow() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val state by com.infocaller.app.util.AppUpdateManager.state.collectAsState()
+    var checking by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        // Silent daily check when About is opened.
+        try {
+            com.infocaller.app.util.AppUpdateManager.checkForUpdate(context, force = false)
+        } catch (_: Exception) { }
+    }
+
+    when (val s = state) {
+        is com.infocaller.app.util.AppUpdateManager.UpdateState.Idle -> {
+            SettingsClickRow(
+                title = "Check for updates",
+                subtitle = if (checking) "Checking…" else "You are on v${com.infocaller.app.util.AppUpdateManager.currentVersion()}",
+                icon = Icons.Default.SystemUpdate,
+                onClick = {
+                    if (checking) return@SettingsClickRow
+                    checking = true
+                    scope.launch {
+                        try {
+                            val info = com.infocaller.app.util.AppUpdateManager.checkForUpdate(context, force = true)
+                            if (info == null) {
+                                android.widget.Toast.makeText(context, "Already on the latest version", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        } finally { checking = false }
+                    }
+                }
+            )
+        }
+        is com.infocaller.app.util.AppUpdateManager.UpdateState.Checking -> {
+            ListItem(
+                headlineContent = { Text("Checking for updates…") },
+                leadingContent = {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+            )
+        }
+        is com.infocaller.app.util.AppUpdateManager.UpdateState.Available -> {
+            val mb = if (s.sizeBytes > 0) " • ${(s.sizeBytes / 1048576)} MB" else ""
+            SettingsClickRow(
+                title = "Update to v${s.version}",
+                subtitle = "New version available$mb — tap to download",
+                icon = Icons.Default.Download,
+                onClick = {
+                    scope.launch {
+                        try {
+                            com.infocaller.app.util.AppUpdateManager.downloadUpdate(
+                                context,
+                                com.infocaller.app.util.AppUpdateManager.ReleaseInfo(s.version, s.notes, s.url, s.sizeBytes)
+                            )
+                        } catch (_: Exception) { }
+                    }
+                }
+            )
+            if (s.notes.isNotBlank()) {
+                Text(
+                    s.notes.take(400),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                )
+            }
+        }
+        is com.infocaller.app.util.AppUpdateManager.UpdateState.Downloading -> {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Downloading update… ${s.progress}%", style = MaterialTheme.typography.bodyMedium)
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { s.progress / 100f },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        is com.infocaller.app.util.AppUpdateManager.UpdateState.Ready -> {
+            SettingsClickRow(
+                title = "Install update",
+                subtitle = "Download finished — open installer",
+                icon = Icons.Default.InstallMobile,
+                onClick = {
+                    try {
+                        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+                        val id = context.getSharedPreferences("app_update", Context.MODE_PRIVATE).getLong("download_id", -1L)
+                        if (id != -1L) {
+                            com.infocaller.app.util.AppUpdateManager.openInstaller(context, dm.getUriForDownloadedFile(id))
+                        }
+                    } catch (_: Exception) { }
+                }
+            )
+        }
+        is com.infocaller.app.util.AppUpdateManager.UpdateState.Failed -> {
+            SettingsClickRow(
+                title = "Update check failed",
+                subtitle = "${s.reason} — tap to retry",
+                icon = Icons.Default.Refresh,
+                onClick = { com.infocaller.app.util.AppUpdateManager.reset() }
+            )
         }
     }
 }

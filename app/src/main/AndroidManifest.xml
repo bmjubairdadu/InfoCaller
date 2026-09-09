@@ -38,6 +38,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
+    <!-- Self-update: install downloaded APKs (system prompts once for
+         unknown-source installs on Android 8+). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- RUNTIME: SMS OTP auto-read - asked only on Login screen for Truecaller verify.
          No READ_SMS: history is never read, only the incoming code via BROADCAST_SMS. -->
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
@@ -196,6 +200,17 @@
                 <action android:name="android.telecom.CallScreeningService" />
             </intent-filter>
         </service>
+
+        <!-- FileProvider for the self-update APK (system installer reads it). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>
