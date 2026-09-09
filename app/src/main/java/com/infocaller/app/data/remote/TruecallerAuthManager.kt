@@ -13,6 +13,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 class TruecallerAuthManager(
@@ -53,16 +54,39 @@ class TruecallerAuthManager(
     }
     private fun rnd(len:Int): String { val c="abcdefghijklmnopqrstuvwxyz0123456789"; return (1..len).map{ c.random() }.joinToString("") }
 
+    private fun generateUniqueDeviceIdFor(phone: String): String {
+        val raw = (phone.filter { it.isDigit() } + "-" + System.nanoTime() + "-" + Math.random()).toByteArray()
+        val digest = MessageDigest.getInstance("SHA-256").digest(raw)
+        return digest.joinToString("") { "%02x".format(it) }.take(32)
+    }
+
+    private fun clearTruecallerDeviceStateFor(phone: String? = null) {
+        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        editor.remove("truecaller_token")
+        editor.remove("tc_device_id")
+        editor.remove("last_tc_request_id")
+        editor.remove("last_tc_method")
+        editor.remove("last_tc_phone")
+        val seedPhone = phone?.filter { it.isDigit() }
+        if (!seedPhone.isNullOrBlank()) {
+            editor.remove("tc_device_id_" + seedPhone.takeLast(11))
+        }
+        for (key in prefs.all.keys) {
+            if (key.startsWith("tc_device_id_")) {
+                editor.remove(key)
+            }
+        }
+        editor.apply()
+    }
+
     private fun freshDeviceIdFor(normalizedPhone: String): String {
         return try {
             val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             val key = "tc_device_id_" + normalizedPhone.filter { it.isDigit() }.takeLast(11)
             var did = prefs.getString(key, null)
             if (did.isNullOrBlank() || did == "9774d56d682e549c") {
-                did = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID)
-                if (did.isNullOrBlank() || did == "9774d56d682e549c") {
-                    did = rnd(16)
-                }
+                did = generateUniqueDeviceIdFor(normalizedPhone)
                 prefs.edit().putString(key, did).apply()
             }
             prefs.edit().putString("tc_device_id", did).apply()
@@ -81,11 +105,7 @@ class TruecallerAuthManager(
         val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
         val lastPhone = prefs.getString("last_tc_phone", null)?.let { PhoneNumberUtils.normalize(it) }
         if (lastPhone != null && lastPhone != norm) {
-            prefs.edit()
-                .remove("truecaller_token")
-                .remove("tc_device_id")
-                .remove("last_tc_request_id")
-                .apply()
+            clearTruecallerDeviceStateFor(lastPhone)
         }
         val deviceId = freshDeviceIdFor(norm)
         val isNewNumber = lastPhone == null || lastPhone != norm
@@ -154,6 +174,7 @@ class TruecallerAuthManager(
                 }
 
                 if (status == 5 || status == 6) {
+                    clearTruecallerDeviceStateFor(norm)
                     return@withContext OtpRequestResult("", "", 0, status, msg ?: "Too many requests. Try again after 1 hour.")
                 }
 

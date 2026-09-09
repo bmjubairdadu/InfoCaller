@@ -39,12 +39,17 @@ class AuthViewModel(
 
     fun refreshTcSession(context: android.content.Context) {
         val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-        prefs.edit()
-            .remove("tc_device_id")
-            .remove("truecaller_token")
-            .remove("last_tc_request_id")
-            .remove("last_tc_phone")
-            .apply()
+        val editor = prefs.edit()
+        editor.remove("tc_device_id")
+        editor.remove("truecaller_token")
+        editor.remove("last_tc_request_id")
+        editor.remove("last_tc_phone")
+        for (key in prefs.all.keys) {
+            if (key.startsWith("tc_device_id_")) {
+                editor.remove(key)
+            }
+        }
+        editor.apply()
     }
 
     init {
