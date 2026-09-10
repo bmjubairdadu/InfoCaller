@@ -315,9 +315,10 @@ fun DetailsScreen(
                         live?.photoCandidates
                             ?.filter { it.faceCount > 0 && it.faceConfidence >= 0.7f }
                             ?.forEach { add(it.url, it.provider, it.sourcePriority) }
-                        if (enrichment?.profileImageSource?.contains("truecaller", true) == true ||
-                            enrichment?.profileImageSource?.contains("eyecon", true) == true) {
-                            add(enrichment?.profileImageUrl, enrichment.profileImageSource ?: "verified", 90)
+                        val enrichmentSnapshot = enrichment
+                        if (enrichmentSnapshot?.profileImageSource?.contains("truecaller", true) == true ||
+                            enrichmentSnapshot?.profileImageSource?.contains("eyecon", true) == true) {
+                            add(enrichmentSnapshot?.profileImageUrl, enrichmentSnapshot?.profileImageSource ?: "verified", 90)
                         }
                         try {
                             SocialUtils.photosFromJson(enrichment?.photoCandidatesJson)

@@ -34,6 +34,14 @@ class CallerRepositoryImpl(
         return callerDao.getCaller(normalized).map { it?.toDomain() }
     }
 
+    override suspend fun getFreshCachedCaller(phoneNumber: String): Caller? {
+        val normalized = PhoneNumberUtils.normalize(phoneNumber)
+        val cached = callerDao.getCallerSync(normalized) ?: return null
+        return cached.takeIf {
+            System.currentTimeMillis() - it.lastUpdated < 7 * 24 * 60 * 60 * 1000L
+        }?.toDomain()
+    }
+
     override suspend fun searchCaller(phoneNumber: String): Caller? {
         val normalized = PhoneNumberUtils.normalize(phoneNumber)
 
@@ -42,14 +50,6 @@ class CallerRepositoryImpl(
             val age = System.currentTimeMillis() - cached.lastUpdated
             val isFresh = age < 7 * 24 * 60 * 60 * 1000L
             if (isFresh) return cached.toDomain()
-        }
-
-        override suspend fun getFreshCachedCaller(phoneNumber: String): Caller? {
-            val normalized = PhoneNumberUtils.normalize(phoneNumber)
-            val cached = callerDao.getCallerSync(normalized) ?: return null
-            return cached.takeIf {
-                System.currentTimeMillis() - it.lastUpdated < 7 * 24 * 60 * 60 * 1000L
-            }?.toDomain()
         }
 
         return try {
