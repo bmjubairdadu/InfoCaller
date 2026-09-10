@@ -255,7 +255,7 @@ fun MainScreen(
                                 color = navContent,
                             )
                             Text(
-                                "Tap Download to update",
+                                "Tap Open to get it from GitHub",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = navContent.copy(alpha = 0.6f),
                             )
@@ -263,41 +263,13 @@ fun MainScreen(
                         TextButton(
                             onClick = {
                                 try {
-                                    launchScope.launch {
-                                        com.infocaller.app.util.AppUpdateManager.downloadUpdate(
-                                            context,
-                                            com.infocaller.app.util.AppUpdateManager.ReleaseInfo(
-                                                update.version, update.notes, update.url, update.sizeBytes
-                                            )
-                                        )
-                                    }
+                                    com.infocaller.app.util.AppUpdateManager.openReleasePage(context)
                                 } catch (_: Exception) { }
                             }
-                        ) { Text("Download", color = Primary) }
+                        ) { Text("Open", color = Primary) }
                         IconButton(onClick = { updateDismissed = true }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = navContent.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
                         }
-                    }
-                }
-            }
-            if (updateState is com.infocaller.app.util.AppUpdateManager.UpdateState.Downloading) {
-                val pct = (updateState as com.infocaller.app.util.AppUpdateManager.UpdateState.Downloading).progress
-                Card(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = innerPadding.calculateTopPadding() + 8.dp)
-                        .padding(horizontal = 24.dp)
-                        .fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = navBarContainer.copy(alpha = 0.97f)),
-                ) {
-                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                        Text("Downloading update… $pct%", style = MaterialTheme.typography.labelMedium, color = navContent)
-                        Spacer(modifier = Modifier.height(6.dp))
-                        LinearProgressIndicator(
-                            progress = { pct / 100f },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
                     }
                 }
             }

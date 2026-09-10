@@ -3,10 +3,8 @@ package com.infocaller.app.data.repository
 import android.content.ContentResolver
 import android.provider.CallLog
 import android.provider.ContactsContract
-import android.provider.Telephony
 import com.infocaller.app.domain.model.CallLogEntry
 import com.infocaller.app.domain.model.Contact
-import com.infocaller.app.domain.model.SmsMessage
 import com.infocaller.app.domain.repository.DeviceDataRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -335,106 +333,5 @@ class DeviceDataRepositoryImpl(
                 if (c.moveToFirst()) c.getString(0)?.trim()?.takeIf { it.isNotBlank() } else null
             }
         } catch (_: Exception) { null }
-    }
-
-    override suspend fun deleteCallLogEntry(number: String, date: Long) {
-        try {
-            val selection = "${CallLog.Calls.NUMBER} = ? AND ${CallLog.Calls.DATE} = ?"
-            val selectionArgs = arrayOf(number, date.toString())
-            contentResolver.delete(CallLog.Calls.CONTENT_URI, selection, selectionArgs)
-        } catch (_: Exception) { }
-    }
-
-    override suspend fun clearCallLog() {
-        try {
-            contentResolver.delete(CallLog.Calls.CONTENT_URI, null, null)
-        } catch (_: Exception) { }
-    }
-
-    @OptIn(kotlinx.coroutines.FlowPreview::class)
-    override fun getMessages(): Flow<List<SmsMessage>> = callbackFlow {
-        val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) {
-                try { trySend(fetchMessagesSync()) } catch (_: Exception) { }
-            }
-        }
-
-        val registered = try {
-            contentResolver.registerContentObserver(
-                Telephony.Sms.CONTENT_URI,
-                true,
-                observer
-            )
-            true
-        } catch (_: Exception) {
-            false
-        }
-        if (!registered) {
-            trySend(emptyList())
-            close()
-            return@callbackFlow
-        }
-
-        trySend(fetchMessagesSync())
-
-        awaitClose {
-            try { contentResolver.unregisterContentObserver(observer) } catch (_: Exception) { }
-        }
-    }
-    .debounce(500L)
-    .flowOn(Dispatchers.IO)
-
-    override fun fetchMessagesSync(): List<SmsMessage> {
-        val messages = mutableListOf<SmsMessage>()
-        try {
-            val projection = arrayOf(
-                Telephony.Sms._ID,
-                Telephony.Sms.ADDRESS,
-                Telephony.Sms.BODY,
-                Telephony.Sms.DATE,
-                Telephony.Sms.TYPE,
-                Telephony.Sms.READ
-            )
-
-            val cursor = contentResolver.query(
-                Telephony.Sms.CONTENT_URI,
-                projection,
-                null,
-                null,
-                Telephony.Sms.DATE + " DESC"
-            )
-
-            cursor?.use {
-                val idIdx = it.getColumnIndex(Telephony.Sms._ID)
-                val addressIdx = it.getColumnIndex(Telephony.Sms.ADDRESS)
-                val bodyIdx = it.getColumnIndex(Telephony.Sms.BODY)
-                val dateIdx = it.getColumnIndex(Telephony.Sms.DATE)
-                val typeIdx = it.getColumnIndex(Telephony.Sms.TYPE)
-                val readIdx = it.getColumnIndex(Telephony.Sms.READ)
-
-                while (it.moveToNext()) {
-                    messages.add(
-                        SmsMessage(
-                            id = it.getLong(idIdx),
-                            address = it.getString(addressIdx) ?: "",
-                            body = it.getString(bodyIdx) ?: "",
-                            date = it.getLong(dateIdx),
-                            type = it.getInt(typeIdx),
-                            read = it.getInt(readIdx)
-                        )
-                    )
-                }
-            }
-        } catch (e: Exception) {
-        }
-        return messages
-    }
-
-    override suspend fun deleteSms(id: Long) {
-        try {
-            val selection = "${Telephony.Sms._ID} = ?"
-            val selectionArgs = arrayOf(id.toString())
-            contentResolver.delete(Telephony.Sms.CONTENT_URI, selection, selectionArgs)
-        } catch (_: Exception) { }
     }
 }

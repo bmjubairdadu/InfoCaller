@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<paths>
-    <!-- Self-update APKs land in getExternalFilesDir(DOWNLOADS); expose them
-         to the system package installer via FileProvider. -->
-    <external-files-path name="downloads" path="Download/" />
-</paths>

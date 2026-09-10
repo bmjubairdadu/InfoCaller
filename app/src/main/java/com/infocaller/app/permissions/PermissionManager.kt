@@ -54,7 +54,6 @@ object PermissionManager {
         Manifest.permission.WRITE_CONTACTS
     )
     val CALL_LOG_PERMISSIONS = arrayOf(Manifest.permission.READ_CALL_LOG)
-    val WRITE_CALL_LOG_PERMISSION = arrayOf(Manifest.permission.WRITE_CALL_LOG)
 
     val NOTIFICATION_PERMISSION = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         arrayOf(Manifest.permission.POST_NOTIFICATIONS)

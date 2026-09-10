@@ -16,9 +16,10 @@
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
 
-    <!-- RUNTIME: call history (asked when you open Recents) -->
+    <!-- RUNTIME: call history (asked when you open Recents).
+         READ-ONLY: InfoCaller only lists recent calls. Deleting or clearing
+         call history is not supported, so no WRITE permission is requested. -->
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
-    <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
 
     <!-- RUNTIME: contacts (asked when you open Contacts) -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
@@ -38,9 +39,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
-    <!-- Self-update: install downloaded APKs (system prompts once for
-         unknown-source installs on Android 8+). -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Update checks only read the public GitHub release page metadata.
+         New versions open in the browser — the app never downloads or
+         installs APK files itself, so no install permission is needed. -->
 
     <!-- RUNTIME: SMS OTP auto-read - asked only on Login screen for Truecaller verify.
          No READ_SMS: history is never read, only the incoming code via BROADCAST_SMS. -->
@@ -201,16 +202,6 @@
             </intent-filter>
         </service>
 
-        <!-- FileProvider for the self-update APK (system installer reads it). -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
     </application>
 
 </manifest>

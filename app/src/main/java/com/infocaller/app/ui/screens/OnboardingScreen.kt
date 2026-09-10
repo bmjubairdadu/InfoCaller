@@ -46,10 +46,9 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     val basicPermQueue = remember {
         listOf(
             PermissionManager.CALL_LOG_PERMISSIONS.toList() to "Call logs",
-            (PermissionManager.CONTACTS_PERMISSIONS + PermissionManager.RECORD_AUDIO_PERMISSION).toList() to "Contacts and microphone",
+            PermissionManager.CONTACTS_PERMISSIONS.toList() to "Contacts",
             (PermissionManager.DIALER_PERMISSIONS + PermissionManager.CALLER_ID_PERMISSIONS + arrayOf(android.Manifest.permission.ANSWER_PHONE_CALLS)).toList() to "Phone & call management",
             PermissionManager.WRITE_CONTACTS_PERMISSION.toList() to "Save caller photos",
-            PermissionManager.SMS_PERMISSION.toList() to "SMS verification",
         )
     }
     var permQueueIndex by rememberSaveable { mutableIntStateOf(-1) }
@@ -413,7 +412,7 @@ fun BasicPermissionsStageBody(
         Text("Basic Permissions", style = MaterialTheme.typography.headlineLarge, color = contentPrimary)
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            "InfoCaller needs call logs, contacts, phone state, and message access for caller ID, spam protection, and verification. Tap OK in the popup and each permission is requested one after another.",
+            "InfoCaller needs call logs, contacts, and phone state for caller ID and spam protection. SMS code auto-read is asked only on the Login screen, and microphone only when you tap Record. Tap OK in the popup and each permission is requested one after another.",
             textAlign = TextAlign.Center,
             color = contentSecondary(0.7f)
         )

@@ -42,10 +42,22 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
                 .padding(24.dp)
         ) {
             PolicySection("Information We Collect",
-                "InfoCaller reads contact information, call logs, and phone state on this device to provide caller identification features. Everything stays on your device except anonymous lookups you trigger.")
+                "InfoCaller reads contact information, call logs (read-only), and phone state on this device to provide caller identification features. Everything stays on your device except anonymous lookups you trigger.")
 
             PolicySection("No Uploads",
                 "This version of InfoCaller never uploads your contacts, call history, or any personal data anywhere. There is no contribution queue, no shared registry, and no owner-profile publishing: the background contribution and profile-publish features were removed because their backend never existed. Lookups only query public sources for numbers, emails, or usernames you explicitly search.")
+
+            PolicySection("SMS — OTP Only",
+                "SMS permission (RECEIVE_SMS) is asked only on the Login screen for Truecaller OTP auto-read. The app never reads your SMS inbox, never stores message content, and never sends SMS. Incoming texts are scanned only for the verification code while a login is pending.")
+
+            PolicySection("Call Log — Read Only",
+                "Call history is listed on the Recents tab only. InfoCaller cannot delete or clear your call history — no write permission is requested.")
+
+            PolicySection("Updates — Browser Only",
+                "Update checks only read public GitHub release metadata. New versions open in your browser — the app never downloads or installs APK files itself.")
+
+            PolicySection("Microphone — Only When You Tap Record",
+                "Microphone access is requested only when you tap a Record button during a call, never during setup. Recording is always disclosed with an on-screen indicator.")
 
             PolicySection("Data Enrichment",
                 "We use public providers (like Truecaller, WhatsApp public data) and a shared registry to enrich caller information. This data is merged to provide the best possible identification.")

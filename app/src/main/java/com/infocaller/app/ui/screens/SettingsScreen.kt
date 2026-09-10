@@ -375,17 +375,12 @@ private fun AppUpdateRow() {
             val mb = if (s.sizeBytes > 0) " • ${(s.sizeBytes / 1048576)} MB" else ""
             SettingsClickRow(
                 title = "Update to v${s.version}",
-                subtitle = "New version available$mb — tap to download",
+                subtitle = "New version available$mb — tap to open release page",
                 icon = Icons.Default.Download,
                 onClick = {
-                    scope.launch {
-                        try {
-                            com.infocaller.app.util.AppUpdateManager.downloadUpdate(
-                                context,
-                                com.infocaller.app.util.AppUpdateManager.ReleaseInfo(s.version, s.notes, s.url, s.sizeBytes)
-                            )
-                        } catch (_: Exception) { }
-                    }
+                    try {
+                        com.infocaller.app.util.AppUpdateManager.openReleasePage(context)
+                    } catch (_: Exception) { }
                 }
             )
             if (s.notes.isNotBlank()) {
@@ -396,32 +391,6 @@ private fun AppUpdateRow() {
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
                 )
             }
-        }
-        is com.infocaller.app.util.AppUpdateManager.UpdateState.Downloading -> {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Downloading update… ${s.progress}%", style = MaterialTheme.typography.bodyMedium)
-                Spacer(modifier = Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = { s.progress / 100f },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-        is com.infocaller.app.util.AppUpdateManager.UpdateState.Ready -> {
-            SettingsClickRow(
-                title = "Install update",
-                subtitle = "Download finished — open installer",
-                icon = Icons.Default.InstallMobile,
-                onClick = {
-                    try {
-                        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
-                        val id = context.getSharedPreferences("app_update", Context.MODE_PRIVATE).getLong("download_id", -1L)
-                        if (id != -1L) {
-                            com.infocaller.app.util.AppUpdateManager.openInstaller(context, dm.getUriForDownloadedFile(id))
-                        }
-                    } catch (_: Exception) { }
-                }
-            )
         }
         is com.infocaller.app.util.AppUpdateManager.UpdateState.Failed -> {
             SettingsClickRow(

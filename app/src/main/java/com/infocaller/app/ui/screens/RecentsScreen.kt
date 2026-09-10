@@ -59,14 +59,6 @@ fun RecentsScreen(
         hasPermission = results.values.all { it }
         if (hasPermission) viewModel.refreshDeviceData()
     }
-    val writeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
-        if (results.values.all { it }) viewModel.clearAllCallLogs()
-    }
-    fun requestClearAll() {
-        val missing = PermissionManager.missingPermissions(context, PermissionManager.WRITE_CALL_LOG_PERMISSION)
-        if (missing.isEmpty()) viewModel.clearAllCallLogs()
-        else writeLauncher.launch(missing)
-    }
     var permissionRequested by rememberSaveable { mutableStateOf(false) }
     fun requestMissingCallLog() {
         val missing = PermissionManager.missingPermissions(context, PermissionManager.CALL_LOG_PERMISSIONS)
@@ -108,11 +100,6 @@ fun RecentsScreen(
                 Surface(color = topBarScrim(), modifier = Modifier.glassy(blur = 20.dp, radius = 0.dp)) {
                     TopAppBar(
                         title = { Text("Activity", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = contentPrimary) },
-                        actions = {
-                            IconButton(onClick = { requestClearAll() }) {
-                                Icon(Icons.Default.DeleteSweep, contentDescription = "Clear All", tint = contentSecondary(0.6f))
-                            }
-                        },
                         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                         windowInsets = WindowInsets.statusBars
                     )
@@ -122,7 +109,7 @@ fun RecentsScreen(
         ) { screenPadding ->
             Box(modifier = Modifier.fillMaxSize()) {
                 if (!hasPermission) {
-                    PermissionEmptyState(title = "Recents Permission", description = "To show your call history, InfoCaller reads your call log here — only this permission, only on this tab. Deleting history asks separately when you tap it.", onGrant = { requestMissingCallLog() })
+                    PermissionEmptyState(title = "Recents Permission", description = "To show your call history, InfoCaller reads your call log here — only this permission, only on this tab. History is never deleted or modified.", onGrant = { requestMissingCallLog() })
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),

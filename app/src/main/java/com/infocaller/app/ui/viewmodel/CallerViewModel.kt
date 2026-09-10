@@ -341,10 +341,6 @@ class CallerViewModel(
         return contactEnrichmentService.saveContactFast(phoneNumber, name, photoUrl)
     }
 
-    fun deleteCallLog(number: String, date: Long) { viewModelScope.launch { deviceDataRepository.deleteCallLogEntry(number, date) } }
-    fun clearAllCallLogs() { viewModelScope.launch { deviceDataRepository.clearCallLog() } }
-    fun deleteSms(id: Long) { viewModelScope.launch { deviceDataRepository.deleteSms(id) } }
-
     val localContacts: StateFlow<List<LocalContactEntity>> = database.localContactDao().getAllContacts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 

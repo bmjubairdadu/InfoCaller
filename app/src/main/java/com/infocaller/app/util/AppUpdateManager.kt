@@ -1,15 +1,9 @@
 package com.infocaller.app.util
 
-import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import android.util.Log
-import androidx.core.content.FileProvider
 import com.infocaller.app.BuildConfig
 import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
@@ -19,22 +13,19 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
-import java.io.File
 import java.util.concurrent.TimeUnit
 
 object AppUpdateManager {
     private const val REPO = "bmjubairdadu/InfoCaller"
     private const val PREFS = "app_update"
     private const val KEY_LAST_CHECK = "last_check_ms"
-    private const val KEY_DOWNLOAD_ID = "download_id"
     private const val CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000L
+    private const val RELEASE_PAGE_URL = "https://github.com/bmjubairdadu/InfoCaller/releases/latest"
 
     sealed interface UpdateState {
         data object Idle : UpdateState
         data object Checking : UpdateState
         data class Available(val version: String, val notes: String, val sizeBytes: Long, val url: String) : UpdateState
-        data class Downloading(val progress: Int) : UpdateState
-        data class Ready(val file: File) : UpdateState
         data class Failed(val reason: String) : UpdateState
     }
 
@@ -151,114 +142,14 @@ object AppUpdateManager {
         } catch (_: Exception) { false }
     }
 
-    fun downloadUpdate(context: Context, info: ReleaseInfo) {
+    fun openReleasePage(context: Context) {
         try {
-            _state.value = UpdateState.Downloading(0)
-            val fileName = "InfoCaller-v${info.version}-update.apk"
-            val req = DownloadManager.Request(Uri.parse(info.apkUrl))
-                .setTitle("InfoCaller v${info.version}")
-                .setDescription("Downloading update…")
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, fileName)
-                .setAllowedOverMetered(true)
-                .setAllowedOverRoaming(false)
-            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            val id = dm.enqueue(req)
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putLong(KEY_DOWNLOAD_ID, id).apply()
-            registerCompletionReceiver(context.applicationContext)
-            pollProgress(context.applicationContext, id, fileName)
-        } catch (e: Exception) {
-            _state.value = UpdateState.Failed(e.message ?: "Download failed")
-        }
-    }
-
-    private fun registerCompletionReceiver(appContext: Context) {
-        try {
-            val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                appContext.registerReceiver(downloadReceiver, filter, Context.RECEIVER_EXPORTED)
-            } else {
-                @Suppress("UnspecifiedRegisterReceiverFlag")
-                appContext.registerReceiver(downloadReceiver, filter)
-            }
-        } catch (_: Exception) { }
-    }
-
-    private val downloadReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            try {
-                val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
-                val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_DOWNLOAD_ID, -1L)
-                if (id != saved) return
-                val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                val q = DownloadManager.Query().setFilterById(id)
-                dm.query(q)?.use { c ->
-                    if (!c.moveToFirst()) return
-                    val status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                        val uri = dm.getUriForDownloadedFile(id)
-                        val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-                            "InfoCaller-update.apk")
-                        openInstaller(context, uri)
-                        _state.value = UpdateState.Ready(file)
-                    } else if (status == DownloadManager.STATUS_FAILED) {
-                        _state.value = UpdateState.Failed("Download failed")
-                    }
-                }
-            } catch (e: Exception) {
-                _state.value = UpdateState.Failed(e.message ?: "Download failed")
-            }
-            try { context.unregisterReceiver(this) } catch (_: Exception) { }
-        }
-    }
-
-    private fun pollProgress(appContext: Context, id: Long, fileName: String) {
-        Thread({
-            try {
-                val dm = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                while (_state.value is UpdateState.Downloading) {
-                    Thread.sleep(800)
-                    try {
-                        dm.query(DownloadManager.Query().setFilterById(id))?.use { c ->
-                            if (!c.moveToFirst()) return@use
-                            val status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                            when (status) {
-                                DownloadManager.STATUS_RUNNING -> {
-                                    val total = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
-                                    val done = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
-                                    val pct = if (total > 0) ((done * 100) / total).toInt().coerceIn(0, 100) else 0
-                                    _state.value = UpdateState.Downloading(pct)
-                                }
-                                DownloadManager.STATUS_SUCCESSFUL -> return@Thread
-                                DownloadManager.STATUS_FAILED -> {
-                                    _state.value = UpdateState.Failed("Download failed")
-                                    return@Thread
-                                }
-                                else -> Unit
-                            }
-                        }
-                    } catch (_: Exception) { return@Thread }
-                }
-            } catch (_: Exception) { }
-        }, "update-progress").apply { isDaemon = true }.start()
-    }
-
-    fun openInstaller(context: Context, apkUri: Uri) {
-        try {
-            val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
-                "InfoCaller-v${(_state.value as? UpdateState.Available)?.version}-update.apk")
-            val uri = if (apkUri.scheme == "content") apkUri else try {
-                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            } catch (_: Exception) { apkUri }
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(RELEASE_PAGE_URL)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
         } catch (e: Exception) {
-            _state.value = UpdateState.Failed(e.message ?: "Cannot open installer")
+            _state.value = UpdateState.Failed(e.message ?: "Cannot open browser")
         }
     }
 
