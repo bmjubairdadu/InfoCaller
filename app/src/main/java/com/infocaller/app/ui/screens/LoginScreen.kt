@@ -86,35 +86,33 @@ fun LoginScreen(
 
     val verifyPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
+    ) { _ ->
         autoFillEnabled = PermissionManager.hasPermissions(context, PermissionManager.VERIFY_PERMISSIONS)
-        if (results.values.all { it } && autoFillEnabled) {
-            tcLoading = true
-            authError = null
-            verifyError = null
-            verifyErrorPopup = null
-            autoConsumedCodes = emptySet()
-            OtpManager.clearOtp()
-            OtpManager.clearMissedCallTail()
-            scope.launch {
-                val normalized = PhoneNumberUtils.normalize(tcPhone)
-                val r = authManager.requestOtp(normalized)
-                val result = if (r != null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
-                if (result == null) {
-                    authError = "Connection error — check internet"
-                    verifyErrorPopup = authError
-                } else if (result.statusCode == -1) {
-                    authError = result.errorMessage ?: "Connection error. Check your internet."
-                    verifyErrorPopup = authError
-                } else if (result.requestId.isBlank() && result.statusCode != 3) {
-                    authError = result.errorMessage?.takeIf { it.isNotBlank() }
-                        ?: "Verification service unavailable (Error ${result.statusCode})."
-                    verifyErrorPopup = authError
-                } else {
-                    viewModel.setTcAuthResult(result)
-                }
-                tcLoading = false
+        verifyError = null
+        verifyErrorPopup = null
+        tcLoading = true
+        authError = null
+        autoConsumedCodes = emptySet()
+        OtpManager.clearOtp()
+        OtpManager.clearMissedCallTail()
+        scope.launch {
+            val normalized = PhoneNumberUtils.normalize(tcPhone)
+            val r = authManager.requestOtp(normalized)
+            val result = if (r != null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
+            if (result == null) {
+                authError = "Connection error — check internet"
+                verifyErrorPopup = authError
+            } else if (result.statusCode == -1) {
+                authError = result.errorMessage ?: "Connection error. Check your internet."
+                verifyErrorPopup = authError
+            } else if (result.requestId.isBlank() && result.statusCode != 3) {
+                authError = result.errorMessage?.takeIf { it.isNotBlank() }
+                    ?: "Verification service unavailable (Error ${result.statusCode})."
+                verifyErrorPopup = authError
+            } else {
+                viewModel.setTcAuthResult(result)
             }
+            tcLoading = false
         }
     }
     val smsPermissionLauncher = verifyPermissionLauncher
@@ -575,29 +573,30 @@ fun LoginScreen(
                     TextButton(onClick = { verifyErrorPopup = null }) {
                         Text("OK", color = Primary, fontWeight = FontWeight.Bold)
                     }
-                    if (showVerifyPermissionsPopup) {
-                        AlertDialog(
-                            onDismissRequest = { showVerifyPermissionsPopup = false },
-                            icon = { Icon(Icons.Default.VerifiedUser, null, tint = Primary) },
-                            title = { Text("Verification permissions") },
-                            text = {
-                                Text(
-                                    "InfoCaller needs SMS, call logs, and phone-call access to receive the verification code and verify it automatically.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                            },
-                            confirmButton = {
-                                TextButton(onClick = {
-                                    showVerifyPermissionsPopup = false
-                                    verifyPermissionLauncher.launch(PermissionManager.VERIFY_PERMISSIONS)
-                                }) { Text("Allow", color = Primary, fontWeight = FontWeight.Bold) }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { showVerifyPermissionsPopup = false }) {
-                                    Text("Not now", color = contentSecondary(0.7f))
-                                }
-                            }
-                        )
+                }
+            )
+        }
+
+        if (showVerifyPermissionsPopup) {
+            AlertDialog(
+                onDismissRequest = { showVerifyPermissionsPopup = false },
+                icon = { Icon(Icons.Default.VerifiedUser, null, tint = Primary) },
+                title = { Text("Verification permissions") },
+                text = {
+                    Text(
+                        "InfoCaller needs SMS, call logs, and phone-call access to receive the verification code and verify it automatically.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showVerifyPermissionsPopup = false
+                        verifyPermissionLauncher.launch(PermissionManager.VERIFY_PERMISSIONS)
+                    }) { Text("Allow", color = Primary, fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showVerifyPermissionsPopup = false }) {
+                        Text("Not now", color = contentSecondary(0.7f))
                     }
                 }
             )
