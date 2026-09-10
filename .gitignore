@@ -23,3 +23,7 @@ google-services.json
 
 # large local dataset - fetch at runtime, not in repo
 app/src/main/assets/database.json
+
+# never commit built APKs - upload to GitHub Releases instead
+*.apk
+InfoCaller-*.apk

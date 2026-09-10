@@ -190,17 +190,77 @@ object SocialUtils {
 
     fun filteredUsedProfiles(profiles: List<SocialProfile>): List<SocialProfile> {
         return profiles.filter { p ->
+            val platform = p.platform.trim().lowercase()
+            // Never show aggregator / placeholder platforms as "accounts".
+            if (platform.isBlank()) return@filter false
+            if (platform in setOf(
+                    "generic", "unknown", "sync.me", "syncme", "sync",
+                    "truecaller", " callerid", "caller id", "osint", "search"
+                )) return@filter false
+            // Only verified accounts: opened/confirmed with this number or email.
+            // POSSIBLE_MATCH = guess (wa.me blind link, name-derived handle) -> hide.
+            // NOT_FOUND / UNKNOWN / UNSUPPORTED / error -> skip, do not show.
+            when (p.status) {
+                SocialLookupStatus.CONFIRMED,
+                SocialLookupStatus.PUBLIC_MATCH -> Unit
+                else -> return@filter false
+            }
             val url = p.profileUrl?.trim().orEmpty()
             if (url.isBlank()) return@filter false
-            val okStatus = when (p.status) {
-                SocialLookupStatus.CONFIRMED,
-                SocialLookupStatus.PUBLIC_MATCH,
-                SocialLookupStatus.POSSIBLE_MATCH -> true
-                else -> url.startsWith("http", ignoreCase = true) &&
-                    !url.equals("http", ignoreCase = true) &&
-                    url.length > 12
+            if (!url.startsWith("http", ignoreCase = true)) return@filter false
+            if (url.equals("http", ignoreCase = true)) return@filter false
+            if (url.length < 20) return@filter false
+            val lower = url.lowercase()
+            // Must point to a concrete profile, not a homepage / search page.
+            if (lower in setOf(
+                    "https://facebook.com", "https://facebook.com/",
+                    "https://instagram.com", "https://instagram.com/",
+                    "https://linkedin.com", "https://linkedin.com/",
+                    "https://twitter.com", "https://twitter.com/",
+                    "https://x.com", "https://x.com/",
+                    "https://wa.me", "https://wa.me/",
+                    "https://t.me", "https://t.me/",
+                    "https://sync.me", "https://sync.me/"
+                )) return@filter false
+            if (lower.contains("sync.me/search")) return@filter false
+            // Path must contain a handle/id beyond the domain.
+            try {
+                val afterScheme = lower.substringAfter("://")
+                val slash = afterScheme.indexOf('/')
+                if (slash < 0) return@filter false
+                val path = afterScheme.substring(slash + 1).trim().trim('/')
+                if (path.isEmpty()) return@filter false
+                // wa.me/<digits> and t.me/+<digits> are ok (phone-verified only).
+                // Other platforms need a real handle.
+                val isPhoneHandle = platform == "whatsapp" || platform == "telegram"
+                if (!isPhoneHandle && path.length < 2) return@filter false
+            } catch (_: Exception) { return@filter false }
+            // Need at least a username or display name to show inline (no bare links).
+            val user = p.username?.trim().orEmpty()
+            val disp = p.displayName?.trim().orEmpty()
+            if (user.isBlank() && disp.isBlank()) {
+                // WhatsApp/Telegram via phone digits still ok (digits are the handle).
+                if (platform != "whatsapp" && platform != "telegram") return@filter false
             }
-            okStatus && p.platform.lowercase() !in setOf("generic", "unknown")
+            true
         }.distinctBy { it.platform.lowercase() }
+    }
+
+    /** True if this URL can be shown as a profile photo (rejects placeholders / logos). */
+    fun isUsablePhotoUrl(url: String?): Boolean {
+        val u = url?.trim().orEmpty()
+        if (u.isBlank() || !u.startsWith("http")) return false
+        if (u.length < 20) return false
+        val lower = u.lowercase()
+        if (lower.contains("sync.me")) return false
+        if (lower.contains("rsrc.php")) return false
+        if (lower.contains("placeholder") || lower.contains("default_avatar") ||
+            lower.contains("default-avatar") || lower.contains("no_photo") ||
+            lower.contains("no-photo") || lower.contains("anonymous") ||
+            lower.contains("logo") && (lower.contains("sync") || lower.contains("truecaller") && lower.endsWith(".png"))
+        ) return false
+        // Truecaller web search pages are HTML, not images.
+        if (lower.contains("truecaller.com/search") || lower.contains("truecaller.com/bd")) return false
+        return true
     }
 }
