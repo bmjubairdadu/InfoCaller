@@ -41,7 +41,7 @@ class TruecallerAuthManager(
     )
 
     private fun deviceIdReal(): String {
-        val prefs = context.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
         var did = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
         if (did.isNullOrBlank() || did == "9774d56d682e549c") {
             did = prefs.getString("tc_device_id", null)
@@ -70,12 +70,9 @@ class TruecallerAuthManager(
         editor.remove("last_tc_phone")
         val seedPhone = phone?.filter { it.isDigit() }
         if (!seedPhone.isNullOrBlank()) {
-            editor.remove("tc_device_id_" + seedPhone.takeLast(11))
-        }
-        for (key in prefs.all.keys) {
-            if (key.startsWith("tc_device_id_")) {
-                editor.remove(key)
-            }
+            val phoneKey = seedPhone.takeLast(11)
+            editor.remove("tc_device_id_$phoneKey")
+            editor.remove("tc_otp_sequence_$phoneKey")
         }
         editor.apply()
     }
@@ -108,8 +105,9 @@ class TruecallerAuthManager(
             clearTruecallerDeviceStateFor(lastPhone)
         }
         val deviceId = freshDeviceIdFor(norm)
-        val isNewNumber = lastPhone == null || lastPhone != norm
-        val seqNo = if (isNewNumber) 1 else 2
+        val phoneKey = norm.filter { it.isDigit() }.takeLast(11)
+        val sequenceKey = "tc_otp_sequence_$phoneKey"
+        val seqNo = (prefs.getInt(sequenceKey, 0) + 1).coerceAtMost(2)
 
         val body = JsonObject().apply {
             addProperty("countryCode", cc); addProperty("dialingCode", dial)
@@ -161,6 +159,7 @@ class TruecallerAuthManager(
                         .putString("last_tc_request_id", rid)
                         .putString("last_tc_phone", PhoneNumberUtils.normalize(phone))
                         .putString("last_tc_method", method)
+                        .putInt(sequenceKey, seqNo)
                         .apply()
                     return@withContext OtpRequestResult(rid, method, ttl, status, msg)
                 }
