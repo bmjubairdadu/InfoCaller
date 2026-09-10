@@ -52,15 +52,13 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
                     val body = r.body?.string().orEmpty()
                     val title = Regex("""<title>(.*?)</title>""", RegexOption.IGNORE_CASE)
                         .find(body)?.groupValues?.getOrNull(1)?.trim()
-                    if (!title.isNullOrBlank() && !title.contains("Sync.ME", true) && title.length in 3..60) {
+                    // Only use the name pivot; never use sync.me og:image/description:
+                    // it is a site logo / SEO text, not the person's photo/about.
+                    // Never emit a "Sync.ME" SocialProfile either (not a real account).
+                    if (!title.isNullOrBlank() && !title.contains("Sync.ME", true) &&
+                        !title.contains("not found", true) && title.length in 3..60) {
                         name = title
-                        socials.add(SocialProfile("Sync.ME", title, "https://sync.me/search/?number=$enc", SocialLookupStatus.PUBLIC_MATCH))
                     }
-                    Regex("""<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-                        .find(body)?.groupValues?.getOrNull(1)?.takeIf { it.startsWith("http") }?.let { photo = it }
-                    Regex("""<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-                        .find(body)?.groupValues?.getOrNull(1)?.trim()?.take(300)
-                        ?.takeIf { it.length > 20 }?.let { about = it }
                 }
             }
         } catch (_: Exception) { }
