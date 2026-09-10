@@ -42,7 +42,6 @@ class MusicCreatorProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                 socials.add(SocialProfile("SoundCloud", handle, url, SocialLookupStatus.PUBLIC_MATCH))
             }
         } catch (_: Exception) { }
-        } catch (_: Exception) { }
         // Spotify search page is not a real account (no verified handle page),
         // so never emit it as a "Linked Account" — only verified profile pages.
         if (socials.isEmpty()) return@withContext null
