@@ -1,16 +1,25 @@
 package com.infocaller.app.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.window.Dialog
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -31,6 +40,7 @@ import com.infocaller.app.ui.viewmodel.AuthViewModel
 import com.infocaller.app.ui.components.InfoCallerLoading
 import com.infocaller.app.ui.components.OtpInputField
 import com.infocaller.app.ui.theme.Primary
+import com.infocaller.app.ui.theme.Secondary
 import com.infocaller.app.ui.theme.TruecallerBlue
 import com.infocaller.app.ui.theme.brandGradient
 import com.infocaller.app.ui.theme.contentPrimary
@@ -578,27 +588,169 @@ fun LoginScreen(
         }
 
         if (showVerifyPermissionsPopup) {
-            AlertDialog(
-                onDismissRequest = { showVerifyPermissionsPopup = false },
-                icon = { Icon(Icons.Default.VerifiedUser, null, tint = Primary) },
-                title = { Text("Verification permissions") },
-                text = {
-                    Text(
-                        "InfoCaller needs SMS, call logs, and phone-call access to receive the verification code and verify it automatically.",
-                        style = MaterialTheme.typography.bodyMedium,
+            VerifyPermissionsDialog(
+                onAllow = {
+                    showVerifyPermissionsPopup = false
+                    verifyPermissionLauncher.launch(PermissionManager.VERIFY_PERMISSIONS)
+                },
+                onDismiss = { showVerifyPermissionsPopup = false }
+            )
+        }
+    }
+}
+
+@Composable
+private fun VerifyPermissionsDialog(
+    onAllow: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(28.dp))
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0xFF141B2D), Color(0xFF0B1120))
                     )
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        showVerifyPermissionsPopup = false
-                        verifyPermissionLauncher.launch(PermissionManager.VERIFY_PERMISSIONS)
-                    }) { Text("Allow", color = Primary, fontWeight = FontWeight.Bold) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showVerifyPermissionsPopup = false }) {
-                        Text("Not now", color = contentSecondary(0.7f))
-                    }
-                }
+                )
+                .border(
+                    width = 1.dp,
+                    brush = Brush.verticalGradient(
+                        listOf(
+                            Primary.copy(alpha = 0.55f),
+                            Primary.copy(alpha = 0.08f),
+                        )
+                    ),
+                    shape = RoundedCornerShape(28.dp),
+                )
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(CircleShape)
+                    .brandGradient(radius = 36.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.VerifiedUser,
+                    contentDescription = null,
+                    tint = Color.Black,
+                    modifier = Modifier.size(36.dp),
+                )
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            Text(
+                "Verify your number",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color.White,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                "Allow these once — the code is picked up automatically and you jump straight to OTP.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.65f),
+                textAlign = TextAlign.Center,
+                lineHeight = 18.sp,
+            )
+            Spacer(modifier = Modifier.height(18.dp))
+
+            VerifyPermissionRow(
+                icon = Icons.Default.Sms,
+                accent = TruecallerBlue,
+                title = "SMS",
+                desc = "Reads only the incoming verification code — inbox is never opened.",
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            VerifyPermissionRow(
+                icon = Icons.Default.History,
+                accent = Secondary,
+                title = "Call log",
+                desc = "Detects the missed-call verification so OTP fills without typing.",
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            VerifyPermissionRow(
+                icon = Icons.Default.Call,
+                accent = Primary,
+                title = "Phone",
+                desc = "Confirms your SIM number and ends the verify call automatically.",
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .brandGradient(radius = 16.dp)
+                    .clickable(onClick = onAllow),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "Allow & Continue",
+                    color = Color.Black,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 16.sp,
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(onClick = onDismiss) {
+                Text(
+                    "Not now",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 13.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VerifyPermissionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accent: Color,
+    title: String,
+    desc: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.White.copy(alpha = 0.06f))
+            .border(
+                width = 1.dp,
+                color = Color.White.copy(alpha = 0.10f),
+                shape = RoundedCornerShape(18.dp),
+            )
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(accent.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(24.dp))
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                desc,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.62f),
+                lineHeight = 17.sp,
             )
         }
     }
