@@ -38,25 +38,124 @@ object VillageResolver {
 
     data class PlaceCandidate(val raw: String, val repaired: String, val wasRepaired: Boolean)
 
-    fun extractPlaceCandidates(fullName: String?): List<PlaceCandidate> {
+    data class MapHint(
+        val title: String,
+        val query: String,
+        val mapsUrl: String,
+        val kind: String, // "place" | "compound" | "brand-landmark"
+        val fixedFrom: String? = null,
+    )
+
+    fun mapsUrlFor(query: String): String {
+        return try {
+            "https://www.google.com/maps/search/?api=1&query=${java.net.URLEncoder.encode("$query, Bangladesh", "UTF-8")}"
+        } catch (_: Exception) {
+            "https://www.google.com/maps/search/?api=1&query=${query.replace(" ", "+")}+Bangladesh"
+        }
+    }
+
+    private fun tokensOf(fullName: String?): List<String> {
         if (fullName.isNullOrBlank()) return emptyList()
-        val tokens = fullName.trim()
+        return fullName.trim()
             .split(Regex("[\\s,\\-_/()\\[\\].|]+")).map { it.trim() }.filter { it.length >= 3 }
+    }
+
+    fun extractPlaceCandidates(fullName: String?): List<PlaceCandidate> {
+        val tokens = tokensOf(fullName)
         if (tokens.size < 2) return emptyList()
         val first = tokens.first().lowercase()
-        val tail = tokens.drop(1).filter { it.lowercase() !in HONORIFICS }
+        val firstIsBrand = BdPlaceGazetteer.isBrand(first)
+        // Keep brand first-token (e.g. "Walton Akram Checkpost" -> keep Walton).
+        // Otherwise first token is usually the person's given name -> skip it.
+        val tail = if (firstIsBrand) tokens.filter { it.lowercase() !in HONORIFICS }
+        else tokens.drop(1).filter { it.lowercase() !in HONORIFICS }
         if (tail.isEmpty()) return emptyList()
         return tail.mapNotNull { tok ->
             val low = tok.lowercase()
             if (low in STOP) return@mapNotNull null
-            if (low in PERSON_TOKENS) return@mapNotNull null
-            if (low == first) return@mapNotNull null
+            // Brands + landmarks are anchors, never drop as person names.
+            val isAnchor = BdPlaceGazetteer.isBrand(low) || BdPlaceGazetteer.isLandmark(low)
+            if (!isAnchor && low in PERSON_TOKENS) return@mapNotNull null
+            if (!firstIsBrand && low == first) return@mapNotNull null
             if (!tok.any { it.isLetter() }) return@mapNotNull null
             if (tok.count { it.isLetterOrDigit() } < 3) return@mapNotNull null
             if (tok.count { it.isDigit() } >= 4) return@mapNotNull null
             val repaired = BdPlaceGazetteer.repair(low)
             PlaceCandidate(raw = tok, repaired = repaired, wasRepaired = !repaired.equals(low, ignoreCase = true))
         }
+    }
+
+    /**
+     * Build Google-Maps hints from a caller-ID / contact name.
+     * Examples:
+     *  "Ashraful vai sujonsha" -> [Sujonsaha (fixed from sujonsha)]
+     *  "Walton Akram Checkpost" -> [Walton showroom near Akram checkpost,
+     *                                Akram checkpost, Walton Akram checkpost]
+     */
+    fun buildMapHints(fullName: String?): List<MapHint> {
+        val tokens = tokensOf(fullName).filter { it.lowercase() !in HONORIFICS }
+        if (tokens.size < 2) return emptyList()
+        val repaired = tokens.map { BdPlaceGazetteer.repair(it.lowercase()) }
+        val lowers = tokens.map { it.lowercase() }
+
+        val hasBrand = lowers.any { BdPlaceGazetteer.isBrand(it) } ||
+            repaired.any { BdPlaceGazetteer.isBrand(it) }
+        val hasLandmark = lowers.any { BdPlaceGazetteer.isLandmark(it) } ||
+            repaired.any { BdPlaceGazetteer.isLandmark(it) }
+
+        // Case 1: brand + landmark compound, e.g. "walton akram checkpost".
+        if (hasBrand && hasLandmark) {
+            val brandTok = repaired.firstOrNull { BdPlaceGazetteer.isBrand(it) }
+                ?: lowers.firstOrNull { BdPlaceGazetteer.isBrand(it) } ?: "walton"
+            val brandDisp = brandTok.replaceFirstChar { it.uppercase() }
+            // Middle anchors = everything except brand + landmark tokens.
+            val middles = repaired.filter { !BdPlaceGazetteer.isBrand(it) && !BdPlaceGazetteer.isLandmark(it) }
+                .filter { it !in STOP && it !in PERSON_TOKENS }
+            val landmarkPhrase = repaired.filter { BdPlaceGazetteer.isLandmark(it) }
+                .joinToString(" ").ifBlank {
+                    lowers.filter { BdPlaceGazetteer.isLandmark(it) }.joinToString(" ")
+                }
+            val midPhrase = middles.joinToString(" ").ifBlank { "" }
+            val out = mutableListOf<MapHint>()
+            val proper = { s: String -> s.split(" ").joinToString(" ") { w -> w.replaceFirstChar { it.uppercase() } } }
+            if (midPhrase.isNotBlank()) {
+                val q1 = "$brandDisp showroom near ${proper(midPhrase)} ${proper(landmarkPhrase)}".trim()
+                out.add(MapHint(title = q1, query = "$q1, Bangladesh", mapsUrl = mapsUrlFor(q1), kind = "brand-landmark"))
+                val q2 = "${proper(midPhrase)} ${proper(landmarkPhrase)}".trim()
+                out.add(MapHint(title = q2, query = "$q2, Bangladesh", mapsUrl = mapsUrlFor(q2), kind = "compound"))
+            }
+            val fullJoined = proper(repaired.joinToString(" "))
+            if (out.none { it.title.equals(fullJoined, true) }) {
+                out.add(MapHint(title = fullJoined, query = "$fullJoined, Bangladesh", mapsUrl = mapsUrlFor(fullJoined), kind = "compound"))
+            }
+            return out.take(3)
+        }
+
+        // Case 2: short-form village token, e.g. "sujonsha" -> "sujonsaha".
+        val cands = extractPlaceCandidates(fullName)
+        if (cands.isNotEmpty()) {
+            // Prefer the last non-landmark, non-brand token as the village.
+            val villageCand = cands.lastOrNull { !BdPlaceGazetteer.isLandmark(it.repaired) && !BdPlaceGazetteer.isBrand(it.repaired) }
+                ?: cands.last()
+            val disp = villageCand.repaired.replaceFirstChar { it.uppercase() }
+            val out = mutableListOf<MapHint>()
+            val title = if (villageCand.wasRepaired) "$disp (fixed from ${villageCand.raw.lowercase()})" else disp
+            out.add(MapHint(title = title, query = "$disp, Bangladesh", mapsUrl = mapsUrlFor(disp), kind = "place",
+                fixedFrom = if (villageCand.wasRepaired) villageCand.raw else null))
+            // If repaired, also keep raw variant — Maps sometimes has the short spelling.
+            if (villageCand.wasRepaired) {
+                val rawDisp = villageCand.raw.replaceFirstChar { it.uppercase() }
+                out.add(MapHint(title = "$rawDisp (as typed)", query = "$rawDisp, Bangladesh", mapsUrl = mapsUrlFor(rawDisp), kind = "place"))
+            }
+            return out.take(2)
+        }
+
+        // Case 3: fallback — search the whole tail as typed.
+        val tailJoined = tokens.drop(1).joinToString(" ")
+        if (tailJoined.length >= 3) {
+            return listOf(MapHint(title = tailJoined, query = "$tailJoined, Bangladesh", mapsUrl = mapsUrlFor(tailJoined), kind = "compound"))
+        }
+        return emptyList()
     }
 
     fun extractPlaceToken(fullName: String?): String? {

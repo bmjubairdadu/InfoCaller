@@ -27,25 +27,83 @@ object UsernameExistenceChecker {
     )
 
     suspend fun exists(client: OkHttpClient, url: String, minBodyLen: Int = 400, notFoundBodyCap: Int = 8000): Boolean {
+        return fetchVerifiedProfile(client, "", url, minBodyLen, notFoundBodyCap) != null
+    }
+
+    /**
+     * Fetch a public profile page and extract inline preview data (display name,
+     * avatar, bio) so the UI menu can show everything WITHOUT opening the link.
+     * Returns null for not-found / login-wall / error pages -> caller must skip
+     * (never show "not found" rows).
+     */
+    suspend fun fetchVerifiedProfile(
+        client: OkHttpClient,
+        platform: String,
+        url: String,
+        minBodyLen: Int = 400,
+        notFoundBodyCap: Int = 8000
+    ): com.infocaller.app.domain.model.SocialProfile? {
         return try {
-            kotlinx.coroutines.withTimeoutOrNull(3500L) {
+            kotlinx.coroutines.withTimeoutOrNull(5000L) {
                 val req = Request.Builder().url(url)
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
                     .header("Accept-Language", "en-US,en;q=0.9")
                     .build()
                 client.newCall(req).await().use { resp ->
-                    if (resp.code != 200) return@withTimeoutOrNull false
-                    if (resp.request.url.toString().contains("login", ignoreCase = true)) return@withTimeoutOrNull false
-                    val body = resp.body?.string() ?: return@withTimeoutOrNull false
-                    if (body.length < minBodyLen) return@withTimeoutOrNull false
+                    if (resp.code != 200) return@withTimeoutOrNull null
+                    if (resp.request.url.toString().contains("login", ignoreCase = true)) return@withTimeoutOrNull null
+                    val body = resp.body?.string() ?: return@withTimeoutOrNull null
+                    if (body.length < minBodyLen) return@withTimeoutOrNull null
                     val lower = body.lowercase()
-                    if (LOGIN_WALL_MARKERS.any { lower.contains(it) }) return@withTimeoutOrNull false
-                    if (NOT_FOUND_MARKERS.any { lower.contains(it) } && body.length < notFoundBodyCap) return@withTimeoutOrNull false
-                    true
+                    if (LOGIN_WALL_MARKERS.any { lower.contains(it) }) return@withTimeoutOrNull null
+                    if (NOT_FOUND_MARKERS.any { lower.contains(it) } && body.length < notFoundBodyCap) return@withTimeoutOrNull null
+                    val doc = try { org.jsoup.Jsoup.parse(body) } catch (_: Exception) { return@withTimeoutOrNull null }
+                    val text = doc.text()
+                    if (text.length < 120) return@withTimeoutOrNull null
+                    // Display name: og:title first, then <title>, cleaned of site suffix.
+                    var displayName = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
+                    if (displayName.isNullOrBlank()) {
+                        displayName = doc.selectFirst("title")?.text()?.trim()
+                            ?.substringBefore("|")?.substringBefore("-")?.substringBefore("•")?.trim()
+                    }
+                    if (!displayName.isNullOrBlank()) {
+                        if (displayName.contains("not found", true) ||
+                            displayName.contains("page isn't available", true) ||
+                            displayName.contains("content isn't available", true) ||
+                            displayName.equals(platform, true) ||
+                            displayName.length !in 2..80) displayName = null
+                    }
+                    // Avatar: og:image, rejecting logos / placeholders.
+                    var avatar = doc.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
+                        ?.takeIf { it.startsWith("http") }
+                    if (avatar != null) {
+                        val al = avatar.lowercase()
+                        if (al.contains("rsrc.php") || al.contains("placeholder") ||
+                            al.contains("default_avatar") || al.contains("default-avatar") ||
+                            al.contains("no_photo") || al.contains("no-photo") ||
+                            al.contains("anonymous") || al.contains("sync.me") ||
+                            (al.contains("logo") && al.length < 120)) avatar = null
+                    }
+                    val bio = doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
+                        ?.takeIf { it.isNotBlank() && !it.contains("not found", true) }?.take(300)
+                        ?: doc.selectFirst("meta[name=description]")?.attr("content")?.trim()
+                            ?.takeIf { it.isNotBlank() && !it.contains("not found", true) }?.take(300)
+                    // Strict: need at least a display name to count as "available account".
+                    if (displayName.isNullOrBlank()) return@withTimeoutOrNull null
+                    val handle = url.trim().trimEnd('/').substringAfterLast("/").removePrefix("@")
+                        .takeIf { it.isNotBlank() && it.length <= 60 }
+                    com.infocaller.app.domain.model.SocialProfile(
+                        platform = platform.ifBlank { "Unknown" },
+                        username = handle,
+                        profileUrl = url,
+                        status = com.infocaller.app.domain.model.SocialLookupStatus.PUBLIC_MATCH,
+                        displayName = displayName,
+                        avatarUrl = avatar
+                    )
                 }
-            } ?: false
+            }
         } catch (_: Exception) {
-            false
+            null
         }
     }
 

@@ -36,9 +36,14 @@ class HoleheEmailProviderImpl(
             val target = if (site.urlTemplate.contains("%s.wordpress.com")) site.urlTemplate.format(prefix)
             else if (site.keyword == null) site.urlTemplate.format(prefix)
             else site.urlTemplate.format(email)
-            val found = if (site.keyword != null) keywordExists(site, target)
-            else UsernameExistenceChecker.exists(httpClient, target)
-            if (found) SocialProfile(site.name, prefix, target, SocialLookupStatus.POSSIBLE_MATCH) else null
+            try {
+                if (site.keyword != null) {
+                    if (keywordExists(site, target)) UsernameExistenceChecker.fetchVerifiedProfile(httpClient, site.name, target) else null
+                } else {
+                    // Verified-only: null = not-found/login-wall/error -> skipped.
+                    UsernameExistenceChecker.fetchVerifiedProfile(httpClient, site.name, target)
+                }
+            } catch (_: Exception) { null }
         }
 
         if (profiles.isEmpty()) return@withContext null

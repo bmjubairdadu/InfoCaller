@@ -77,14 +77,35 @@ object IntelligenceResultMerger {
     }
 
     private fun mergePhotos(current: LookupResult, next: PartialResult): Triple<String?, String?, List<PhotoCandidate>> {
+        fun usable(url: String?): Boolean {
+            val u = url?.trim().orEmpty()
+            if (u.isBlank() || !u.startsWith("http")) return false
+            if (u.length < 20) return false
+            val lower = u.lowercase()
+            // Hard reject aggregator logos / HTML pages mistaken for photos.
+            if (lower.contains("sync.me")) return false
+            if (lower.contains("rsrc.php")) return false
+            if (lower.contains("truecaller.com/search") || lower.contains("truecaller.com/bd")) return false
+            if (lower.contains("placeholder") || lower.contains("default_avatar") ||
+                lower.contains("default-avatar") || lower.contains("no_photo") ||
+                lower.contains("no-photo") || lower.contains("anonymous")) return false
+            return true
+        }
         val synthetics = listOfNotNull(
-            current.imageUrl?.takeIf { it.startsWith("http") }?.let { PhotoCandidate(provider = current.imageSource ?: "photo", url = it) },
-            next.imageUrl?.takeIf { it.startsWith("http") }?.let { PhotoCandidate(provider = next.source ?: next.providerId ?: "photo", url = it) }
+            current.imageUrl?.takeIf { usable(it) }?.let { PhotoCandidate(provider = current.imageSource ?: "photo", url = it) },
+            next.imageUrl?.takeIf { usable(it) }?.let { PhotoCandidate(provider = next.source ?: next.providerId ?: "photo", url = it) }
         )
-        val newCandidates = (current.photoCandidates + next.photoCandidates + synthetics).distinctBy { it.url }
-            .filter { it.url.startsWith("http") }
+        val newCandidates = (current.photoCandidates + next.photoCandidates + synthetics)
+            .filter { usable(it.url) }
+            .distinctBy { it.url }
         if (newCandidates.isEmpty()) {
-            return Triple(current.imageUrl, current.imageSource, emptyList())
+            // Do NOT keep a stale bad photo: clear it when the new merge has no usable photo.
+            val keepCurrent = usable(current.imageUrl)
+            return Triple(
+                if (keepCurrent) current.imageUrl else null,
+                if (keepCurrent) current.imageSource else null,
+                emptyList()
+            )
         }
 
         val bestCandidate = newCandidates.maxByOrNull { calculatePhotoScore(it) }
@@ -95,7 +116,9 @@ object IntelligenceResultMerger {
     private fun calculatePhotoScore(c: PhotoCandidate): Float {
         var score = 0f
 
-        if (c.faceCount > 0) score += 500f
+        // Verified human faces strictly win; non-face images never beat a face.
+        if (c.faceCount > 0 && c.faceConfidence >= 0.5f) score += 500f
+        else score -= 400f
         score += c.faceCoverage * 100f
         score += c.imageQuality * 100f
 
@@ -109,6 +132,11 @@ object IntelligenceResultMerger {
         if (c.provider.lowercase() in setOf("linkedin", "x", "reddit", "github", "gitlab", "instagram", "telegram")) {
             score += 30f
         }
+        // Aggregator leftovers must never win even if they slip through.
+        if (c.provider.lowercase().contains("sync") || c.provider.lowercase().contains("accountenumerator") ||
+            c.provider.lowercase().contains("phonebridge")) {
+            score -= 300f
+        }
 
         return score
     }
@@ -120,11 +148,37 @@ object IntelligenceResultMerger {
             "https://instagram.com", "https://instagram.com/",
             "https://linkedin.com", "https://linkedin.com/",
             "https://twitter.com", "https://twitter.com/",
-            "https://x.com", "https://x.com/", "https://wa.me", "https://wa.me/"
+            "https://x.com", "https://x.com/", "https://wa.me", "https://wa.me/",
+            "https://t.me", "https://t.me/"
         )
 
+        fun isUsable(n: SocialProfile): Boolean {
+            val platform = n.platform.trim().lowercase()
+            // Aggregator / placeholder platforms are never real accounts.
+            if (platform.isBlank()) return false
+            if (platform in setOf(
+                    "generic", "unknown", "sync.me", "syncme", "sync",
+                    "truecaller", "osint", "search", "callerid", "caller id"
+                )) return false
+            // Only verified accounts opened with this number/email.
+            // POSSIBLE_MATCH = guess, NOT_FOUND/UNKNOWN/UNSUPPORTED/error = skip.
+            if (n.status != SocialLookupStatus.CONFIRMED &&
+                n.status != SocialLookupStatus.PUBLIC_MATCH) return false
+            val url = n.profileUrl?.trim().orEmpty()
+            if (url.isBlank() || !url.startsWith("http", ignoreCase = true)) return false
+            if (url.length < 20) return false
+            val lower = url.lowercase()
+            if (lower in genericUrls) return false
+            if (lower.contains("sync.me/search")) return false
+            return true
+        }
+
+        // Drop any stale unverified entries already stored.
+        result.retainAll { isUsable(it) }
+
         next.forEach { n ->
-            val profileUrl = n.profileUrl?.lowercase()
+            if (!isUsable(n)) return@forEach
+            val profileUrl = n.profileUrl?.lowercase() ?: return@forEach
             if (profileUrl == null || genericUrls.contains(profileUrl)) {
                 return@forEach
             }

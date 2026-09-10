@@ -79,10 +79,9 @@ class NamePhotoSocialPivotProviderImpl(
 
         val found = UsernameExistenceChecker.mapBounded(probes, maxConcurrency = 8) { (platform, url, status) ->
             try {
-                if (UsernameExistenceChecker.exists(httpClient, url)) {
-                    val seed = url.substringAfterLast("/").removePrefix("@").trimEnd('/')
-                    SocialProfile(platform, seed.ifBlank { null }, url, status)
-                } else null
+                // Inline preview extraction; null = not-found/login-wall/error -> skipped,
+                // so only really available accounts are returned (no bare guesses).
+                UsernameExistenceChecker.fetchVerifiedProfile(httpClient, platform, url)
             } catch (_: Exception) { null }
         }.distinctBy { it.platform.lowercase() + "|" + (it.username?.lowercase().orEmpty()) }
 

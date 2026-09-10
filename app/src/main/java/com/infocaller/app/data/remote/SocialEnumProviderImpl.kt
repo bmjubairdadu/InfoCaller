@@ -58,32 +58,19 @@ class SocialEnumProviderImpl : SocialProvider {
     }
 
     private suspend fun checkWhatsApp(cleanNumber: String): SocialProfile? = withContext(Dispatchers.IO) {
-        try {
-            val url = "https://api.whatsapp.com/send/?phone=$cleanNumber&text&type=phone_number&app_absent=0"
-            val request = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-            val text = httpClient.newCall(request).await().use { response ->
-                response.body?.string() ?: ""
-            }
-
-            if (text.contains("action=open") || text.contains("whatsapp://send")) {
-                return@withContext SocialProfile("WhatsApp", cleanNumber, "https://wa.me/$cleanNumber", SocialLookupStatus.PUBLIC_MATCH)
-            }
-        } catch (e: Exception) { }
+        // wa.me / api.whatsapp.com links resolve for ANY number, they never prove
+        // the number opened a WhatsApp account. Never emit a guess -> return null
+        // so unverified WhatsApp is never shown in the menu.
         null
     }
 
     private suspend fun checkTelegram(cleanNumber: String): SocialProfile? = withContext(Dispatchers.IO) {
         try {
-            val url = "https://t.me/+$cleanNumber"
-            val request = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-            val text = httpClient.newCall(request).await().use { response ->
-                response.body?.string() ?: ""
-            }
-
-            if (text.contains("tg://resolve") || text.contains("View in Telegram")) {
-                return@withContext SocialProfile("Telegram", cleanNumber, "https://t.me/+$cleanNumber", SocialLookupStatus.POSSIBLE_MATCH)
-            }
-        } catch (e: Exception) { }
-        null
+            // Only show Telegram when t.me/+<digits> resolves to a real public
+            // profile with a display name (extracted inline). Otherwise skip.
+            UsernameExistenceChecker.fetchVerifiedProfile(
+                httpClient, "Telegram", "https://t.me/+$cleanNumber"
+            )
+        } catch (_: Exception) { null }
     }
 }

@@ -309,11 +309,12 @@ fun DetailsScreen(
                         val out = mutableListOf<com.infocaller.app.domain.model.PhotoCandidate>()
                         fun add(url: String?, provider: String, priority: Int) {
                             val u = url?.trim().orEmpty()
-                            if (!u.startsWith("http") || !seen.add(u)) return
+                            if (!SocialUtils.isUsablePhotoUrl(u) || !seen.add(u)) return
                             out.add(com.infocaller.app.domain.model.PhotoCandidate(provider = provider, url = u, sourcePriority = priority))
                         }
+                        // Only verified, downloadable photos. Never sync.me logos.
                         live?.photoCandidates
-                            ?.filter { it.faceCount > 0 && it.faceConfidence >= 0.7f }
+                            ?.filter { SocialUtils.isUsablePhotoUrl(it.url) && it.faceCount != 0 }
                             ?.forEach { add(it.url, it.provider, it.sourcePriority) }
                         val enrichmentSnapshot = enrichment
                         if (enrichmentSnapshot?.profileImageSource?.contains("truecaller", true) == true ||
@@ -322,8 +323,18 @@ fun DetailsScreen(
                         }
                         try {
                             SocialUtils.photosFromJson(enrichment?.photoCandidatesJson)
-                                .filter { it.faceCount > 0 && it.faceConfidence >= 0.7f }
+                                .filter { SocialUtils.isUsablePhotoUrl(it.url) && it.faceCount != 0 }
                                 .forEach { add(it.url, it.provider, it.sourcePriority) }
+                        } catch (_: Exception) { }
+                        // Verified social avatars (inline-extracted) as extra photo options.
+                        try {
+                            SocialUtils.fromJson(enrichment?.socialProfilesJson)
+                                .mapNotNull { it.avatarUrl }
+                                .forEach { add(it, "social", 40) }
+                        } catch (_: Exception) { }
+                        try {
+                            live?.socialProfiles?.mapNotNull { it.avatarUrl }
+                                ?.forEach { add(it, "social", 40) }
                         } catch (_: Exception) { }
                         out
                     }
@@ -634,6 +645,38 @@ fun DetailsScreen(
                             }
                         }
                     }
+                    val mapHints = remember(callerIdName, displayName) {
+                        VillageResolver.buildMapHints(callerIdName ?: displayName)
+                    }
+                    if (mapHints.isNotEmpty()) {
+                        DetailSection("Find On Map (${mapHints.size})") {
+                            mapHints.forEach { h ->
+                                DetailRow(
+                                    Icons.Default.Map, when (h.kind) {
+                                        "brand-landmark" -> "Nearby showroom"
+                                        "place" -> "Place search"
+                                        else -> "Area search"
+                                    }, h.title,
+                                    "Google Maps",
+                                    trailingContent = {
+                                        TextButton(onClick = {
+                                            try { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(h.mapsUrl))) } catch (_: Exception) { }
+                                        }) { Text("View") }
+                                    },
+                                    onCopy = { copyField("Map query", h.query) },
+                                )
+                            }
+                            val firstHint = mapHints.firstOrNull()
+                            if (firstHint != null) {
+                                Text(
+                                    "Tip: View খুলে পাশে কোন Walton showroom / checkpost আছে দেখো, তার নাম + address + plus-code টা note করে রাখো।",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = contentSecondary(0.6f),
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                )
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(32.dp))
                     DetailSection("Public Information") {
                         val cachedLoc = remember { com.infocaller.app.util.UserLocationResolver.cached(context) }
@@ -739,25 +782,11 @@ fun DetailsScreen(
                             SocialUtils.filteredUsedProfiles(merged)
                         }
                     }
-                    val waNumber = remember(phoneNumber, isNonPhoneScan) {
-                        if (isNonPhoneScan) "" else phoneNumber.filter { it.isDigit() }
-                    }
-                    val allSocialProfiles = remember(socialProfiles, waNumber) {
-                        val merged = socialProfiles.toMutableList()
-                        if (waNumber.length >= 7 &&
-                            merged.none { it.platform.equals("whatsapp", ignoreCase = true) }
-                        ) {
-                            merged.add(
-                                SocialProfile(
-                                    platform = "WhatsApp",
-                                    username = waNumber,
-                                    profileUrl = "https://wa.me/$waNumber",
-                                    status = com.infocaller.app.domain.model.SocialLookupStatus.POSSIBLE_MATCH,
-                                    source = "wa.me"
-                                )
-                            )
-                        }
-                        val (messaging, social) = merged.partition {
+                    // Only verified accounts opened with this number/email are shown.
+                    // No blind wa.me / t.me deep links, no Sync.ME, no POSSIBLE_MATCH
+                    // guesses, no not-found / error rows — those are all skipped.
+                    val allSocialProfiles = remember(socialProfiles) {
+                        val (messaging, social) = socialProfiles.partition {
                             it.platform.equals("whatsapp", true) || it.platform.equals("telegram", true)
                         }
                         social.sortedBy { it.platform.lowercase() } +
@@ -772,7 +801,7 @@ fun DetailsScreen(
                         DetailSection("Linked Accounts (${allSocialProfiles.size})") {
                             Column(
                                 modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 allSocialProfiles.chunked(4).forEach { row ->
                                     Row(
@@ -783,42 +812,21 @@ fun DetailsScreen(
                                         row.forEach { profile -> SocialIcon(profile) }
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
+                                // Inline preview: everything extracted from inside the link
+                                // (name + handle + avatar) shown in the menu itself, so no
+                                // need to open the link. Errors / not-found are never shown
+                                // (providers already skip them), only verified rows arrive here.
                                 allSocialProfiles.forEach { profile ->
-                                    val url = profile.profileUrl.orEmpty()
-                                    if (url.isNotBlank()) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth()
-                                                .combinedClickable(
-                                                    onClick = { copyField(profile.platform, url) },
-                                                    onLongClick = { copyField(profile.platform, url) },
-                                                )
-                                                .padding(vertical = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                        ) {
-                                            Text(
-                                                profile.platform,
-                                                style = MaterialTheme.typography.labelMedium,
-                                                color = Primary,
-                                                modifier = Modifier.width(96.dp),
-                                            )
-                                            Text(
-                                                profile.username?.takeIf { it.isNotBlank() } ?: url,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = contentPrimary,
-                                                modifier = Modifier.weight(1f),
-                                                maxLines = 1,
-                                            )
-                                            Icon(
-                                                Icons.Default.ContentCopy, null,
-                                                tint = contentSecondary(0.5f),
-                                                modifier = Modifier.size(16.dp),
-                                            )
-                                        }
-                                    }
+                                    SocialPreviewRow(
+                                        profile = profile,
+                                        onOpen = {
+                                            try { SocialUtils.openSocialProfile(context, profile) } catch (_: Exception) { }
+                                        },
+                                        onCopy = { copyField(profile.platform, profile.profileUrl.orEmpty()) },
+                                    )
                                 }
                                 Text(
-                                    "Tap any account to copy its link",
+                                    "Only verified accounts opened with this number/email",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = contentSecondary(0.45f),
                                 )
@@ -1021,6 +1029,68 @@ fun EmbeddedLinkCard(
             }
             IconButton(onClick = onCopy, modifier = Modifier.size(36.dp)) {
                 Icon(Icons.Default.ContentCopy, contentDescription = "Copy $label link", tint = contentSecondary(0.55f), modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun SocialPreviewRow(
+    profile: SocialProfile,
+    onOpen: () -> Unit,
+    onCopy: () -> Unit,
+) {
+    // Inline menu row: avatar + display name + handle extracted from inside
+    // the link, so the user never needs to open the link itself.
+    Surface(
+        onClick = onOpen,
+        shape = RoundedCornerShape(16.dp),
+        color = faintTint(0.06f),
+        border = BorderStroke(1.dp, faintTint(0.08f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val avatar = profile.avatarUrl?.takeIf { SocialUtils.isUsablePhotoUrl(it) }
+            if (avatar != null) {
+                AsyncImage(
+                    model = avatar,
+                    contentDescription = "${profile.platform} photo",
+                    modifier = Modifier.size(44.dp).clip(CircleShape),
+                    contentScale = ContentScale.Crop,
+                    placeholder = rememberVectorPainter(Icons.Default.Person),
+                    error = rememberVectorPainter(Icons.Default.Person),
+                )
+            } else {
+                SocialIcon(profile)
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                val title = profile.displayName?.takeIf { it.isNotBlank() }
+                    ?: profile.username?.takeIf { it.isNotBlank() }
+                    ?: profile.platform
+                Text(title, color = contentPrimary, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        profile.platform,
+                        color = Primary,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                    )
+                    val handle = profile.username?.takeIf { it.isNotBlank() && it != title }
+                    if (handle != null) {
+                        Text(
+                            " • @$handle",
+                            color = contentSecondary(0.6f),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+            IconButton(onClick = onCopy, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.ContentCopy, contentDescription = "Copy ${profile.platform} link", tint = contentSecondary(0.55f), modifier = Modifier.size(18.dp))
             }
         }
     }

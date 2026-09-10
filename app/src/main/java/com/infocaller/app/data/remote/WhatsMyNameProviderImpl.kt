@@ -36,7 +36,11 @@ class WhatsMyNameProviderImpl(
 
         val profiles = UsernameExistenceChecker.mapBounded(subset) { site ->
             val url = site.uri_check.format(username)
-            if (UsernameExistenceChecker.exists(httpClient, url, minBodyLen = 500)) SocialProfile(site.name, username, url, SocialLookupStatus.POSSIBLE_MATCH) else null
+            try {
+                // Verified-only inline preview; null = not-found/error -> skipped,
+                // so only really available accounts are shown, never guesses.
+                UsernameExistenceChecker.fetchVerifiedProfile(httpClient, site.name, url, minBodyLen = 500)
+            } catch (_: Exception) { null }
         }
         if (profiles.isEmpty()) return@withContext null
         PartialResult(socialProfiles = profiles, confidence = 0.6f, source = "WhatsMyName DB", providerId = id, providerVersion = version)

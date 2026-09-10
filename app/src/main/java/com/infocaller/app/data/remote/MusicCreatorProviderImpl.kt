@@ -42,20 +42,9 @@ class MusicCreatorProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                 socials.add(SocialProfile("SoundCloud", handle, url, SocialLookupStatus.PUBLIC_MATCH))
             }
         } catch (_: Exception) { }
-        try {
-            val enc = java.net.URLEncoder.encode(handle, "UTF-8")
-            val doc = Jsoup.connect("https://open.spotify.com/search/$enc")
-                .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
-                .timeout(7000).ignoreHttpErrors(true).followRedirects(true).get()
-            val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-            val img = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
-            if (!title.isNullOrBlank() && title.contains(handle, true) && title.length in 2..60) {
-                if (name == null) name = title.take(50)
-                about = "Spotify artist match: $title".take(200)
-                img?.let { photos.add(PhotoCandidate(provider = "Spotify", url = it, sourcePriority = 52)) }
-                socials.add(SocialProfile("Spotify", handle, "https://open.spotify.com/search/$enc", SocialLookupStatus.POSSIBLE_MATCH))
-            }
         } catch (_: Exception) { }
+        // Spotify search page is not a real account (no verified handle page),
+        // so never emit it as a "Linked Account" — only verified profile pages.
         if (socials.isEmpty()) return@withContext null
         return@withContext PartialResult(
             name = name, about = about,

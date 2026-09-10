@@ -110,29 +110,28 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
         }
         if (probeJobs.isNotEmpty()) {
             val found = UsernameExistenceChecker.mapBounded(probeJobs) { (platform, url, status) ->
-                val seed = url.substringAfterLast("/").removePrefix("@")
-                if (UsernameExistenceChecker.exists(httpClient, url)) {
-                    SocialProfile(platform, seed, url, status)
-                } else null
+                try {
+                    // Extract inline preview (display name + avatar) so menu shows
+                    // everything without opening the link. Null = not-found/error -> skip.
+                    UsernameExistenceChecker.fetchVerifiedProfile(httpClient, platform, url)
+                } catch (_: Exception) { null }
             }
             socials.addAll(found)
         }
 
-        if (socials.none { it.platform.equals("WhatsApp", true) }) {
-            socials.add(SocialProfile("WhatsApp", digits, "https://wa.me/$digits", SocialLookupStatus.POSSIBLE_MATCH))
-        }
-        if (socials.none { it.platform.equals("Telegram", true) }) {
-            socials.add(SocialProfile("Telegram", digits, "https://t.me/+$digits", SocialLookupStatus.POSSIBLE_MATCH))
-        }
+        // Do NOT add blind wa.me / t.me deep links: a wa.me URL works for ANY number,
+        // it does not prove the number opened WhatsApp/Telegram. Only verified
+        // scrapes (e.g. TelegramDeep with og:title) may add those platforms.
+        // Sync.ME is never a real account -> never added (see above).
 
-        val realSocials = socials.filterNot {
-            it.platform.equals("WhatsApp", true) || it.platform.equals("Telegram", true)
+        val realSocials = socials.filter {
+            !it.platform.equals("Sync.ME", true) && !it.platform.equals("Syncme", true)
         }
         if (name == null && photo == null && realSocials.isEmpty()) return null
         return PartialResult(
             name = name, about = about, imageUrl = photo,
             photoCandidates = photo?.let { listOf(PhotoCandidate(provider = "AccountEnumerator", url = it, sourcePriority = 57)) } ?: emptyList(),
-            socialProfiles = socials.distinctBy { it.platform.lowercase() + "|" + (it.username?.lowercase().orEmpty()) },
+            socialProfiles = realSocials.distinctBy { it.platform.lowercase() + "|" + (it.username?.lowercase().orEmpty()) },
             confidence = when {
                 name != null && realSocials.size >= 2 -> 0.78f
                 name != null && realSocials.isNotEmpty() -> 0.68f
@@ -231,18 +230,18 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
                 Triple("Facebook", "https://www.facebook.com/%s", SocialLookupStatus.PUBLIC_MATCH),
                 Triple("Instagram", "https://www.instagram.com/%s/", SocialLookupStatus.PUBLIC_MATCH),
                 Triple("TikTok", "https://www.tiktok.com/@%s", SocialLookupStatus.PUBLIC_MATCH),
-                Triple("YouTube", "https://www.youtube.com/@%s", SocialLookupStatus.POSSIBLE_MATCH),
-                Triple("X", "https://x.com/%s", SocialLookupStatus.POSSIBLE_MATCH),
-                Triple("Telegram", "https://t.me/%s", SocialLookupStatus.POSSIBLE_MATCH),
-                Triple("Medium", "https://medium.com/@%s", SocialLookupStatus.POSSIBLE_MATCH),
+                Triple("YouTube", "https://www.youtube.com/@%s", SocialLookupStatus.PUBLIC_MATCH),
+                Triple("X", "https://x.com/%s", SocialLookupStatus.PUBLIC_MATCH),
+                Triple("Telegram", "https://t.me/%s", SocialLookupStatus.PUBLIC_MATCH),
+                Triple("Medium", "https://medium.com/@%s", SocialLookupStatus.PUBLIC_MATCH),
             )
             for ((platform, tmpl, status) in probes) {
                 if (socials.any { it.platform.equals(platform, true) }) continue
                 try {
                     val url = tmpl.format(prefix)
-                    if (UsernameExistenceChecker.exists(httpClient, url)) {
-                        socials.add(SocialProfile(platform, prefix, url, status))
-                    }
+                    // Inline preview extraction; null = not-found/login-wall/error -> skip,
+                    // so only really available accounts are kept.
+                    UsernameExistenceChecker.fetchVerifiedProfile(httpClient, platform, url)?.let { socials.add(it) }
                 } catch (_: Exception) { }
             }
         }

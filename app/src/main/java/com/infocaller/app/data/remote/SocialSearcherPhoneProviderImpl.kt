@@ -1,9 +1,6 @@
 package com.infocaller.app.data.remote
 
 import com.infocaller.app.domain.engine.*
-import com.infocaller.app.domain.model.PhotoCandidate
-import com.infocaller.app.domain.model.SocialLookupStatus
-import com.infocaller.app.domain.model.SocialProfile
 import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,7 +11,7 @@ class SocialSearcherPhoneProviderImpl(private val httpClient: OkHttpClient) : Lo
     override val id = "social_searcher_phone"
     override val name = "Social Searcher (phone pivot)"
     override val version = "1.0.0"
-    override val capabilities = setOf(Capability.SOCIAL_MATCH, Capability.PUBLIC_PROFILE, Capability.PUBLIC_SEARCH, Capability.PROFILE_PHOTO)
+    override val capabilities = setOf(Capability.PUBLIC_PROFILE, Capability.PUBLIC_SEARCH)
     override val priority = 47
     override val costClass = CostClass.FREE
 
@@ -27,7 +24,6 @@ class SocialSearcherPhoneProviderImpl(private val httpClient: OkHttpClient) : Lo
         val e164 = if (identifier.trim().startsWith("+")) identifier.trim() else "+$digits"
         try {
             var name: String? = null
-            var photo: String? = null
             try {
                 val req = Request.Builder().url("https://sync.me/search/?number=${java.net.URLEncoder.encode(e164, "UTF-8")}")
                     .header("User-Agent", ua()).build()
@@ -36,23 +32,20 @@ class SocialSearcherPhoneProviderImpl(private val httpClient: OkHttpClient) : Lo
                         val body = r.body?.string().orEmpty()
                         val m = Regex("""<title>(.*?)</title>""", RegexOption.IGNORE_CASE).find(body)
                         val title = m?.groupValues?.getOrNull(1)?.trim()
-                        if (!title.isNullOrBlank() && !title.contains("Sync.ME", true) && title.length in 3..60) name = title
-                        val og = Regex("""<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(body)
-                        photo = og?.groupValues?.getOrNull(1)?.takeIf { it.startsWith("http") }
+                        // Name pivot only. Never use sync.me og:image (site logo) as a
+                        // profile photo, never emit a Sync.ME "account".
+                        if (!title.isNullOrBlank() && !title.contains("Sync.ME", true) &&
+                            !title.contains("not found", true) && title.length in 3..60) name = title
                     }
                 }
             } catch (_: Exception) { }
-            val profiles = mutableListOf<SocialProfile>()
-            if (name != null) {
-                profiles.add(SocialProfile("Sync.ME", name, "https://sync.me/search/?number=${java.net.URLEncoder.encode(e164, "UTF-8")}", SocialLookupStatus.PUBLIC_MATCH))
-            }
-            if (name == null && photo == null) return@withContext null
+            if (name == null) return@withContext null
             PartialResult(
                 name = name,
-                imageUrl = photo,
-                photoCandidates = photo?.let { listOf(PhotoCandidate(provider = "Sync.ME", url = it, sourcePriority = 55)) } ?: emptyList(),
-                socialProfiles = profiles,
-                confidence = if (name != null) 0.6f else 0.45f,
+                imageUrl = null,
+                photoCandidates = emptyList(),
+                socialProfiles = emptyList(),
+                confidence = 0.6f,
                 source = "Social Searcher (Sync.ME phone pivot)",
                 providerId = id, providerVersion = version
             )
