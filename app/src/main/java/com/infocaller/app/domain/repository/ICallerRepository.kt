@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 interface ICallerRepository {
     fun getCaller(phoneNumber: String): Flow<Caller?>
     suspend fun searchCaller(phoneNumber: String): Caller?
+    suspend fun getFreshCachedCaller(phoneNumber: String): Caller?
     suspend fun saveCaller(caller: Caller)
     suspend fun saveLookupResult(result: LookupResult)
     suspend fun contributeCallerInfo(caller: Caller)

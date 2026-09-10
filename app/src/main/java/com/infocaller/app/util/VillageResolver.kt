@@ -15,10 +15,13 @@ object VillageResolver {
 
     data class ResolvedVillage(
         val query: String,
+        val division: String? = null,
         val district: String? = null,
         val upazila: String? = null,
         val union: String? = null,
         val village: String? = null,
+        val postCode: String? = null,
+        val ward: String? = null,
         val display: String,
     )
 
@@ -89,14 +92,22 @@ object VillageResolver {
             if (parts.size < 3) return null
             val at = parts[0].toLongOrNull() ?: return null
             if (System.currentTimeMillis() - at > 7 * 24 * 60 * 60 * 1000L) return null
-            ResolvedVillage(query = token, district = parts.getOrNull(1)?.takeIf { it.isNotBlank() }, upazila = parts.getOrNull(2)?.takeIf { it.isNotBlank() }, display = parts.getOrNull(3)?.takeIf { it.isNotBlank() } ?: token)
+            ResolvedVillage(
+                query = token,
+                district = parts.getOrNull(1)?.takeIf { it.isNotBlank() },
+                upazila = parts.getOrNull(2)?.takeIf { it.isNotBlank() },
+                display = parts.getOrNull(3)?.takeIf { it.isNotBlank() } ?: token
+            )
         } catch (_: Exception) { null }
     }
 
     fun storeResolved(context: Context, token: String, v: ResolvedVillage) {
         try {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString("$KEY_RESOLVED|${token.lowercase()}", "${System.currentTimeMillis()}|${v.district.orEmpty()}|${v.upazila.orEmpty()}|${v.display.take(120)}")
+                .putString(
+                    "$KEY_RESOLVED|${token.lowercase()}",
+                    "${System.currentTimeMillis()}|${v.district.orEmpty()}|${v.upazila.orEmpty()}|${v.display.take(120)}"
+                )
                 .apply()
         } catch (_: Exception) { }
     }
@@ -147,16 +158,22 @@ object VillageResolver {
                 ?: addr.optString("city_district", "").takeIf { it.isNotBlank() }
             val district = addr.optString("state_district", "").takeIf { it.isNotBlank() }
                 ?: addr.optString("state", "").takeIf { it.isNotBlank() }
+            val division = addr.optString("state", "").takeIf { it.isNotBlank() }
+            val postCode = addr.optString("postcode", "").takeIf { it.isNotBlank() }
+            val ward = addr.optString("ward", "").takeIf { it.isNotBlank() }
             if (district.isNullOrBlank() && upazila.isNullOrBlank() && union.isNullOrBlank() && village.isNullOrBlank()) {
                 return@withContext null
             }
-            val display = listOfNotNull(village, union, upazila, district).distinct().joinToString(", ")
+            val display = listOfNotNull(village, union, upazila, district, division).distinct().joinToString(", ")
             ResolvedVillage(
                 query = token,
+                division = division,
                 district = district,
                 upazila = upazila,
                 union = union,
                 village = village,
+                postCode = postCode,
+                ward = ward,
                 display = display.ifBlank { first.optString("display_name", token).take(120) },
             )
         } catch (_: Exception) { null }

@@ -10,13 +10,13 @@ class PublicLookupEngine(
     private val providerManager: ProviderManager
 ) : IPublicLookupEngine {
     companion object {
-        const val PROVIDER_TIMEOUT_MS = 8000L
+        const val PROVIDER_TIMEOUT_MS = 5000L
 
-        const val MAX_PROVIDERS_PER_SCAN = 24
+        const val MAX_PROVIDERS_PER_SCAN = 16
 
         const val MAX_PIVOTS = 3
 
-        const val BETWEEN_PROVIDER_DELAY_MS = 120L
+        const val BETWEEN_PROVIDER_DELAY_MS = 60L
 
         @Volatile
         private var pivotDepth = 0
@@ -67,6 +67,8 @@ class PublicLookupEngine(
             phonePrimary.addAll(nidFirst)
             val enumerator = others.filter { it.id == "social_account_enumerator" }
             phonePrimary.addAll(enumerator)
+            val namePivot = others.filter { it.id == "name_photo_social_pivot" }
+            phonePrimary.addAll(namePivot)
             executionPlan.addAll(phonePrimary)
             val primaryIds = phonePrimary.map { it.id }.toSet()
             val socialWaveIds = listOf(
@@ -115,6 +117,7 @@ class PublicLookupEngine(
                     "pimeyes_photo_pivot", "ai_assist_deep_search"
                 )
                 IdentifierType.FULL_NAME -> setOf(
+                    "name_photo_social_pivot",
                     "whatsmyname", "facebook_profile", "tiktok_profile",
                     "instagram_deep", "linkedin_profile", "x_profile",
                     "youtube_profile", "telegram_deep",

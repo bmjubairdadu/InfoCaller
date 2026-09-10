@@ -72,23 +72,52 @@ fun LoginScreen(
     var autoFillEnabled by remember {
         mutableStateOf(PermissionManager.hasPermissions(context, PermissionManager.VERIFY_PERMISSIONS))
     }
-    val verifyPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { _ ->
-        autoFillEnabled = PermissionManager.hasPermissions(context, PermissionManager.VERIFY_PERMISSIONS)
-    }
-    val smsPermissionLauncher = verifyPermissionLauncher
-
     var autoVerifying by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
     var verifyError by remember { mutableStateOf<String?>(null) }
     // Live Truecaller API failure popup (verify path). Shown for manual +
     // auto-verify failures with the exact server message.
     var verifyErrorPopup by remember { mutableStateOf<String?>(null) }
+    var showVerifyPermissionsPopup by rememberSaveable { mutableStateOf(false) }
     // Tracks which codes already consumed an auto-verify attempt so we
     // never loop on the same code, but a NEW code for the same requestId
     // (e.g. SMS arrives after missed-call tail) still gets its own attempt.
     var autoConsumedCodes by remember { mutableStateOf(setOf<String>()) }
+
+    val verifyPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        autoFillEnabled = PermissionManager.hasPermissions(context, PermissionManager.VERIFY_PERMISSIONS)
+        if (results.values.all { it } && autoFillEnabled) {
+            tcLoading = true
+            authError = null
+            verifyError = null
+            verifyErrorPopup = null
+            autoConsumedCodes = emptySet()
+            OtpManager.clearOtp()
+            OtpManager.clearMissedCallTail()
+            scope.launch {
+                val normalized = PhoneNumberUtils.normalize(tcPhone)
+                val r = authManager.requestOtp(normalized)
+                val result = if (r != null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
+                if (result == null) {
+                    authError = "Connection error — check internet"
+                    verifyErrorPopup = authError
+                } else if (result.statusCode == -1) {
+                    authError = result.errorMessage ?: "Connection error. Check your internet."
+                    verifyErrorPopup = authError
+                } else if (result.requestId.isBlank() && result.statusCode != 3) {
+                    authError = result.errorMessage?.takeIf { it.isNotBlank() }
+                        ?: "Verification service unavailable (Error ${result.statusCode})."
+                    verifyErrorPopup = authError
+                } else {
+                    viewModel.setTcAuthResult(result)
+                }
+                tcLoading = false
+            }
+        }
+    }
+    val smsPermissionLauncher = verifyPermissionLauncher
 
     LaunchedEffect(tcAuthResult) {
         if (tcAuthResult == null) {
@@ -137,7 +166,7 @@ fun LoginScreen(
                 viewModel.loginWithTruecaller(null)
                 return true
             } else {
-                val live = "Verification failed (status ${res.status}): ${res.message ?: "Invalid code"}"
+                val live = res.message ?: "Invalid code"
                 verifyError = live
                 verifyErrorPopup = live
                 tcOtp = ""
@@ -282,11 +311,10 @@ fun LoginScreen(
                                     .alpha(if (tcPhone.length >= 7 && !tcLoading) 1f else 0.5f)
                                     .brandGradient(radius = 16.dp)
                                     .clickable(enabled = tcPhone.length >= 7 && !tcLoading) {
-                                        // Ask CALL LOG + SMS + phone-state permission BEFORE the code is
-                                        // sent, so auto-reject + auto-verify work when it arrives.
-                                        // No Allow/Deny popup inside the OTP request itself.
+                                        // Explain the three verification permissions before Android's
+                                        // permission sheet is shown.
                                         if (!PermissionManager.hasPermissions(context, PermissionManager.VERIFY_PERMISSIONS)) {
-                                            verifyPermissionLauncher.launch(PermissionManager.VERIFY_PERMISSIONS)
+                                            showVerifyPermissionsPopup = true
                                             return@clickable
                                         }
                                         tcLoading = true
@@ -303,27 +331,16 @@ fun LoginScreen(
                                             val result = if (r != null) com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult(r.requestId, r.method, r.ttl, r.status, r.message) else null
                                             if (result == null) {
                                                 authError = "Connection error — check internet"
+                                                verifyErrorPopup = authError
                                             } else if (result.statusCode == -1) {
                                                 authError = result.errorMessage ?: "Connection error. Check your internet."
                                                 verifyErrorPopup = authError
                                             } else if (result.requestId.isBlank() && result.statusCode != 3) {
-                                                val errorMsg = result.errorMessage ?: ""
-                                                val isLimit = result.statusCode == 5 || result.statusCode == 6 || result.statusCode == 429
-                                                if (isLimit) {
-                                                    viewModel.refreshTcSession(context)
-                                                    authError = errorMsg.takeIf { it.isNotBlank() } ?: "Too many requests. Try again after 1 hour."
-                                                } else {
-                                                    authError = when (result.statusCode) {
-                                                        40104 -> "Configuration Error: Invalid Client Secret."
-                                                        40101 -> "Unauthorized request. Please check your credentials."
-                                                        12 -> "Region error. Try again shortly."
-                                                        else -> errorMsg.takeIf { it.isNotBlank() } ?: "Verification service unavailable (Error ${result.statusCode})."
-                                                    }
-                                                }
+                                                authError = result.errorMessage?.takeIf { it.isNotBlank() }
+                                                    ?: "Verification service unavailable (Error ${result.statusCode})."
                                                 verifyErrorPopup = authError
                                             } else {
                                                 viewModel.setTcAuthResult(result)
-                                                // No "OTP sent" snackbar/text by design.
                                             }
                                             tcLoading = false
                                         }
@@ -437,7 +454,7 @@ fun LoginScreen(
                                                 OtpManager.clearMissedCallTail()
                                                 viewModel.loginWithTruecaller(null)
                                             } else {
-                                                val live = "Verification failed (status ${verifyResult.status}): ${verifyResult.message ?: "Invalid OTP code. Please try again."}"
+                                                val live = verifyResult.message ?: "Invalid OTP code. Please try again."
                                                 verifyError = live
                                                 verifyErrorPopup = live
                                             }
@@ -557,6 +574,30 @@ fun LoginScreen(
                 confirmButton = {
                     TextButton(onClick = { verifyErrorPopup = null }) {
                         Text("OK", color = Primary, fontWeight = FontWeight.Bold)
+                    }
+                    if (showVerifyPermissionsPopup) {
+                        AlertDialog(
+                            onDismissRequest = { showVerifyPermissionsPopup = false },
+                            icon = { Icon(Icons.Default.VerifiedUser, null, tint = Primary) },
+                            title = { Text("Verification permissions") },
+                            text = {
+                                Text(
+                                    "InfoCaller needs SMS, call logs, and phone-call access to receive the verification code and verify it automatically.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    showVerifyPermissionsPopup = false
+                                    verifyPermissionLauncher.launch(PermissionManager.VERIFY_PERMISSIONS)
+                                }) { Text("Allow", color = Primary, fontWeight = FontWeight.Bold) }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showVerifyPermissionsPopup = false }) {
+                                    Text("Not now", color = contentSecondary(0.7f))
+                                }
+                            }
+                        )
                     }
                 }
             )

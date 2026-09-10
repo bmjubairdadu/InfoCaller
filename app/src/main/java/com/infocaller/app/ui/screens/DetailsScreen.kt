@@ -230,7 +230,12 @@ fun DetailsScreen(
                     timedOut = true
                 }
                 if (!timedOut) {
-                    InfoCallerLoading(isFullScreen = true, text = "Identifying...")
+                    Text(
+                        "Waiting for live results…",
+                        modifier = Modifier.padding(innerPadding).fillMaxSize().wrapContentSize(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = contentSecondary(0.7f),
+                    )
                 } else {
                     Column(
                         modifier = Modifier.padding(innerPadding).fillMaxSize().padding(32.dp),
@@ -259,8 +264,6 @@ fun DetailsScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    InfoCallerLoading(isFullScreen = false, text = "Identifying...")
-                    Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         displayIdentifier.ifBlank { rawIdentifier },
                         style = MaterialTheme.typography.bodyMedium,
@@ -309,26 +312,23 @@ fun DetailsScreen(
                             if (!u.startsWith("http") || !seen.add(u)) return
                             out.add(com.infocaller.app.domain.model.PhotoCandidate(provider = provider, url = u, sourcePriority = priority))
                         }
-                        live?.imageUrl?.let { add(it, "scan", 100) }
-                        live?.photoCandidates?.forEach { add(it.url, it.provider, it.sourcePriority) }
-                        add(enrichment?.profileImageUrl, enrichment?.profileImageSource ?: "cache", 90)
+                        live?.photoCandidates
+                            ?.filter { it.faceCount > 0 && it.faceConfidence >= 0.7f }
+                            ?.forEach { add(it.url, it.provider, it.sourcePriority) }
+                        if (enrichment?.profileImageSource?.contains("truecaller", true) == true ||
+                            enrichment?.profileImageSource?.contains("eyecon", true) == true) {
+                            add(enrichment?.profileImageUrl, enrichment.profileImageSource ?: "verified", 90)
+                        }
                         try {
-                            SocialUtils.photosFromJson(enrichment?.photoCandidatesJson).forEach { add(it.url, it.provider, it.sourcePriority) }
+                            SocialUtils.photosFromJson(enrichment?.photoCandidatesJson)
+                                .filter { it.faceCount > 0 && it.faceConfidence >= 0.7f }
+                                .forEach { add(it.url, it.provider, it.sourcePriority) }
                         } catch (_: Exception) { }
-                        try {
-                            SocialUtils.fromJson(enrichment?.socialProfilesJson).mapNotNull { it.avatarUrl }.forEach { add(it, "social", 10) }
-                        } catch (_: Exception) { }
-                        add(caller?.photoUrl, "scan", 5)
                         out
                     }
                     val primaryPhoto = contact?.photoUri
                         ?: allPhotos.firstOrNull()?.url
-                    val headerPhoto = primaryPhoto ?: live?.imageUrl?.takeIf { it.startsWith("http") } ?: SocialUtils.bestHttpPhoto(
-                        enrichment?.profileImageUrl,
-                        enrichment?.photoCandidatesJson,
-                        enrichment?.socialProfilesJson,
-                        caller?.photoUrl
-                    )
+                    val headerPhoto = primaryPhoto
                     Box(modifier = Modifier.size(140.dp).glassy(radius = 70.dp).shadow(24.dp, CircleShape), contentAlignment = Alignment.Center) {
                         val photoUrl = headerPhoto
                         if (photoUrl != null) {
@@ -614,8 +614,13 @@ fun DetailsScreen(
                     if (villages.isNotEmpty()) {
                         DetailSection("Locations From Name (${villages.size})") {
                             villages.forEach { v ->
-                                val repairedNote = if (!v.query.equals(placeCandidates.find { it.repaired == v.query }?.raw, ignoreCase = true)) " (repaired)" else ""
-                                DetailRow(Icons.Default.Place, "Name place: \"${v.query}\"$repairedNote", v.display, "Maps (Nominatim)", onCopy = { copyField("Name location", v.display) })
+                                v.division?.let { DetailRow(Icons.Default.Place, "Division", it, "Maps (Nominatim)") }
+                                v.district?.let { DetailRow(Icons.Default.Place, "District", it, "Maps (Nominatim)") }
+                                v.upazila?.let { DetailRow(Icons.Default.Place, "Upazila", it, "Maps (Nominatim)") }
+                                v.union?.let { DetailRow(Icons.Default.Place, "Union", it, "Maps (Nominatim)") }
+                                v.village?.let { DetailRow(Icons.Default.Place, "Village", it, "Maps (Nominatim)") }
+                                v.postCode?.let { DetailRow(Icons.Default.Place, "Post code", it, "Maps (Nominatim)") }
+                                v.ward?.let { DetailRow(Icons.Default.Place, "Ward", it, "Maps (Nominatim)") }
                                 val mapsUrl = "https://www.google.com/maps/search/?api=1&query=${java.net.URLEncoder.encode(v.display + ", Bangladesh", "UTF-8")}"
                                 DetailRow(
                                     Icons.Default.Map, "Open in Maps", v.display,

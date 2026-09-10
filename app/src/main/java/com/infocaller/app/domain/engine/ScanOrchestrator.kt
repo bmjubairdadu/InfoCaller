@@ -151,8 +151,7 @@ class ScanOrchestrator(
                                 c.faceCount > 0 && c.faceConfidence >= 0.7f && c.faceCoverage >= 0.02f && c.imageQuality >= 0.01f && c.width >= 80 && c.height >= 80
                             }
                             if (faceClear.isEmpty()) {
-                                if (partial.photoCandidates.isNotEmpty()) partial
-                                else partial.copy(photoCandidates = photoPool, imageUrl = partial.imageUrl ?: photoPool.first().url)
+                                partial.copy(photoCandidates = emptyList(), imageUrl = null)
                             } else {
                                 val bestFirst = faceClear.sortedByDescending { it.faceCoverage * (0.5f + it.imageQuality) }
                                 partial.copy(photoCandidates = bestFirst, imageUrl = bestFirst.first().url)

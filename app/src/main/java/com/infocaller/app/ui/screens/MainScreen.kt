@@ -44,7 +44,6 @@ fun MainScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val launchScope = rememberCoroutineScope()
 
-    val bulkProgress by com.infocaller.app.data.repository.BulkIdentityEngine.progress.collectAsState()
     val updateState by com.infocaller.app.util.AppUpdateManager.state.collectAsState()
     var updateDismissed by remember { mutableStateOf(false) }
 
@@ -223,46 +222,6 @@ fun MainScreen(
                             parentNavController.navigate("details/" + android.net.Uri.encode(number))
                         }
                     )
-                }
-            }
-            if (bulkProgress.running && bulkProgress.total > 0) {
-                val pct = (bulkProgress.done.toFloat() / bulkProgress.total.coerceAtLeast(1)).coerceIn(0f, 1f)
-                Card(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = innerPadding.calculateBottomPadding() + 104.dp)
-                        .padding(horizontal = 24.dp)
-                        .fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = navBarContainer.copy(alpha = 0.97f)),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        CircularProgressIndicator(
-                            progress = { pct },
-                            modifier = Modifier.size(22.dp),
-                            strokeWidth = 3.dp,
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Identifying contacts ${bulkProgress.done}/${bulkProgress.total}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = navContent,
-                            )
-                            bulkProgress.lastLabel?.takeIf { it.isNotBlank() }?.let {
-                                Text(
-                                    it.take(40),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = navContent.copy(alpha = 0.6f),
-                                    maxLines = 1,
-                                )
-                            }
-                        }
-                    }
                 }
             }
             val update = updateState as? com.infocaller.app.util.AppUpdateManager.UpdateState.Available

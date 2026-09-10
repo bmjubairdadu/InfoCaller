@@ -80,6 +80,7 @@ class InfoCallerApplication : Application() {
             MaigretSweepProviderImpl(commonHttpClient),
             SocialSearcherPhoneProviderImpl(commonHttpClient),
             SocialAccountEnumeratorProviderImpl(commonHttpClient),
+            NamePhotoSocialPivotProviderImpl(commonHttpClient),
             MultiAvatarHarvesterProviderImpl(commonHttpClient),
             ReverseImageSearchProviderImpl(commonHttpClient),
             FaceMatchedReverseSearchProviderImpl(),

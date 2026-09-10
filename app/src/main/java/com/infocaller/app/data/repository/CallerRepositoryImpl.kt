@@ -44,6 +44,14 @@ class CallerRepositoryImpl(
             if (isFresh) return cached.toDomain()
         }
 
+        override suspend fun getFreshCachedCaller(phoneNumber: String): Caller? {
+            val normalized = PhoneNumberUtils.normalize(phoneNumber)
+            val cached = callerDao.getCallerSync(normalized) ?: return null
+            return cached.takeIf {
+                System.currentTimeMillis() - it.lastUpdated < 7 * 24 * 60 * 60 * 1000L
+            }?.toDomain()
+        }
+
         return try {
             val finalState = orchestrator.startScan(phoneNumber, ScanPriority.FOREGROUND).first {
                 it is ScanState.Completed || it is ScanState.Error

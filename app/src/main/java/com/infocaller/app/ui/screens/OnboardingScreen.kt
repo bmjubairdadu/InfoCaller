@@ -46,7 +46,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     val basicPermQueue = remember {
         listOf(
             PermissionManager.CALL_LOG_PERMISSIONS.toList() to "Call logs",
-            PermissionManager.CONTACTS_PERMISSIONS.toList() to "Contacts",
+            (PermissionManager.CONTACTS_PERMISSIONS + PermissionManager.RECORD_AUDIO_PERMISSION).toList() to "Contacts and microphone",
             (PermissionManager.DIALER_PERMISSIONS + PermissionManager.CALLER_ID_PERMISSIONS + arrayOf(android.Manifest.permission.ANSWER_PHONE_CALLS)).toList() to "Phone & call management",
             PermissionManager.WRITE_CONTACTS_PERMISSION.toList() to "Save caller photos",
             PermissionManager.SMS_PERMISSION.toList() to "SMS verification",
@@ -60,7 +60,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     ) { _ ->
         if (PermissionManager.isDefaultDialer(context)) {
             roleError = null
-            currentStage = 3
+            currentStage = 6
         } else if (roleAttempted) {
             roleError = "Still not set — pick InfoCaller in the system list, then tap \"Check again\"."
         }
@@ -105,10 +105,10 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     ) { results ->
         if (results.values.all { it }) {
             callPermsError = false
-            currentStage = 3
+            currentStage = 2
         } else {
             callPermsError = true
-            currentStage = 3
+            currentStage = 2
         }
     }
 
@@ -123,7 +123,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                         currentStage = 1
                     } else if (currentStage == 2 && PermissionManager.isDefaultDialer(context)) {
                         roleError = null
-                        currentStage = 3
+                        currentStage = 6
                     }
                 } catch (_: Exception) { }
             }
@@ -133,7 +133,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         if (currentStage == 2 && PermissionManager.isDefaultDialer(context)) {
             roleError = null
-            currentStage = 3
+            currentStage = 6
         }
         if (currentStage == 0 && PermissionManager.isCallScreeningRoleHeld(context)) {
             spamRoleError = null
@@ -150,7 +150,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
             val screeningHeld = PermissionManager.isCallScreeningRoleHeld(context)
             val dialerHeld = PermissionManager.isDefaultDialer(context)
             if (screeningHeld && dialerHeld) {
-                currentStage = 3
+                currentStage = 6
             } else if (screeningHeld) {
                 currentStage = 1
                 showBasicPermsPopup = false
@@ -257,7 +257,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 onCheckAgain = {
                     if (PermissionManager.isDefaultDialer(context)) {
                         roleError = null
-                        currentStage = 3
+                        currentStage = 6
                     } else {
                         roleError = "Still not set — pick InfoCaller in the system list, then tap \"Check again\"."
                     }

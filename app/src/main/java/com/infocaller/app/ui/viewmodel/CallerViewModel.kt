@@ -18,6 +18,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 
 class CallerViewModel(
     private val repository: CallerRepository,
@@ -40,6 +41,7 @@ class CallerViewModel(
 
     @Volatile
     private var searchGeneration = 0
+    private var activeSearchJob: Job? = null
 
     private val _scanSteps = MutableStateFlow<List<ScanStepUi>>(emptyList())
     val scanSteps: StateFlow<List<ScanStepUi>> = _scanSteps.asStateFlow()
@@ -155,7 +157,16 @@ class CallerViewModel(
     fun searchByIdentifier(identifier: String, type: String) {
         if (identifier.isBlank()) return
         val generation = ++searchGeneration
-        viewModelScope.launch {
+        activeSearchJob?.cancel()
+        activeSearchJob = viewModelScope.launch {
+            if (type == com.infocaller.app.domain.engine.IdentifierType.PHONE) {
+                val cached = repository.getFreshCachedCaller(identifier)
+                if (cached != null && generation == searchGeneration) {
+                    _searchResult.value = SearchUiState.Success(cached, isLive = false)
+                    _scanActive.value = false
+                    return@launch
+                }
+            }
             _searchResult.value = SearchUiState.Loading
             _scanSteps.value = emptyList()
             _scanActive.value = true
@@ -275,6 +286,8 @@ class CallerViewModel(
 
     fun cancelAllSearches() {
         searchGeneration++
+        activeSearchJob?.cancel()
+        activeSearchJob = null
         try { repository.cancelAllScans() } catch (_: Exception) { }
         _searchResult.value = SearchUiState.Idle
         _scanSteps.value = emptyList()

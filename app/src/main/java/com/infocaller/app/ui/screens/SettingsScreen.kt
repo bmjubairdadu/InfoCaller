@@ -96,10 +96,6 @@ fun SettingsScreen(
                     Button(
                         onClick = {
                             if (searchNumber.isNotBlank()) {
-                                viewModel.cancelAllSearches()
-                                viewModel.clearSearch()
-                                viewModel.searchNumberManual(searchNumber)
-                                viewModel.triggerThrottledSync(context)
                                 onNavigateToDetails(searchNumber)
                             }
                         },
@@ -146,9 +142,6 @@ fun SettingsScreen(
                             val cleaned = searchEmail.trim().lowercase()
                             if (!cleaned.contains("@") || !cleaned.contains(".")) { emailError = "Enter a valid email address"; return@Button }
                             emailError = null
-                            viewModel.cancelAllSearches()
-                            viewModel.clearSearch()
-                            viewModel.searchEmailManual(cleaned)
                             onNavigateToDetails(cleaned)
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -193,9 +186,6 @@ fun SettingsScreen(
                             val cleaned = searchUsername.trim().lowercase().removePrefix("@")
                             if (cleaned.length < 2 || cleaned.contains(" ") || cleaned.contains("@")) { usernameError = "Enter a valid username (letters, digits, . _ -)"; return@Button }
                             usernameError = null
-                            viewModel.cancelAllSearches()
-                            viewModel.clearSearch()
-                            viewModel.searchUsernameManual(cleaned)
                             onNavigateToDetails(cleaned)
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -321,10 +311,6 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp)
                 )
-            }
-
-            SettingsSection("Eyecon Caller ID (captured auth)") {
-                EyeconAuthSettingsContent()
             }
 
             SettingsSection("About") {
