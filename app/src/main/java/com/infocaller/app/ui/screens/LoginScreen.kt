@@ -53,6 +53,7 @@ import com.infocaller.app.permissions.PermissionManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
@@ -147,10 +148,8 @@ fun LoginScreen(
                 msg.contains("Job was cancelled", ignoreCase = true)
         }
 
-        suspend fun tryAutoVerify(codeRaw: String, rid: String): Boolean {
+        suspend fun tryAutoVerify(codeRaw: String, rid: String, isMissedCall: Boolean = false): Boolean {
             // Never let coroutine cancellation become a user-visible error.
-            // collectLatest child cancellation surfaces as
-            // "Child of the scoped flow was cancelled" — must be rethrown.
             if (autoVerifying || tcLoading) return false
             val digits = codeRaw.filter { it.isDigit() }
             val code = when {
@@ -159,17 +158,22 @@ fun LoginScreen(
                 else -> return false
             }
             if (code.length !in 4..10) return false
-            // Same code must not retry for the same request (it already failed).
-            // A different code for the same request gets its own attempt.
             val attemptKey = "$rid:$code"
             if (autoConsumedCodes.contains(attemptKey)) return false
-            autoConsumedCodes = autoConsumedCodes + attemptKey
+
             autoVerifying = true
             tcOtp = code
             verifyError = null
+            verifyErrorPopup = null
             try {
+                // For a flash/missed call, wait ~1.8 seconds so Truecaller's telecom carrier
+                // registers the drop-call event on their verification gateway before we verify.
+                if (isMissedCall) {
+                    delay(1800)
+                }
+
                 val phoneNow = try { viewModel.tcPhone.value } catch (_: Exception) { tcPhone }
-                val res = try {
+                var res = try {
                     authManager.verifyOtp(phoneNow, rid, code)
                 } catch (e: CancellationException) {
                     throw e
@@ -179,7 +183,25 @@ fun LoginScreen(
                         false, null, -1, e.message ?: "Network error"
                     )
                 }
+
+                // If first verification returned status 11 (Invalid OTP) for a missed call,
+                // the carrier dropped-call event may still be syncing. Retry once after 2s.
+                if (!res.success && res.status == 11 && isMissedCall) {
+                    delay(2000)
+                    res = try {
+                        authManager.verifyOtp(phoneNow, rid, code)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        if (isCancellationMsg(e.message)) throw e
+                        com.infocaller.app.data.remote.TruecallerAuthManager.VerifyResult(
+                            false, null, -1, e.message ?: "Network error"
+                        )
+                    }
+                }
+
                 if (res.success) {
+                    autoConsumedCodes = autoConsumedCodes + attemptKey
                     try {
                         context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
                             .edit().remove("last_tc_request_id").remove("last_tc_method").apply()
@@ -194,9 +216,7 @@ fun LoginScreen(
                     val live = res.message ?: "Invalid code"
                     verifyError = live
                     verifyErrorPopup = live
-                    tcOtp = ""
-                    OtpManager.clearOtp()
-                    OtpManager.clearMissedCallTail()
+                    // Non-destructive: keep tcOtp = code so the user can easily review or tap manual verify!
                     return false
                 }
             } finally {
@@ -207,28 +227,25 @@ fun LoginScreen(
         // Code already arrived before this screen recomposed (SMS or missed-call).
         val immediateSms: String? = OtpManager.lastOtpFlow.value
         if (!immediateSms.isNullOrBlank() && tcOtp.isEmpty()) {
-            if (tryAutoVerify(immediateSms, servedRequestId)) return@LaunchedEffect
+            if (tryAutoVerify(immediateSms, servedRequestId, isMissedCall = false)) return@LaunchedEffect
         }
         val immediateTail: String? = OtpManager.missedCallFlow.value
         if (!immediateTail.isNullOrBlank() && tcOtp.isEmpty()) {
-            if (tryAutoVerify(immediateTail, servedRequestId)) return@LaunchedEffect
+            if (tryAutoVerify(immediateTail, servedRequestId, isMissedCall = true)) return@LaunchedEffect
         }
         launch {
-            // Use collect (not collectLatest) so an in-flight verify is never
-            // cancelled by a duplicate tail — that cancel used to surface as
-            // "Child of the scoped flow was cancelled".
-            OtpManager.missedCallFlow.collect { tail: String? ->
+            // Collect each missed call event (ringing and disconnect/idle)
+            OtpManager.missedCallEventFlow.collect { event ->
+                if (event == null || event.tail.isBlank()) return@collect
                 if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collect
-                if (tail.isNullOrBlank()) return@collect
-                // Accept tail from ANY verification call — live API decides validity.
-                tryAutoVerify(tail, servedRequestId)
+                tryAutoVerify(event.tail, servedRequestId, isMissedCall = true)
             }
         }
         launch {
             OtpManager.otpFlow.collect { code: String? ->
                 if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collect
                 if (code.isNullOrBlank()) return@collect
-                tryAutoVerify(code, servedRequestId)
+                tryAutoVerify(code, servedRequestId, isMissedCall = false)
             }
         }
     }

@@ -29,16 +29,26 @@ object OtpManager {
             SharingStarted.Eagerly, null
         )
 
+    data class MissedCallEvent(val tail: String, val sourceNumber: String? = null, val timestamp: Long = System.currentTimeMillis())
+    private val _missedCallEvent = MutableStateFlow<MissedCallEvent?>(null)
+    val missedCallEventFlow: StateFlow<MissedCallEvent?> get() = _missedCallEvent
+
     suspend fun onOtpReceived(otp: String) { _lastOtp.value = TimedCode(otp, System.currentTimeMillis()) }
     fun onOtpReceivedSync(otp: String) { _lastOtp.value = TimedCode(otp, System.currentTimeMillis()) }
-    fun onMissedCallTailSync(tail: String) { _lastMissedCallTail.value = TimedCode(tail, System.currentTimeMillis()) }
+    fun onMissedCallTailSync(tail: String) {
+        val now = System.currentTimeMillis()
+        _lastMissedCallTail.value = TimedCode(tail, now)
+        _missedCallEvent.value = MissedCallEvent(tail, null, now)
+    }
 
     fun onMissedCallTailSync(tail: String, sourceNumber: String?) {
-        _lastMissedCallTail.value = TimedCode(tail, System.currentTimeMillis())
+        val now = System.currentTimeMillis()
+        _lastMissedCallTail.value = TimedCode(tail, now)
+        _missedCallEvent.value = MissedCallEvent(tail, sourceNumber, now)
         if (!sourceNumber.isNullOrBlank()) {
             _lastMissedCallSource.value = TimedCode(
                 sourceNumber.filter { it.isDigit() }.takeLast(11),
-                System.currentTimeMillis()
+                now
             )
         }
     }
@@ -51,5 +61,9 @@ object OtpManager {
             SharingStarted.Eagerly, null
         )
     fun clearOtp() { _lastOtp.value = null }
-    fun clearMissedCallTail() { _lastMissedCallTail.value = null; _lastMissedCallSource.value = null }
+    fun clearMissedCallTail() {
+        _lastMissedCallTail.value = null
+        _lastMissedCallSource.value = null
+        _missedCallEvent.value = null
+    }
 }

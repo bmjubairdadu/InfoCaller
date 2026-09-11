@@ -25,28 +25,24 @@ class CallScreeningService : CallScreeningService() {
         }
 
         // Truecaller verification (missed/flash) call while an OTP request is
-        // pending: capture its tail for auto-verify and reject it instantly —
-        // before ringing. Live verify API decides validity.
+        // pending: capture its tail for auto-verify and silence it completely —
+        // without sending a hard carrier reject, so Truecaller registers a valid
+        // dropped/missed call.
         try {
             val prefs = applicationContext.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
             val pendingRid = prefs.getString("last_tc_request_id", null)
             val pendingPhone = prefs.getString("last_tc_phone", null)
             if (!pendingRid.isNullOrBlank() && !pendingPhone.isNullOrBlank()) {
-                val tail = phoneNumber.filter { it.isDigit() }.takeLast(6)
-                if (tail.length == 6) {
-                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(tail, phoneNumber)
-                } else {
-                    val d = phoneNumber.filter { it.isDigit() }
-                    if (d.isNotBlank()) {
-                        com.infocaller.app.util.OtpManager.onMissedCallTailSync(d, phoneNumber)
-                    }
+                val clean = phoneNumber.substringBefore(';').substringBefore('?')
+                val allDigits = clean.filter { it.isDigit() }
+                val tail = if (allDigits.length >= 6) allDigits.takeLast(6) else allDigits
+                if (tail.isNotBlank()) {
+                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(tail, clean)
                 }
                 respondToCall(
                     details,
                     CallResponse.Builder()
-                        .setDisallowCall(true)
-                        .setRejectCall(true)
-                        .setSkipCallLog(true)
+                        .setSilenceCall(true)
                         .setSkipNotification(true)
                         .build()
                 )

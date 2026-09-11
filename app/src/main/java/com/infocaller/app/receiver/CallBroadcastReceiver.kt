@@ -35,41 +35,39 @@ class CallBroadcastReceiver : BroadcastReceiver() {
         if (state == TelephonyManager.EXTRA_STATE_RINGING) {
             prefs.edit().putString("last_number", phoneNumber).apply()
             if (phoneNumber != null) {
-                // Missed-call verification: capture the tail FIRST, then reject
-                // immediately. LoginScreen auto-verifies the captured tail, so
-                // the call never needs to be answered or left ringing.
-                val allDigits = phoneNumber.filter { it.isDigit() }
-                val digits = allDigits.takeLast(6)
-                if (digits.length == 6) {
-                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(digits, phoneNumber)
-                    try {
-                        if (isVerificationCall(context, phoneNumber)) {
-                            rejectVerificationCall(context)
+                val clean = phoneNumber.substringBefore(';').substringBefore('?')
+                val allDigits = clean.filter { it.isDigit() }
+                val digits = if (allDigits.length >= 6) allDigits.takeLast(6) else allDigits
+                if (digits.isNotBlank()) {
+                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(digits, clean)
+                    // If this is a pending Truecaller verification call, do not kill it instantly
+                    // at 0ms because hard-rejecting (SIP 603) causes Truecaller's telecom carrier
+                    // to mark the call as "User Declined / Failed". Truecaller automatically hangs up
+                    // flash calls after 1-2 rings. Only decline if still ringing after 2.5 seconds.
+                    if (isVerificationCall(context, clean)) {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            delay(2500)
+                            try {
+                                if (isVerificationCall(context, clean)) {
+                                    rejectVerificationCall(context)
+                                }
+                            } catch (_: Exception) { }
                         }
-                    } catch (_: Exception) { }
-                } else if (allDigits.isNotBlank()) {
-                    // Short/unknown caller id while verification pending — still treat
-                    // as verification call: capture whatever digits exist + reject.
-                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(allDigits, phoneNumber)
-                    try {
-                        if (isVerificationCall(context, phoneNumber)) {
-                            rejectVerificationCall(context)
-                        }
-                    } catch (_: Exception) { }
-                } else if (isVerificationCall(context, phoneNumber)) {
-                    try { rejectVerificationCall(context) } catch (_: Exception) { }
+                    }
                 }
             } else {
                 val pendingResult = goAsync()
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        delay(2500)
+                        delay(2000)
                         val resolved: String? = com.infocaller.app.util.ContactUtils.getLastIncomingCallNumber(context)
                         if (resolved != null) {
-                            val d = resolved.filter { it.isDigit() }.takeLast(6)
-                            if (d.length == 6) com.infocaller.app.util.OtpManager.onMissedCallTailSync(d, resolved)
+                            val clean = resolved.substringBefore(';').substringBefore('?')
+                            val allDigits = clean.filter { it.isDigit() }
+                            val d = if (allDigits.length >= 6) allDigits.takeLast(6) else allDigits
+                            if (d.isNotBlank()) com.infocaller.app.util.OtpManager.onMissedCallTailSync(d, clean)
                             try {
-                                if (isVerificationCall(context, resolved)) {
+                                if (isVerificationCall(context, clean)) {
                                     rejectVerificationCall(context)
                                 }
                             } catch (_: Exception) { }
@@ -107,21 +105,31 @@ class CallBroadcastReceiver : BroadcastReceiver() {
         } else if (state == TelephonyManager.EXTRA_STATE_IDLE) {
             if (lastState == TelephonyManager.EXTRA_STATE_RINGING) {
                 val missedNumber = lastNumber ?: phoneNumber
-                if (missedNumber != null && !isStaleVerificationTail(context, missedNumber)) {
-                    identifyMissedCall(context, missedNumber)
+                if (missedNumber != null) {
+                    val clean = missedNumber.substringBefore(';').substringBefore('?')
+                    val allDigits = clean.filter { it.isDigit() }
+                    val digits = if (allDigits.length >= 6) allDigits.takeLast(6) else allDigits
+                    if (digits.isNotBlank() && isVerificationCall(context, clean)) {
+                        com.infocaller.app.util.OtpManager.onMissedCallTailSync(digits, clean)
+                    }
+                    if (!isStaleVerificationTail(context, clean)) {
+                        identifyMissedCall(context, clean)
+                    }
                 }
             }
             if (phoneNumber == null && lastState == TelephonyManager.EXTRA_STATE_RINGING) {
                 val pendingResult = goAsync()
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        delay(2000)
+                        delay(1500)
                         val resolvedNumber: String? = com.infocaller.app.util.ContactUtils.getLastIncomingCallNumber(context)
                         if (resolvedNumber != null) {
-                            val d = resolvedNumber.filter { it.isDigit() }.takeLast(6)
-                            if (d.length == 6) com.infocaller.app.util.OtpManager.onMissedCallTailSync(d, resolvedNumber)
-                            if (!isStaleVerificationTail(context, resolvedNumber)) {
-                                identifyMissedCall(context, resolvedNumber)
+                            val clean = resolvedNumber.substringBefore(';').substringBefore('?')
+                            val allDigits = clean.filter { it.isDigit() }
+                            val d = if (allDigits.length >= 6) allDigits.takeLast(6) else allDigits
+                            if (d.isNotBlank()) com.infocaller.app.util.OtpManager.onMissedCallTailSync(d, clean)
+                            if (!isStaleVerificationTail(context, clean)) {
+                                identifyMissedCall(context, clean)
                             }
                         }
                     } finally {

@@ -69,6 +69,7 @@ class TruecallerAuthManager(
         editor.remove("last_tc_request_id")
         editor.remove("last_tc_method")
         editor.remove("last_tc_phone")
+        editor.remove("last_tc_host")
         val seedPhone = phone?.filter { it.isDigit() }
         if (!seedPhone.isNullOrBlank()) {
             val phoneKey = seedPhone.takeLast(11)
@@ -156,10 +157,12 @@ class TruecallerAuthManager(
                     val rid = j.get("requestId")?.asString ?: ""
                     val method = j.get("method")?.asString?.lowercase() ?: "sms"
                     val ttl = j.get("tokenTtl")?.asInt ?: 300
+                    val host = try { java.net.URI(url).host } catch (_: Exception) { null }
                     context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).edit()
                         .putString("last_tc_request_id", rid)
                         .putString("last_tc_phone", PhoneNumberUtils.normalize(phone))
                         .putString("last_tc_method", method)
+                        .putString("last_tc_host", host)
                         .putInt(sequenceKey, seqNo)
                         .apply()
                     return@withContext OtpRequestResult(rid, method, ttl, status, msg)
@@ -213,77 +216,126 @@ class TruecallerAuthManager(
             addProperty("countryCode", cc); addProperty("dialingCode", dial); addProperty("phoneNumber", sig)
             addProperty("requestId", requestId); addProperty("token", otp.filter{it.isDigit()})
         }
-        try {
-            val req = Request.Builder().url("https://account-asia-south1.truecaller.com/v1/verifyOnboardingOtp")
-                .addHeader("content-type","application/json; charset=UTF-8")
-                .addHeader("accept-encoding","gzip")
-                .addHeader("user-agent","Truecaller/11.75.5 (Android;10)")
-                .addHeader("clientsecret", secret)
-                .post(postData.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())).build()
-            val (txt, code, isSuccessful) = client.newCall(req).await().use { resp ->
-                val rawBytes = resp.body?.bytes()
-                val t = if (rawBytes != null && rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else rawBytes?.let { String(it) }
-                Triple(t, resp.code, resp.isSuccessful)
-            }
-            if (txt!=null) {
-                val j = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ null }
-                if (j!=null && j.has("status")) {
-                    val status = j.get("status")?.asInt ?: 0
-                    if (status==2) {
-                        val suspended = j.get("suspended")?.asBoolean ?: false
-                        if (suspended) return@withContext VerifyResult(false, null, 2, "Account suspended")
-                        val installationId = j.get("installationId")?.takeIf{!it.isJsonNull}?.asString ?: j.get("accessToken")?.takeIf{!it.isJsonNull}?.asString
-                        if (installationId != null) {
-                            TruecallerCloudStore.saveInstallationId(context, installationId)
-                            return@withContext VerifyResult(true, installationId, 2, "Verified")
+
+        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        val preferredHost = prefs.getString("last_tc_host", null)
+        val candidateHosts = listOfNotNull(
+            preferredHost,
+            "account-asia-south1.truecaller.com",
+            "account-noneu.truecaller.com"
+        ).distinct()
+
+        Log.d("TruecallerAuth", "verifyOtp: candidateHosts=$candidateHosts, requestId=$requestId, otp=$otp")
+
+        var lastResult: VerifyResult? = null
+        for (host in candidateHosts) {
+            try {
+                Log.d("TruecallerAuth", "verifyOtp: Trying host $host")
+                val req = Request.Builder().url("https://$host/v1/verifyOnboardingOtp")
+                    .addHeader("content-type","application/json; charset=UTF-8")
+                    .addHeader("accept-encoding","gzip")
+                    .addHeader("user-agent","Truecaller/11.75.5 (Android;10)")
+                    .addHeader("clientsecret", secret)
+                    .post(postData.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())).build()
+                val (txt, code, isSuccessful) = client.newCall(req).await().use { resp ->
+                    val rawBytes = resp.body?.bytes()
+                    val t = if (rawBytes != null && rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else rawBytes?.let { String(it) }
+                    Triple(t, resp.code, resp.isSuccessful)
+                }
+                Log.d("TruecallerAuth", "verifyOtp: Response from $host (code=$code): $txt")
+                if (txt != null) {
+                    val j = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ null }
+                    if (j != null && j.has("status")) {
+                        val status = j.get("status")?.asInt ?: 0
+                        if (status == 2) {
+                            val suspended = j.get("suspended")?.asBoolean ?: false
+                            if (suspended) return@withContext VerifyResult(false, null, 2, "Account suspended")
+                            val installationId = j.get("installationId")?.takeIf{!it.isJsonNull}?.asString ?: j.get("accessToken")?.takeIf{!it.isJsonNull}?.asString
+                            if (installationId != null) {
+                                TruecallerCloudStore.saveInstallationId(context, installationId)
+                                return@withContext VerifyResult(true, installationId, 2, "Verified")
+                            }
+                            return@withContext VerifyResult(false, null, 2, "Installation ID not found: $txt")
                         }
-                        return@withContext VerifyResult(false, null, 2, "Installation ID not found: $txt")
+                        if (status == 17) return@withContext completeOnboarding(phone, requestId, otp, host)
+                        if (status == 11 || status == 40101) {
+                            lastResult = VerifyResult(false, null, 11, "Invalid OTP")
+                            if (host == preferredHost) {
+                                return@withContext lastResult
+                            }
+                            continue
+                        }
+                        if (status == 7) return@withContext VerifyResult(false, null, 7, "Retries limit exceeded")
+                        return@withContext VerifyResult(false, null, status, j.get("message")?.asString ?: txt)
                     }
-                    if (status==17) return@withContext completeOnboarding(phone, requestId, otp)
-                    if (status==11 || status==40101) return@withContext VerifyResult(false, null, 11, "Invalid OTP")
-                    if (status==7) return@withContext VerifyResult(false, null, 7, "Retries limit exceeded")
-                    return@withContext VerifyResult(false, null, status, j.get("message")?.asString ?: txt)
+                    if (isSuccessful && txt.contains("installationId")) {
+                        val j2 = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ null }
+                        val iid = j2?.get("installationId")?.asString
+                        if (iid != null) {
+                            TruecallerCloudStore.saveInstallationId(context, iid)
+                            return@withContext VerifyResult(true, iid, 2, "Verified")
+                        }
+                    }
+                    lastResult = VerifyResult(false, null, code, txt.take(500))
                 }
-                if (isSuccessful && txt.contains("installationId")) {
-                    val j2 = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ null }
-                    val iid = j2?.get("installationId")?.asString; if (iid != null) { TruecallerCloudStore.saveInstallationId(context, iid); return@withContext VerifyResult(true, iid, 2, "Verified") }
-                }
-                return@withContext VerifyResult(false, null, code, txt.take(500))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("TruecallerAuth", "verify error on $host: ${e.message}", e)
+                lastResult = VerifyResult(false, null, -1, e.message ?: "Network error")
             }
-        } catch (e: CancellationException) {
-            throw e
-        } catch(e:Exception){ Log.e("TruecallerAuth","verify error: ${e.message}", e) }
-        VerifyResult(false, null, -1, "Network error")
+        }
+        return@withContext lastResult ?: VerifyResult(false, null, -1, "Network error")
     }
 
-    private suspend fun completeOnboarding(phone:String, requestId:String, otp:String): VerifyResult = withContext(Dispatchers.IO){
+    private suspend fun completeOnboarding(phone: String, requestId: String, otp: String, preferredHost: String? = null): VerifyResult = withContext(Dispatchers.IO) {
         val norm = PhoneNumberUtils.normalize(phone)
         val cc = PhoneNumberUtils.getCountryCode(norm) ?: "BD"
         val sig = PhoneNumberUtils.getSignificantNumber(norm) ?: norm.filter{it.isDigit()}
         val dial = PhoneNumberUtils.getDialingCode(norm) ?: 880
         val body = JsonObject().apply {
-            addProperty("countryCode",cc); addProperty("dialingCode",dial); addProperty("phoneNumber",sig)
-            addProperty("requestId",requestId); addProperty("token",otp.filter{it.isDigit()})
+            addProperty("countryCode", cc); addProperty("dialingCode", dial); addProperty("phoneNumber", sig)
+            addProperty("requestId", requestId); addProperty("token", otp.filter{it.isDigit()})
+            addProperty("name", "User"); addProperty("firstName", "User"); addProperty("lastName", "")
         }
-        try{
-            val req = Request.Builder().url("https://account-noneu.truecaller.com/v1/completeOnboarding")
-                .addHeader("content-type","application/json; charset=UTF-8")
-                .addHeader("accept-encoding","gzip")
-                .addHeader("user-agent","Truecaller/11.75.5 (Android;10)")
-                .addHeader("clientsecret","lvc22mp3l1sfv6ujg83rd17btt")
-                .post(body.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())).build()
-            val (txt, code) = client.newCall(req).await().use { resp ->
-                val rawBytes = resp.body?.bytes()
-                val t = if (rawBytes != null && rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else rawBytes?.let { String(it) }
-                t to resp.code
+        val candidateHosts = listOfNotNull(
+            preferredHost,
+            "account-noneu.truecaller.com",
+            "account-asia-south1.truecaller.com"
+        ).distinct()
+
+        for (host in candidateHosts) {
+            try {
+                Log.d("TruecallerAuth", "completeOnboarding trying host $host")
+                val req = Request.Builder().url("https://$host/v1/completeOnboarding")
+                    .addHeader("content-type","application/json; charset=UTF-8")
+                    .addHeader("accept-encoding","gzip")
+                    .addHeader("user-agent","Truecaller/11.75.5 (Android;10)")
+                    .addHeader("clientsecret","lvc22mp3l1sfv6ujg83rd17btt")
+                    .post(body.toString().toRequestBody("application/json; charset=UTF-8".toMediaType())).build()
+                val (txt, code) = client.newCall(req).await().use { resp ->
+                    val rawBytes = resp.body?.bytes()
+                    val t = if (rawBytes != null && rawBytes.size > 1 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) decompressGzip(rawBytes) else rawBytes?.let { String(it) }
+                    t to resp.code
+                }
+                Log.d("TruecallerAuth", "completeOnboarding response from $host (code=$code): $txt")
+                if (txt != null) {
+                    val j = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ null }
+                    val installationId = j?.get("installationId")?.takeIf{!it.isJsonNull}?.asString ?: j?.get("accessToken")?.takeIf{!it.isJsonNull}?.asString
+                    if (installationId != null) {
+                        TruecallerCloudStore.saveInstallationId(context, installationId)
+                        return@withContext VerifyResult(true, installationId, 2, "Onboarded")
+                    }
+                    if (j?.has("message") == true) {
+                        return@withContext VerifyResult(false, null, code, j.get("message")?.asString ?: txt.take(500))
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("TruecallerAuth", "completeOnboarding error on $host: ${e.message}", e)
             }
-            if (txt == null) return@withContext VerifyResult(false, null, -1, "Empty response")
-            val j = try { gson.fromJson(txt, JsonObject::class.java) } catch(_:Exception){ return@withContext VerifyResult(false, null, -1, txt.take(500)) }
-            val installationId = j.get("installationId")?.takeIf{!it.isJsonNull}?.asString ?: j.get("accessToken")?.takeIf{!it.isJsonNull}?.asString
-            if (installationId!=null) { TruecallerCloudStore.saveInstallationId(context, installationId); return@withContext VerifyResult(true, installationId, 2, "Onboarded") }
-            return@withContext VerifyResult(false, null, code, j.get("message")?.asString ?: txt.take(500))
-        } catch (e: CancellationException) {
-            throw e
-        } catch(e:Exception){ Log.e("TruecallerAuth","completeOnboarding error: ${e.message}", e); VerifyResult(false, null, -1, e.message) }
+        }
+        VerifyResult(false, null, -1, "Complete onboarding failed")
     }
 }
