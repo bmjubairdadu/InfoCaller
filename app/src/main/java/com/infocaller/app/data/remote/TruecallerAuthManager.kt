@@ -259,10 +259,10 @@ class TruecallerAuthManager(
                         }
                         if (status == 17) return@withContext completeOnboarding(phone, requestId, otp, host)
                         if (status == 11 || status == 40101) {
+                            // status 11 = gateway not yet confirmed the drop-call.
+                            // Never short-circuit — try every remaining host.
                             lastResult = VerifyResult(false, null, 11, "Invalid OTP")
-                            if (host == preferredHost) {
-                                return@withContext lastResult
-                            }
+                            Log.d("TruecallerAuth", "verifyOtp: status 11 on $host — trying next host")
                             continue
                         }
                         if (status == 7) return@withContext VerifyResult(false, null, 7, "Retries limit exceeded")

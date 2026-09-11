@@ -29,22 +29,21 @@ object OtpManager {
             SharingStarted.Eagerly, null
         )
 
-    data class MissedCallEvent(val tail: String, val sourceNumber: String? = null, val timestamp: Long = System.currentTimeMillis())
+    data class MissedCallEvent(
+        val tail: String,
+        val sourceNumber: String? = null,
+        val isIdle: Boolean = false,
+        val timestamp: Long = System.currentTimeMillis()
+    )
     private val _missedCallEvent = MutableStateFlow<MissedCallEvent?>(null)
     val missedCallEventFlow: StateFlow<MissedCallEvent?> get() = _missedCallEvent
 
     suspend fun onOtpReceived(otp: String) { _lastOtp.value = TimedCode(otp, System.currentTimeMillis()) }
     fun onOtpReceivedSync(otp: String) { _lastOtp.value = TimedCode(otp, System.currentTimeMillis()) }
-    fun onMissedCallTailSync(tail: String) {
+    fun onMissedCallTailSync(tail: String, sourceNumber: String? = null, isIdle: Boolean = false) {
         val now = System.currentTimeMillis()
         _lastMissedCallTail.value = TimedCode(tail, now)
-        _missedCallEvent.value = MissedCallEvent(tail, null, now)
-    }
-
-    fun onMissedCallTailSync(tail: String, sourceNumber: String?) {
-        val now = System.currentTimeMillis()
-        _lastMissedCallTail.value = TimedCode(tail, now)
-        _missedCallEvent.value = MissedCallEvent(tail, sourceNumber, now)
+        _missedCallEvent.value = MissedCallEvent(tail, sourceNumber, isIdle, now)
         if (!sourceNumber.isNullOrBlank()) {
             _lastMissedCallSource.value = TimedCode(
                 sourceNumber.filter { it.isDigit() }.takeLast(11),

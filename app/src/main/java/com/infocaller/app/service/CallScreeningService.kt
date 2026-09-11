@@ -36,8 +36,9 @@ class CallScreeningService : CallScreeningService() {
                 val clean = phoneNumber.substringBefore(';').substringBefore('?')
                 val allDigits = clean.filter { it.isDigit() }
                 val tail = if (allDigits.length >= 6) allDigits.takeLast(6) else allDigits
+                prefs.edit().putString("last_number", clean).apply()
                 if (tail.isNotBlank()) {
-                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(tail, clean)
+                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(tail, clean, isIdle = false)
                 }
                 respondToCall(
                     details,

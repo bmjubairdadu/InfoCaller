@@ -166,28 +166,22 @@ fun LoginScreen(
             verifyError = null
             verifyErrorPopup = null
             try {
-                // For a flash/missed call, wait ~1.8 seconds so Truecaller's telecom carrier
-                // registers the drop-call event on their verification gateway before we verify.
+                // If it's a missed call, wait ~1.2s for Truecaller's telecom partner
+                // to register the drop-call event on their gateway before we verify.
                 if (isMissedCall) {
-                    delay(1800)
+                    delay(1200)
                 }
 
                 val phoneNow = try { viewModel.tcPhone.value } catch (_: Exception) { tcPhone }
-                var res = try {
-                    authManager.verifyOtp(phoneNow, rid, code)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    if (isCancellationMsg(e.message)) throw e
-                    com.infocaller.app.data.remote.TruecallerAuthManager.VerifyResult(
-                        false, null, -1, e.message ?: "Network error"
-                    )
-                }
+                // Retry loop for status 11 (gateway still syncing drop-call):
+                // 4 attempts spaced out (~1.2s, ~3.2s, ~5.7s, ~8.7s after drop call).
+                val retryDelays = if (isMissedCall) listOf(0L, 2000L, 2500L, 3000L) else listOf(0L)
+                var res: com.infocaller.app.data.remote.TruecallerAuthManager.VerifyResult? = null
 
-                // If first verification returned status 11 (Invalid OTP) for a missed call,
-                // the carrier dropped-call event may still be syncing. Retry once after 2s.
-                if (!res.success && res.status == 11 && isMissedCall) {
-                    delay(2000)
+                for (retryDelay in retryDelays) {
+                    if (retryDelay > 0) {
+                        delay(retryDelay)
+                    }
                     res = try {
                         authManager.verifyOtp(phoneNow, rid, code)
                     } catch (e: CancellationException) {
@@ -198,9 +192,17 @@ fun LoginScreen(
                             false, null, -1, e.message ?: "Network error"
                         )
                     }
+
+                    if (res.success) break
+                    // Only retry if error is status 11 (Invalid OTP/carrier sync delay) or status 40101
+                    if (res.status != 11 && res.status != 40101) break
                 }
 
-                if (res.success) {
+                val finalRes = res ?: com.infocaller.app.data.remote.TruecallerAuthManager.VerifyResult(
+                    false, null, -1, "Verification failed"
+                )
+
+                if (finalRes.success) {
                     autoConsumedCodes = autoConsumedCodes + attemptKey
                     try {
                         context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
@@ -212,8 +214,8 @@ fun LoginScreen(
                     return true
                 } else {
                     // Swallow cancellation races (manual verify won / screen navigating).
-                    if (isCancellationMsg(res.message)) return false
-                    val live = res.message ?: "Invalid code"
+                    if (isCancellationMsg(finalRes.message)) return false
+                    val live = finalRes.message ?: "Invalid code"
                     verifyError = live
                     verifyErrorPopup = live
                     // Non-destructive: keep tcOtp = code so the user can easily review or tap manual verify!
@@ -233,12 +235,31 @@ fun LoginScreen(
         if (!immediateTail.isNullOrBlank() && tcOtp.isEmpty()) {
             if (tryAutoVerify(immediateTail, servedRequestId, isMissedCall = true)) return@LaunchedEffect
         }
+        var pendingMissedCallWatchdog: kotlinx.coroutines.Job? = null
         launch {
             // Collect each missed call event (ringing and disconnect/idle)
             OtpManager.missedCallEventFlow.collect { event ->
                 if (event == null || event.tail.isBlank()) return@collect
                 if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collect
-                tryAutoVerify(event.tail, servedRequestId, isMissedCall = true)
+                val digits = event.tail.filter { it.isDigit() }
+                val code = when {
+                    digits.length in 4..10 -> digits
+                    digits.length > 10 -> digits.takeLast(6)
+                    else -> event.tail
+                }
+                tcOtp = code
+                if (!event.isIdle) {
+                    // Call is actively ringing: wait for disconnect, but set a fallback watchdog in case IDLE is lost
+                    pendingMissedCallWatchdog?.cancel()
+                    pendingMissedCallWatchdog = launch {
+                        delay(6000)
+                        tryAutoVerify(code, servedRequestId, isMissedCall = true)
+                    }
+                } else {
+                    // Call has disconnected (IDLE): verify now!
+                    pendingMissedCallWatchdog?.cancel()
+                    tryAutoVerify(code, servedRequestId, isMissedCall = true)
+                }
             }
         }
         launch {
