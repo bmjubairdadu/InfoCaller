@@ -52,7 +52,8 @@ import com.infocaller.app.util.PhoneNumberUtils
 import com.infocaller.app.permissions.PermissionManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -139,7 +140,18 @@ fun LoginScreen(
         }
         val servedRequestId = tcAuthResult!!.requestId
 
+        suspend fun isCancellationMsg(msg: String?): Boolean {
+            if (msg.isNullOrBlank()) return false
+            return msg.contains("scoped flow", ignoreCase = true) ||
+                msg.contains("was cancelled", ignoreCase = true) ||
+                msg.contains("Job was cancelled", ignoreCase = true)
+        }
+
         suspend fun tryAutoVerify(codeRaw: String, rid: String): Boolean {
+            // Never let coroutine cancellation become a user-visible error.
+            // collectLatest child cancellation surfaces as
+            // "Child of the scoped flow was cancelled" — must be rethrown.
+            if (autoVerifying || tcLoading) return false
             val digits = codeRaw.filter { it.isDigit() }
             val code = when {
                 digits.length in 4..10 -> digits
@@ -155,32 +167,40 @@ fun LoginScreen(
             autoVerifying = true
             tcOtp = code
             verifyError = null
-            val phoneNow = try { viewModel.tcPhone.value } catch (_: Exception) { tcPhone }
-            val res = try {
-                authManager.verifyOtp(phoneNow, rid, code)
-            } catch (e: Exception) {
-                com.infocaller.app.data.remote.TruecallerAuthManager.VerifyResult(
-                    false, null, -1, e.message ?: "Network error"
-                )
-            }
-            autoVerifying = false
-            if (res.success) {
-                try {
-                    context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-                        .edit().remove("last_tc_request_id").remove("last_tc_method").apply()
-                } catch (_: Exception) { }
-                OtpManager.clearOtp()
-                OtpManager.clearMissedCallTail()
-                viewModel.loginWithTruecaller(null)
-                return true
-            } else {
-                val live = res.message ?: "Invalid code"
-                verifyError = live
-                verifyErrorPopup = live
-                tcOtp = ""
-                OtpManager.clearOtp()
-                OtpManager.clearMissedCallTail()
-                return false
+            try {
+                val phoneNow = try { viewModel.tcPhone.value } catch (_: Exception) { tcPhone }
+                val res = try {
+                    authManager.verifyOtp(phoneNow, rid, code)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (isCancellationMsg(e.message)) throw e
+                    com.infocaller.app.data.remote.TruecallerAuthManager.VerifyResult(
+                        false, null, -1, e.message ?: "Network error"
+                    )
+                }
+                if (res.success) {
+                    try {
+                        context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                            .edit().remove("last_tc_request_id").remove("last_tc_method").apply()
+                    } catch (_: Exception) { }
+                    OtpManager.clearOtp()
+                    OtpManager.clearMissedCallTail()
+                    viewModel.loginWithTruecaller(null)
+                    return true
+                } else {
+                    // Swallow cancellation races (manual verify won / screen navigating).
+                    if (isCancellationMsg(res.message)) return false
+                    val live = res.message ?: "Invalid code"
+                    verifyError = live
+                    verifyErrorPopup = live
+                    tcOtp = ""
+                    OtpManager.clearOtp()
+                    OtpManager.clearMissedCallTail()
+                    return false
+                }
+            } finally {
+                autoVerifying = false
             }
         }
 
@@ -194,17 +214,20 @@ fun LoginScreen(
             if (tryAutoVerify(immediateTail, servedRequestId)) return@LaunchedEffect
         }
         launch {
-            OtpManager.missedCallFlow.collectLatest { tail: String? ->
-                if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collectLatest
-                if (tail.isNullOrBlank()) return@collectLatest
+            // Use collect (not collectLatest) so an in-flight verify is never
+            // cancelled by a duplicate tail — that cancel used to surface as
+            // "Child of the scoped flow was cancelled".
+            OtpManager.missedCallFlow.collect { tail: String? ->
+                if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collect
+                if (tail.isNullOrBlank()) return@collect
                 // Accept tail from ANY verification call — live API decides validity.
                 tryAutoVerify(tail, servedRequestId)
             }
         }
         launch {
-            OtpManager.otpFlow.collectLatest { code: String? ->
-                if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collectLatest
-                if (code.isNullOrBlank()) return@collectLatest
+            OtpManager.otpFlow.collect { code: String? ->
+                if (viewModel.tcAuthResult.value?.requestId != servedRequestId) return@collect
+                if (code.isNullOrBlank()) return@collect
                 tryAutoVerify(code, servedRequestId)
             }
         }
@@ -448,25 +471,53 @@ fun LoginScreen(
                                     .height(56.dp)
                                     .alpha(if (tcOtp.length in 4..10 && !tcLoading) 1f else 0.5f)
                                     .brandGradient(radius = 16.dp)
-                                    .clickable(enabled = tcOtp.length in 4..10 && !tcLoading) {
+                                    .clickable(enabled = tcOtp.length in 4..10 && !tcLoading && !autoVerifying) {
+                                        if (tcLoading || autoVerifying) return@clickable
+                                        val reqId = tcAuthResult?.requestId ?: return@clickable
+                                        val codeSnap = tcOtp.filter { it.isDigit() }
+                                        val phoneSnap = tcPhone
+                                        if (codeSnap.length !in 4..10) return@clickable
+                                        // Claim this code so auto collectors don't double-verify it.
+                                        autoConsumedCodes = autoConsumedCodes + "$reqId:$codeSnap"
                                         tcLoading = true
                                         verifyError = null
+                                        verifyErrorPopup = null
                                         scope.launch {
-                                            val verifyResult = authManager.verifyOtp(tcPhone, tcAuthResult!!.requestId, tcOtp)
-                                            if (verifyResult.success) {
-                                                try {
-                                                    context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-                                                        .edit().remove("last_tc_request_id").apply()
-                                                } catch (_: Exception) { }
-                                                OtpManager.clearOtp()
-                                                OtpManager.clearMissedCallTail()
-                                                viewModel.loginWithTruecaller(null)
-                                            } else {
-                                                val live = verifyResult.message ?: "Invalid OTP code. Please try again."
-                                                verifyError = live
-                                                verifyErrorPopup = live
+                                            try {
+                                                val verifyResult = authManager.verifyOtp(phoneSnap, reqId, codeSnap)
+                                                if (verifyResult.success) {
+                                                    try {
+                                                        context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                                                            .edit().remove("last_tc_request_id").remove("last_tc_method").apply()
+                                                    } catch (_: Exception) { }
+                                                    OtpManager.clearOtp()
+                                                    OtpManager.clearMissedCallTail()
+                                                    viewModel.loginWithTruecaller(null)
+                                                } else {
+                                                    val live = verifyResult.message ?: "Invalid OTP code. Please try again."
+                                                    // Never show coroutine cancellation as a verify error.
+                                                    val isCancel = live.contains("scoped flow", ignoreCase = true) ||
+                                                        live.contains("was cancelled", ignoreCase = true) ||
+                                                        live.contains("Job was cancelled", ignoreCase = true)
+                                                    if (!isCancel) {
+                                                        verifyError = live
+                                                        verifyErrorPopup = live
+                                                    }
+                                                }
+                                            } catch (e: CancellationException) {
+                                                // Screen navigating away — silently stop, never popup.
+                                                throw e
+                                            } catch (e: Exception) {
+                                                val msg = e.message.orEmpty()
+                                                val isCancel = msg.contains("scoped flow", ignoreCase = true) ||
+                                                    msg.contains("was cancelled", ignoreCase = true)
+                                                if (!isCancel) {
+                                                    verifyError = msg.ifBlank { "Invalid OTP code. Please try again." }
+                                                    verifyErrorPopup = verifyError
+                                                }
+                                            } finally {
+                                                tcLoading = false
                                             }
-                                            tcLoading = false
                                         }
                                     },
                                 contentAlignment = Alignment.Center

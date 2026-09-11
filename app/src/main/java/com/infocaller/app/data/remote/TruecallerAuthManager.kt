@@ -7,6 +7,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.infocaller.app.util.PhoneNumberUtils
 import com.infocaller.app.util.await
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -178,6 +179,8 @@ class TruecallerAuthManager(
                 }
 
                 lastError = msg ?: txt.take(200)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.w("TruecallerAuth", "Failed endpoint $url: ${e.message}")
                 lastError = e.message
@@ -247,6 +250,8 @@ class TruecallerAuthManager(
                 }
                 return@withContext VerifyResult(false, null, code, txt.take(500))
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch(e:Exception){ Log.e("TruecallerAuth","verify error: ${e.message}", e) }
         VerifyResult(false, null, -1, "Network error")
     }
@@ -277,6 +282,8 @@ class TruecallerAuthManager(
             val installationId = j.get("installationId")?.takeIf{!it.isJsonNull}?.asString ?: j.get("accessToken")?.takeIf{!it.isJsonNull}?.asString
             if (installationId!=null) { TruecallerCloudStore.saveInstallationId(context, installationId); return@withContext VerifyResult(true, installationId, 2, "Onboarded") }
             return@withContext VerifyResult(false, null, code, j.get("message")?.asString ?: txt.take(500))
+        } catch (e: CancellationException) {
+            throw e
         } catch(e:Exception){ Log.e("TruecallerAuth","completeOnboarding error: ${e.message}", e); VerifyResult(false, null, -1, e.message) }
     }
 }
