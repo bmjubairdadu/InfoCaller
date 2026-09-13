@@ -31,7 +31,10 @@ class XProfileProviderImpl(private val httpClient: OkHttpClient) : LookupProvide
                 .header("User-Agent", "Mozilla/5.0 (Linux; Android 14)").build()
             httpClient.newCall(req).await().use { r ->
                 if (r.isSuccessful) {
-                    val body = r.body?.string().orEmpty()
+                    val body = try { r.peekBody(100_000L).string() } catch (_: Exception) { "" } catch (_: Error) { "" }
+                    if (body.length > 100_000) return@use
+                    // Live probe: missing handles return HTTP 200 empty body (0-13 bytes).
+                    if (body.length < 30) return@use
                     if (body.length > 20 && !body.contains("suspended", true)) {
                         try {
                             val arr = com.google.gson.JsonParser.parseString(body).asJsonArray
@@ -63,12 +66,16 @@ class XProfileProviderImpl(private val httpClient: OkHttpClient) : LookupProvide
             val url = "https://x.com/$handle"
             val doc = Jsoup.connect(url)
                 .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
-                .timeout(8000).ignoreHttpErrors(true).followRedirects(true).get()
-            val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
+                .timeout(8000).maxBodySize(100_000).ignoreHttpErrors(true).followRedirects(true).get()
+            val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()?.takeIf { it.isNotBlank() }
+                ?: return@withContext null
+            // Missing X pages render generic titles; strict: must mention the handle.
+            if (!title.contains(handle, true)) return@withContext null
             val desc = doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim()?.take(400)
-            val img = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
-            val name = title?.substringBefore("@")?.trim()
-                ?.takeIf { it.length in 2..50 && !it.contains("x.com", true) } ?: return@withContext null
+            val imgRaw = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
+            val img = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(imgRaw)) imgRaw else null } catch (_: Exception) { null } catch (_: Error) { null }
+            val name = title.substringBefore("@").trim()
+                .takeIf { it.length in 2..50 && !it.contains("x.com", true) } ?: return@withContext null
             return@withContext PartialResult(
                 name = name, about = desc, imageUrl = img,
                 photoCandidates = img?.let { listOf(PhotoCandidate(provider = "X", url = it, sourcePriority = 60)) } ?: emptyList(),

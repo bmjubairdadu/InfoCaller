@@ -18,14 +18,15 @@ class EmailDeepSocialProviderImpl(private val httpClient: OkHttpClient) : Lookup
     override val priority = 57
     override val costClass = CostClass.FREE
 
+    // Capped GET: unbounded body?.string() OOMs manual scans.
     private suspend fun get(url: String): String? {
         return try {
             val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 (Linux; Android 14)").build()
             httpClient.newCall(req).await().use { r ->
                 if (!r.isSuccessful) return null
-                r.body?.string()
+                try { r.peekBody(100_000L).string().takeIf { it.length <= 100_000 } } catch (_: Exception) { null } catch (_: Error) { null }
             }
-        } catch (_: Exception) { null }
+        } catch (_: Exception) { null } catch (_: Error) { null }
     }
 
     private suspend fun headOk(url: String): Boolean {
@@ -63,8 +64,10 @@ class EmailDeepSocialProviderImpl(private val httpClient: OkHttpClient) : Lookup
                         ?.takeIf { it.isNotBlank() }?.let { about = it.take(350) }
                     entry?.get("currentLocation")?.takeIf { !it.isJsonNull }?.asString
                         ?.takeIf { it.isNotBlank() }?.let { city = it.take(80) }
-                    val thumb = entry?.get("thumbnailUrl")?.takeIf { !it.isJsonNull }?.asString
+                    val thumbRaw = entry?.get("thumbnailUrl")?.takeIf { !it.isJsonNull }?.asString
                         ?.takeIf { it.startsWith("http") }
+                    // Gravatar default renders (d=mp/identicon/blank) are placeholders, never photos.
+                    val thumb = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(thumbRaw)) thumbRaw else null } catch (_: Exception) { null } catch (_: Error) { null }
                     thumb?.let { photos.add(PhotoCandidate(provider = "Gravatar", url = it, sourcePriority = 63)) }
                     socials.add(SocialProfile("Gravatar", prefix, "https://gravatar.com/$hash", SocialLookupStatus.PUBLIC_MATCH))
                     try {
@@ -99,10 +102,12 @@ class EmailDeepSocialProviderImpl(private val httpClient: OkHttpClient) : Lookup
                             }
                         u.get("location")?.takeIf { !it.isJsonNull }?.asString
                             ?.takeIf { it.isNotBlank() }?.let { if (city == null) city = it.take(80) }
-                        u.get("avatar_url")?.takeIf { !it.isJsonNull }?.asString
-                            ?.takeIf { it.startsWith("http") }?.let {
-                                photos.add(PhotoCandidate(provider = "GitHub", url = it, sourcePriority = 61))
-                            }
+                        val ghRaw = u.get("avatar_url")?.takeIf { !it.isJsonNull }?.asString
+                            ?.takeIf { it.startsWith("http") }
+                        val ghAvatar = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(ghRaw)) ghRaw else null } catch (_: Exception) { null } catch (_: Error) { null }
+                        ghAvatar?.let {
+                            photos.add(PhotoCandidate(provider = "GitHub", url = it, sourcePriority = 61))
+                        }
                         socials.add(SocialProfile("GitHub", login, "https://github.com/$login", SocialLookupStatus.PUBLIC_MATCH))
                     }
                 } catch (_: Exception) { }
@@ -123,10 +128,12 @@ class EmailDeepSocialProviderImpl(private val httpClient: OkHttpClient) : Lookup
                             ?.takeIf { it.isNotBlank() }?.let {
                                 about = ((about?.let { a -> "$a • " } ?: "") + it).take(400)
                             }
-                        o.get("avatar_url")?.takeIf { !it.isJsonNull }?.asString
-                            ?.takeIf { it.startsWith("http") }?.let {
-                                photos.add(PhotoCandidate(provider = "GitLab", url = it, sourcePriority = 56))
-                            }
+                        val glRaw = o.get("avatar_url")?.takeIf { !it.isJsonNull }?.asString
+                            ?.takeIf { it.startsWith("http") }
+                        val glAvatar = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(glRaw)) glRaw else null } catch (_: Exception) { null } catch (_: Error) { null }
+                        glAvatar?.let {
+                            photos.add(PhotoCandidate(provider = "GitLab", url = it, sourcePriority = 56))
+                        }
                         socials.add(SocialProfile("GitLab", uname, "https://gitlab.com/$uname", SocialLookupStatus.PUBLIC_MATCH))
                     }
                 } catch (_: Exception) { }

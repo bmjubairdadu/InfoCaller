@@ -11,6 +11,12 @@ val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
+val releaseStorePassword = localProperties.getProperty("release.store.password") ?: ""
+val releaseKeyAlias = localProperties.getProperty("release.key.alias") ?: ""
+val releaseKeyPassword = localProperties.getProperty("release.key.password") ?: ""
+val releaseStoreFilePath = localProperties.getProperty("release.store.file")
+    ?.takeIf { it.isNotBlank() }
+    ?.let { rootProject.file(it) }
 val brandfetchClientId = localProperties.getProperty("brandfetch.client.id") ?: ""
 val supabaseUrl = localProperties.getProperty("supabase.url") ?: ""
 val supabaseAnonKey = localProperties.getProperty("supabase.anon.key") ?: ""
@@ -31,6 +37,17 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            if (releaseStoreFilePath != null && releaseStoreFilePath.exists()) {
+                storeFile = releaseStoreFilePath
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         debug {
             buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"$brandfetchClientId\"")
@@ -38,6 +55,7 @@ android {
             buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
         }
         release {
+            signingConfig = signingConfigs.getByName("release")
             buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"\"")
             buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
             buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")

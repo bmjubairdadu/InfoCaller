@@ -21,6 +21,8 @@ class PimeyesPhotoPivotProviderImpl(private val httpClient: OkHttpClient) : Look
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         try {
             val autoPhotos = context.foundPhotos.filter { it.startsWith("http") }.distinct().take(3)
+            // No photo, no pivot: generic Pimeyes links are noise (see ReverseImage gate).
+            if (autoPhotos.isEmpty()) return@withContext null
             val about = buildString {
                 if (autoPhotos.isNotEmpty()) {
                     append("Face-search the caller's found photo (${autoPhotos.size}): ")

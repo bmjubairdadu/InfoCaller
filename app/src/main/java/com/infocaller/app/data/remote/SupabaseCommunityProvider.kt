@@ -76,8 +76,9 @@ class SupabaseCommunityProvider(
                 .build()
             val body = client.newCall(req).await().use { resp ->
                 if (!resp.isSuccessful) return@withContext null
-                resp.body?.string()
+                try { resp.peekBody(50_000L).string() } catch (_: Exception) { return@withContext null } catch (_: Error) { return@withContext null }
             } ?: return@withContext null
+            if (body.length > 50_000) return@withContext null
             val arr = JSONArray(body)
             if (arr.length() == 0) return@withContext null
             val obj = arr.getJSONObject(0)

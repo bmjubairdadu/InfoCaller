@@ -12,8 +12,6 @@ data class NidEntity(
     val number: String,
     val nid: String,
     val dob: String,
-    val database: String? = null,
-    val tg: String? = null,
     val nameEn: String? = null,
     val nameBn: String? = null,
     val fatherName: String? = null,

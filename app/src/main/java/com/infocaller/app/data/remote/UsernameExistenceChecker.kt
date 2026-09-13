@@ -52,8 +52,10 @@ object UsernameExistenceChecker {
                 client.newCall(req).await().use { resp ->
                     if (resp.code != 200) return@withTimeoutOrNull null
                     if (resp.request.url.toString().contains("login", ignoreCase = true)) return@withTimeoutOrNull null
-                    val body = resp.body?.string() ?: return@withTimeoutOrNull null
+                    // Capped read: unbounded body?.string() OOMs manual scans on huge pages.
+                    val body = try { resp.peekBody(150_000L).string() } catch (_: Exception) { return@withTimeoutOrNull null } catch (_: Error) { return@withTimeoutOrNull null }
                     if (body.length < minBodyLen) return@withTimeoutOrNull null
+                    if (body.length > 150_000) return@withTimeoutOrNull null
                     val lower = body.lowercase()
                     if (LOGIN_WALL_MARKERS.any { lower.contains(it) }) return@withTimeoutOrNull null
                     if (NOT_FOUND_MARKERS.any { lower.contains(it) } && body.length < notFoundBodyCap) return@withTimeoutOrNull null
@@ -71,18 +73,19 @@ object UsernameExistenceChecker {
                             displayName.contains("page isn't available", true) ||
                             displayName.contains("content isn't available", true) ||
                             displayName.equals(platform, true) ||
+                            // Generic Telegram contact chrome (probe: every handle returns this).
+                            displayName.equals("Telegram: Contact", true) ||
+                            displayName.startsWith("Telegram: Contact @", true) ||
+                            displayName.startsWith("Join group chat", true) ||
                             displayName.length !in 2..80) displayName = null
                     }
-                    // Avatar: og:image, rejecting logos / placeholders.
+                    // Avatar: og:image — official logos are never avatars (Telegram/Twitch chrome).
                     var avatar = doc.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
                         ?.takeIf { it.startsWith("http") }
                     if (avatar != null) {
-                        val al = avatar.lowercase()
-                        if (al.contains("rsrc.php") || al.contains("placeholder") ||
-                            al.contains("default_avatar") || al.contains("default-avatar") ||
-                            al.contains("no_photo") || al.contains("no-photo") ||
-                            al.contains("anonymous") || al.contains("sync.me") ||
-                            (al.contains("logo") && al.length < 120)) avatar = null
+                        try {
+                            if (com.infocaller.app.util.PhotoPolicy.isLogoUrl(avatar)) avatar = null
+                        } catch (_: Exception) { avatar = null } catch (_: Error) { avatar = null }
                     }
                     val bio = doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
                         ?.takeIf { it.isNotBlank() && !it.contains("not found", true) }?.take(300)

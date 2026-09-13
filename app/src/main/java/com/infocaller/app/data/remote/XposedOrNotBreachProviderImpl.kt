@@ -32,7 +32,9 @@ class XposedOrNotBreachProviderImpl(
                     .header("User-Agent", "InfoCaller-OSINT/2.0")
                     .header("Accept", "application/json")
                     .build()
-                val body = httpClient.newCall(req).await().use { it.body?.string() } ?: return@withContext null
+                // Capped: unbounded body risks OOM on breach JSON.
+                val body = httpClient.newCall(req).await().use { try { it.peekBody(100_000L).string() } catch (_: Exception) { return@withContext null } catch (_: Error) { return@withContext null } } ?: return@withContext null
+                if (body.length > 100_000) return@withContext null
                 val root = try { JsonParser.parseString(body).asJsonObject } catch (_: Exception) { return@withContext null }
                 if (root.has("Error")) return@withContext null
                 val breachesEl = root.get("breaches") ?: return@withContext null

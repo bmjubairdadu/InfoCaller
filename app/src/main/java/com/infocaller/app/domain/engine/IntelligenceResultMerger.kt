@@ -5,6 +5,13 @@ import com.infocaller.app.util.ContactUtils
 
 object IntelligenceResultMerger {
     fun merge(current: LookupResult, next: PartialResult): LookupResult {
+        return try {
+            mergeSafe(current, next)
+        } catch (_: Exception) { try { current } catch (_: Exception) { current } catch (_: Error) { current } }
+        catch (_: Error) { try { current } catch (_: Exception) { current } catch (_: Error) { current } }
+    }
+
+    private fun mergeSafe(current: LookupResult, next: PartialResult): LookupResult {
         val (bestName, nameSource, alternateNames) = mergeNames(current, next)
 
         val (bestPhoto, photoSource, candidates) = mergePhotos(current, next)
@@ -76,41 +83,53 @@ object IntelligenceResultMerger {
         return Triple(bestName, bestSource, newAlternateNames)
     }
 
+    // Photo policy: logos are never photos; only Truecaller/Eyecon/Email auto-set primary.
+    // Every other source stays as a tap-to-set option; user picks always win.
     private fun mergePhotos(current: LookupResult, next: PartialResult): Triple<String?, String?, List<PhotoCandidate>> {
         fun usable(url: String?): Boolean {
-            val u = url?.trim().orEmpty()
-            if (u.isBlank() || !u.startsWith("http")) return false
-            if (u.length < 20) return false
-            val lower = u.lowercase()
-            // Hard reject aggregator logos / HTML pages mistaken for photos.
-            if (lower.contains("sync.me")) return false
-            if (lower.contains("rsrc.php")) return false
-            if (lower.contains("truecaller.com/search") || lower.contains("truecaller.com/bd")) return false
-            if (lower.contains("placeholder") || lower.contains("default_avatar") ||
-                lower.contains("default-avatar") || lower.contains("no_photo") ||
-                lower.contains("no-photo") || lower.contains("anonymous")) return false
-            return true
+            return try { com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(url) } catch (_: Exception) { false } catch (_: Error) { false }
         }
+        val identType = try { next.identifierType } catch (_: Exception) { com.infocaller.app.domain.engine.IdentifierType.PHONE } catch (_: Error) { com.infocaller.app.domain.engine.IdentifierType.PHONE }
+        val nextProvider = try { next.source ?: next.providerId ?: "photo" } catch (_: Exception) { "photo" } catch (_: Error) { "photo" }
+        val nextIsAuto = try { com.infocaller.app.util.PhotoPolicy.isAutoProvider(nextProvider, identType) } catch (_: Exception) { false } catch (_: Error) { false }
+        val currentIsUser = try { com.infocaller.app.util.PhotoPolicy.isUserPicked(current.imageSource) } catch (_: Exception) { false } catch (_: Error) { false }
         val synthetics = listOfNotNull(
-            current.imageUrl?.takeIf { usable(it) }?.let { PhotoCandidate(provider = current.imageSource ?: "photo", url = it) },
-            next.imageUrl?.takeIf { usable(it) }?.let { PhotoCandidate(provider = next.source ?: next.providerId ?: "photo", url = it) }
+            // Keep the user's own pick even if its URL was stored before the logo filter.
+            current.imageUrl?.takeIf { it == current.imageUrl && (currentIsUser || usable(it)) }?.let { PhotoCandidate(provider = current.imageSource ?: "photo", url = it) },
+            // Non-auto providers (Telegram/Twitch/...) are option-only: never become imageUrl here.
+            next.imageUrl?.takeIf { usable(it) && nextIsAuto }?.let { PhotoCandidate(provider = nextProvider, url = it) }
         )
-        val newCandidates = (current.photoCandidates + next.photoCandidates + synthetics)
+        val optionCandidates = (current.photoCandidates + next.photoCandidates + synthetics)
             .filter { usable(it.url) }
             .distinctBy { it.url }
-        if (newCandidates.isEmpty()) {
+        val autoPool = optionCandidates.filter {
+            try { com.infocaller.app.util.PhotoPolicy.isAutoProvider(it.provider, identType) } catch (_: Exception) { false } catch (_: Error) { false }
+        }
+        if (optionCandidates.isEmpty()) {
             // Do NOT keep a stale bad photo: clear it when the new merge has no usable photo.
-            val keepCurrent = usable(current.imageUrl)
+            val keepCurrent = currentIsUser || usable(current.imageUrl)
             return Triple(
                 if (keepCurrent) current.imageUrl else null,
                 if (keepCurrent) current.imageSource else null,
                 emptyList()
             )
         }
+        // Primary = best AUTO-source photo (or the user's own pick). Options keep everything usable.
+        val bestCandidate = (if (currentIsUser) optionCandidates.filter { it.url == current.imageUrl } else autoPool)
+            .ifEmpty { if (currentIsUser) optionCandidates else emptyList() }
+            .maxByOrNull { calculatePhotoScore(it) }
+        if (bestCandidate == null) {
+            // No auto photo yet (e.g. only Telegram/Twitch found): primary stays empty,
+            // options remain for the user to tap. Never auto-promote a logo/non-auto pic.
+            val keepCurrent = currentIsUser || (usable(current.imageUrl) && try { com.infocaller.app.util.PhotoPolicy.isAutoProvider(current.imageSource, identType) } catch (_: Exception) { false } catch (_: Error) { false })
+            return Triple(
+                if (keepCurrent) current.imageUrl else null,
+                if (keepCurrent) current.imageSource else null,
+                optionCandidates
+            )
+        }
 
-        val bestCandidate = newCandidates.maxByOrNull { calculatePhotoScore(it) }
-
-        return Triple(bestCandidate?.url, bestCandidate?.provider, newCandidates)
+        return Triple(bestCandidate.url, bestCandidate.provider, optionCandidates)
     }
 
     private fun calculatePhotoScore(c: PhotoCandidate): Float {
@@ -129,9 +148,11 @@ object IntelligenceResultMerger {
         if (c.provider.lowercase().contains("truecaller") || c.provider.lowercase().contains("eyecon")) {
             score += 50f
         }
-        if (c.provider.lowercase() in setOf("linkedin", "x", "reddit", "github", "gitlab", "instagram", "telegram")) {
-            score += 30f
-        }
+        // Non-auto sources (Telegram/Twitch/...) must never outrank an auto source photo.
+        val autoish = c.provider.lowercase().contains("truecaller") || c.provider.lowercase().contains("eyecon") ||
+            c.provider.lowercase().contains("gravatar") || c.provider.lowercase().contains("github") ||
+            c.provider.lowercase().contains("gitlab") || c.provider.lowercase().startsWith("user:")
+        if (!autoish) score -= 200f
         // Aggregator leftovers must never win even if they slip through.
         if (c.provider.lowercase().contains("sync") || c.provider.lowercase().contains("accountenumerator") ||
             c.provider.lowercase().contains("phonebridge")) {

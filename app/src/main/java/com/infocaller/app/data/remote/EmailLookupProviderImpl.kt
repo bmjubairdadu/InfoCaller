@@ -47,8 +47,10 @@ class EmailLookupProviderImpl(
             val request = Request.Builder().url(url).build()
             httpClient.newCall(request).await().use { response ->
                 if (!response.isSuccessful) return null
+                val body = try { response.peekBody(50_000L).string() } catch (_: Exception) { return null } catch (_: Error) { return null }
+                if (body.length > 50_000) return null
                 val json = try {
-                    gson.fromJson(response.body?.string(), JsonObject::class.java)
+                    gson.fromJson(body, JsonObject::class.java)
                 } catch (_: Exception) {
                     return null
                 }

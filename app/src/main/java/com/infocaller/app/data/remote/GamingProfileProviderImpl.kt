@@ -32,10 +32,12 @@ class GamingProfileProviderImpl(private val httpClient: OkHttpClient) : LookupPr
 
         try {
             val doc = Jsoup.connect("https://steamcommunity.com/id/$handle/?xml=1")
-                .userAgent("Mozilla/5.0 (Linux; Android 14)").timeout(7000)
+                .userAgent("Mozilla/5.0 (Linux; Android 14)").timeout(5000).maxBodySize(100_000)
                 .ignoreHttpErrors(true).ignoreContentType(true).get()
             val persona = doc.selectFirst("steamID")?.text()?.trim()
-            val avatar = doc.selectFirst("avatarFull")?.text()?.trim()?.takeIf { it.startsWith("http") }
+            // Steam default avatars are logos, never profile photos.
+            val avatarRaw = doc.selectFirst("avatarFull")?.text()?.trim()?.takeIf { it.startsWith("http") }
+            val avatar = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(avatarRaw)) avatarRaw else null } catch (_: Exception) { null } catch (_: Error) { null }
             val state = doc.selectFirst("onlineState")?.text()?.trim()
             val since = doc.selectFirst("memberSince")?.text()?.trim()?.take(40)
             if (!persona.isNullOrBlank() && persona.length in 2..60 && !persona.contains("error", true)) {
@@ -51,10 +53,13 @@ class GamingProfileProviderImpl(private val httpClient: OkHttpClient) : LookupPr
         try {
             val doc = Jsoup.connect("https://www.twitch.tv/$handle")
                 .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
-                .timeout(7000).ignoreHttpErrors(true).followRedirects(true).get()
+                .timeout(5000).maxBodySize(100_000).ignoreHttpErrors(true).followRedirects(true).get()
             val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-            val img = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
-            if (!title.isNullOrBlank() && !title.contains("twitch home", true) && title.length in 2..60) {
+            // Twitch og:image on missing/live pages is the Twitch logo — never a profile photo.
+            val imgRaw = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
+            val img = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(imgRaw)) imgRaw else null } catch (_: Exception) { null } catch (_: Error) { null }
+            // Missing Twitch pages return HTTP 200 with generic og:title; strict handle check.
+            if (!title.isNullOrBlank() && !title.contains("twitch home", true) && title.contains(handle, true) && title.length in 2..60) {
                 if (name == null) name = title.take(50)
                 img?.let { photos.add(PhotoCandidate(provider = "Twitch", url = it, sourcePriority = 54)) }
                 socials.add(SocialProfile("Twitch", handle, "https://www.twitch.tv/$handle", SocialLookupStatus.PUBLIC_MATCH))
@@ -66,7 +71,9 @@ class GamingProfileProviderImpl(private val httpClient: OkHttpClient) : LookupPr
             httpClient.newCall(req).await().use { r ->
                 if (r.isSuccessful) {
                     try {
-                        val j = com.google.gson.JsonParser.parseString(r.body?.string()).asJsonObject
+                        val gb = try { r.peekBody(100_000L).string() } catch (_: Exception) { return@use } catch (_: Error) { return@use }
+                        if (gb.length > 100_000) return@use
+                        val j = com.google.gson.JsonParser.parseString(gb).asJsonObject
                         val uname = j.get("username")?.takeIf { !it.isJsonNull }?.asString
                         if (uname != null && uname.equals(handle, true)) {
                             j.get("name")?.takeIf { !it.isJsonNull }?.asString

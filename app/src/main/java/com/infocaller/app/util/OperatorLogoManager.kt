@@ -74,9 +74,11 @@ class OperatorLogoManager(private val context: Context, private val database: Ap
                     if (response.isSuccessful) {
                         val contentType = response.header("Content-Type")
                         if (contentType?.startsWith("image/") == true) {
-                            val bytes = response.body?.bytes() ?: throw Exception("Empty body")
+                            // Capped: unbounded bytes() on a huge logo OOMs background scans.
+                            val bytes = try { response.peekBody(1_000_000L).bytes() } catch (_: Exception) { throw Exception("Empty body") } catch (_: Error) { throw Exception("Empty body") }
+                            if (bytes.isEmpty() || bytes.size < 200 || bytes.size > 1_000_000) throw Exception("Bad logo body")
                             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                            try { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) } catch (_: Exception) { throw Exception("Bad logo") } catch (_: Error) { throw Exception("Bad logo") }
 
                             if (options.outWidth > 0 && options.outHeight > 0) {
                                 val file = saveLogoLocally(key, bytes)

@@ -33,12 +33,14 @@ class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvid
             var gravPhoto: String? = null
             client.newCall(gravReq).await().use { gravResp ->
                 if (gravResp.isSuccessful) {
-                    val j = gravResp.body?.string() ?: ""
+                    val j = try { gravResp.peekBody(50_000L).string() } catch (_: Exception) { "" } catch (_: Error) { "" }
+                    if (j.length > 50_000) return@use
                     if (j.contains("\"entry\"")) {
                         try {
                             val obj = com.google.gson.JsonParser.parseString(j).asJsonObject.getAsJsonArray("entry").firstOrNull()?.asJsonObject
-                            gravName = obj?.get("displayName")?.takeIf{!it.isJsonNull}?.asString
-                            gravPhoto = obj?.get("thumbnailUrl")?.takeIf{!it.isJsonNull}?.asString
+                            gravName = obj?.get("displayName")?.takeIf{!it.isJsonNull}?.asString?.takeIf { it.length in 2..60 }
+                            val rawPhoto = obj?.get("thumbnailUrl")?.takeIf{!it.isJsonNull}?.asString
+                            gravPhoto = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(rawPhoto)) rawPhoto else null } catch (_: Exception) { null } catch (_: Error) { null }
                             if (!gravPhoto.isNullOrBlank()) profiles.add(SocialProfile("Gravatar", prefix, "https://gravatar.com/$hash", SocialLookupStatus.PUBLIC_MATCH))
                         } catch(_:Exception){}
                     }
@@ -48,7 +50,8 @@ class EmailSocialBridgeProvider(private val client: OkHttpClient) : LookupProvid
                 val ghReq = Request.Builder().url("https://github.com/$prefix").header("User-Agent","Mozilla/5.0").build()
                 client.newCall(ghReq).await().use { ghResp ->
                     if (ghResp.code == 200) {
-                        val b = ghResp.body?.string()?.lowercase() ?: ""
+                        val b = try { ghResp.peekBody(100_000L).string().lowercase() } catch (_: Exception) { "" } catch (_: Error) { "" }
+                        if (b.length > 100_000) return@use
                         if (!b.contains("page not found") && !b.contains("not found") && ghResp.request.url.toString().contains(prefix, true)) {
                             profiles.add(SocialProfile("GitHub", prefix, "https://github.com/$prefix", SocialLookupStatus.PUBLIC_MATCH))
                         }

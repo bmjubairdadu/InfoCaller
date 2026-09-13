@@ -152,6 +152,26 @@ class CallerRepositoryImpl(
         val socialJson = if (res.socialProfiles.isNotEmpty()) SocialUtils.toJson(res.socialProfiles) else existing?.socialProfilesJson
         val photoJson = if (res.photoCandidates.isNotEmpty()) gson.toJson(res.photoCandidates) else existing?.photoCandidatesJson
         val altNamesJson = if (res.alternateNames.isNotEmpty()) gson.toJson(res.alternateNames) else existing?.alternateNamesJson
+        // Photo policy at rest (predictable):
+        // - user pick always wins, never overwritten here
+        // - empty slot: adopt only usable + auto (Truecaller/Eyecon/Email) photos
+        // - occupied slot: overwrite only with usable + auto photos; Telegram/Twitch/
+        //   Steam/etc stay as tap-to-set options, never auto-primary.
+        val incomingPhotoOk = try { com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(res.imageUrl) } catch (_: Exception) { false } catch (_: Error) { false }
+        val incomingIsAuto = try { com.infocaller.app.util.PhotoPolicy.isAutoProvider(res.imageSource, null) } catch (_: Exception) { false } catch (_: Error) { false }
+        val existingIsUser = try { com.infocaller.app.util.PhotoPolicy.isUserPicked(existing?.profileImageSource) } catch (_: Exception) { false } catch (_: Error) { false }
+        val finalPhotoUrl = when {
+            existingIsUser -> existing?.profileImageUrl
+            existing?.profileImageUrl.isNullOrBlank() -> if (incomingPhotoOk && incomingIsAuto) res.imageUrl else null
+            incomingPhotoOk && incomingIsAuto -> res.imageUrl
+            else -> existing?.profileImageUrl
+        }
+        val finalPhotoSource = when {
+            existingIsUser -> existing?.profileImageSource
+            existing?.profileImageUrl.isNullOrBlank() -> if (incomingPhotoOk && incomingIsAuto) res.imageSource else null
+            incomingPhotoOk && incomingIsAuto -> res.imageSource
+            else -> existing?.profileImageSource
+        }
         return ContactEnrichmentEntity(
             normalizedPhoneNumber = res.phoneNumber,
             contactId = existing?.contactId,
@@ -159,8 +179,8 @@ class CallerRepositoryImpl(
             publicNameSource = if (publicNameToStore == res.name) res.nameSource else existing?.publicNameSource,
             publicNameConfidence = if (publicNameToStore == res.name) res.confidence else existing?.publicNameConfidence,
             alternateName = alternateToStore,
-            profileImageUrl = res.imageUrl ?: existing?.profileImageUrl,
-            profileImageSource = res.imageSource ?: existing?.profileImageSource,
+            profileImageUrl = finalPhotoUrl,
+            profileImageSource = finalPhotoSource,
             about = res.about ?: existing?.about,
             email = res.email ?: existing?.email,
             emailSource = res.emailSource ?: existing?.emailSource,

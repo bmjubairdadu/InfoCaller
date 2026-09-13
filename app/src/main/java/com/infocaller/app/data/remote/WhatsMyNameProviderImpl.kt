@@ -52,7 +52,9 @@ class WhatsMyNameProviderImpl(
             val req = Request.Builder().url(DATA_URL).header("User-Agent","Mozilla/5.0").build()
             httpClient.newCall(req).await().use { resp ->
                 if (!resp.isSuccessful) return cachedSites
-                val json = JsonParser.parseString(resp.body?.string()).asJsonObject
+                val wmBody = try { resp.peekBody(500_000L).string() } catch (_: Exception) { return cachedSites } catch (_: Error) { return cachedSites }
+                if (wmBody.length > 500_000) return cachedSites
+                val json = JsonParser.parseString(wmBody).asJsonObject
                 val arr = json.getAsJsonArray("sites")
                 val list = arr.mapNotNull { el ->
                     val o = el.asJsonObject

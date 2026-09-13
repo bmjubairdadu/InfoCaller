@@ -88,6 +88,14 @@ fun DetailsScreen(
         if (isNonPhoneScan) rawIdentifier.trim() else phoneNumber
     }
     val enrichment by viewModel.getEnrichment(lookupKey).collectAsState(initial = null)
+    // NID scans surface here with the phone in caller.phoneNumber but the NID lives in
+    // the live result / enrichment (LookupResult.nid). Detect it for the header.
+    val isNidScan = remember(rawIdentifier, livePartial, enrichment) {
+        try {
+            val nid = livePartial?.nid?.takeIf { it.isNotBlank() } ?: enrichment?.nid?.takeIf { !it.isNullOrBlank() }
+            !nid.isNullOrBlank()
+        } catch (_: Exception) { false }
+    }
     val isBlocked = !isNonPhoneScan && blocklist.contains(phoneNumber)
     val contactsList by viewModel.contacts.collectAsState()
     val scope = rememberCoroutineScope()
@@ -122,7 +130,7 @@ fun DetailsScreen(
                     TopAppBar(
                         title = {
                             Column {
-                                Text(if (isEmailScan) "Email Identity" else if (isUsernameScan) "Username Identity" else if (isContact) "Contact Details" else "Caller Identity", color = contentPrimary, style = MaterialTheme.typography.titleMedium)
+                                Text(if (isEmailScan) "Email Identity" else if (isUsernameScan) "Username Identity" else if (isNidScan) "NID Record" else if (isContact) "Contact Details" else "Caller Identity", color = contentPrimary, style = MaterialTheme.typography.titleMedium)
                                 if (isLive) {
                                     Text(text = "Live scan: ${lastProvider ?: "Searching..."}", style = MaterialTheme.typography.labelSmall, color = Primary)
                                 }
@@ -303,30 +311,30 @@ fun DetailsScreen(
                         live?.imageUrl, live?.photoCandidates,
                         enrichment?.profileImageUrl, enrichment?.profileImageSource,
                         enrichment?.photoCandidatesJson, enrichment?.socialProfilesJson,
-                        caller?.photoUrl
+                        caller?.photoUrl, isEmailScan,
                     ) {
                         val seen = linkedSetOf<String>()
                         val out = mutableListOf<com.infocaller.app.domain.model.PhotoCandidate>()
                         fun add(url: String?, provider: String, priority: Int) {
                             val u = url?.trim().orEmpty()
-                            if (!SocialUtils.isUsablePhotoUrl(u) || !seen.add(u)) return
+                            if (!PhotoPolicy.isUsablePhotoUrl(u) || !seen.add(u)) return
                             out.add(com.infocaller.app.domain.model.PhotoCandidate(provider = provider, url = u, sourcePriority = priority))
                         }
-                        // Only verified, downloadable photos. Never sync.me logos.
+                        // Options grid: every usable real photo (Truecaller/Eyecon/Email/Telegram/
+                        // Twitch/...). Primary auto-pick is policy-gated below; tapping any
+                        // option stamps it user:<provider> so it sticks.
                         live?.photoCandidates
-                            ?.filter { SocialUtils.isUsablePhotoUrl(it.url) && it.faceCount != 0 }
+                            ?.filter { PhotoPolicy.isUsablePhotoUrl(it.url) && it.faceCount != 0 }
                             ?.forEach { add(it.url, it.provider, it.sourcePriority) }
                         val enrichmentSnapshot = enrichment
-                        if (enrichmentSnapshot?.profileImageSource?.contains("truecaller", true) == true ||
-                            enrichmentSnapshot?.profileImageSource?.contains("eyecon", true) == true) {
-                            add(enrichmentSnapshot?.profileImageUrl, enrichmentSnapshot?.profileImageSource ?: "verified", 90)
-                        }
+                        // Stored primary first so it stays selected (user picks included).
+                        add(enrichmentSnapshot?.profileImageUrl, enrichmentSnapshot?.profileImageSource ?: "verified", 95)
                         try {
                             SocialUtils.photosFromJson(enrichment?.photoCandidatesJson)
-                                .filter { SocialUtils.isUsablePhotoUrl(it.url) && it.faceCount != 0 }
+                                .filter { PhotoPolicy.isUsablePhotoUrl(it.url) && it.faceCount != 0 }
                                 .forEach { add(it.url, it.provider, it.sourcePriority) }
                         } catch (_: Exception) { }
-                        // Verified social avatars (inline-extracted) as extra photo options.
+                        // Verified social avatars (inline-extracted, logo-filtered) as extra options.
                         try {
                             SocialUtils.fromJson(enrichment?.socialProfilesJson)
                                 .mapNotNull { it.avatarUrl }
@@ -336,10 +344,21 @@ fun DetailsScreen(
                             live?.socialProfiles?.mapNotNull { it.avatarUrl }
                                 ?.forEach { add(it, "social", 40) }
                         } catch (_: Exception) { }
+                        // Email scans: Gravatar/GitHub/GitLab avatars are auto-eligible primaries.
+                        out.sortWith(
+                            compareByDescending<com.infocaller.app.domain.model.PhotoCandidate> {
+                                try { PhotoPolicy.isAutoProvider(it.provider, if (isEmailScan) "EMAIL" else "PHONE") } catch (_: Exception) { false }
+                            }.thenByDescending { it.sourcePriority }
+                        )
                         out
                     }
+                    val storedPrimary = enrichment?.profileImageUrl?.takeIf { PhotoPolicy.isUsablePhotoUrl(it) }
+                    val autoPrimary = allPhotos.firstOrNull {
+                        try { PhotoPolicy.isAutoProvider(it.provider, if (isEmailScan) "EMAIL" else "PHONE") } catch (_: Exception) { false }
+                    }?.url
                     val primaryPhoto = contact?.photoUri
-                        ?: allPhotos.firstOrNull()?.url
+                        ?: storedPrimary
+                        ?: autoPrimary
                     val headerPhoto = primaryPhoto
                     Box(modifier = Modifier.size(140.dp).glassy(radius = 70.dp).shadow(24.dp, CircleShape), contentAlignment = Alignment.Center) {
                         val photoUrl = headerPhoto
@@ -845,7 +864,9 @@ fun DetailsScreen(
 
 @Composable
 fun SourceBadge(source: String?) {
-    if (source.isNullOrBlank()) return
+    val label = try { com.infocaller.app.util.PhotoPolicy.displaySource(source) } catch (_: Exception) { source } catch (_: Error) { source }
+    if (label.isNullOrBlank()) return
+    val source = label
     val icon = when {
         source.contains("Truecaller", ignoreCase = true) -> Icons.Default.Verified
         source.contains("WhatsApp", ignoreCase = true) -> Icons.AutoMirrored.Filled.Chat

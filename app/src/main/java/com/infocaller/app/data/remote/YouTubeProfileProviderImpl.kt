@@ -32,7 +32,9 @@ class YouTubeProfileProviderImpl(private val httpClient: OkHttpClient) : LookupP
             httpClient.newCall(req).await().use { r ->
                 if (r.isSuccessful) {
                     try {
-                        val j = com.google.gson.JsonParser.parseString(r.body?.string()).asJsonObject
+                        val ob = try { r.peekBody(50_000L).string() } catch (_: Exception) { "" } catch (_: Error) { "" }
+                        if (ob.length > 50_000) return@use
+                        val j = com.google.gson.JsonParser.parseString(ob).asJsonObject
                         oembedTitle = j.get("title")?.takeIf { !it.isJsonNull }?.asString
                             ?.takeIf { it.length in 2..80 }
                         j.get("author_name")?.takeIf { !it.isJsonNull }?.asString
@@ -46,12 +48,19 @@ class YouTubeProfileProviderImpl(private val httpClient: OkHttpClient) : LookupP
         try {
             val doc = Jsoup.connect(pageUrl)
                 .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
-                .timeout(8000).ignoreHttpErrors(true).followRedirects(true).get()
+                .timeout(8000).maxBodySize(100_000).ignoreHttpErrors(true).followRedirects(true).get()
+            // Live probe: missing channels return oembed "Not Found" + generic HTML.
             if (doc.text().contains("404 not found", true)) {
                 if (oembedTitle == null) return@withContext null
             }
-            avatar = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
+            val avatarRaw = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
+            avatar = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(avatarRaw)) avatarRaw else null } catch (_: Exception) { null } catch (_: Error) { null }
             desc = doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim()?.take(400)
+            // Missing-channel pages carry generic YT chrome: without oembed proof, skip.
+            if (oembedTitle == null) {
+                val ogTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim().orEmpty()
+                if (ogTitle.isBlank() || !ogTitle.contains(handle, true)) return@withContext null
+            }
         } catch (_: Exception) { }
         if (oembedTitle == null && avatar == null) return@withContext null
         return@withContext PartialResult(

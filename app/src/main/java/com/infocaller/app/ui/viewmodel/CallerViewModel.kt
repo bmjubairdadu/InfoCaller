@@ -63,8 +63,9 @@ class CallerViewModel(
         deviceDataRepository.getRecentCalls()
     }
         .map { list ->
-            list.map { it.copy(number = PhoneNumberUtils.normalize(it.number)) }
+            try { list.take(300).map { it.copy(number = PhoneNumberUtils.normalize(it.number)) } } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
         }
+        .catch { emit(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -72,16 +73,22 @@ class CallerViewModel(
         deviceDataRepository.getContacts()
     }
         .map { list ->
-            list.map { it.copy(phoneNumber = PhoneNumberUtils.normalize(it.phoneNumber ?: "")) }
+            try { list.take(5000).map { it.copy(phoneNumber = PhoneNumberUtils.normalize(it.phoneNumber ?: "")) } } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
         }
+        .catch { emit(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val filteredContacts: StateFlow<List<Contact>> = combine(_dialerInput, contacts) { input, list ->
-        if (input.isEmpty()) emptyList()
-        else list.filter {
-            (it.phoneNumber?.contains(input) == true) || T9Search.matches(input, it.displayName)
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    // Dialer filter: debounced + capped, never blocks the UI thread on huge contact lists.
+    val filteredContacts: StateFlow<List<Contact>> = combine(_dialerInput.debounce(120L), contacts) { input, list ->
+        try {
+            val q = input.trim().take(20)
+            if (q.isEmpty()) emptyList()
+            else if (q.length < 2) emptyList()
+            else list.asSequence().filter {
+                try { (it.phoneNumber?.contains(q) == true) || T9Search.matches(q, it.displayName) } catch (_: Exception) { false } catch (_: Error) { false }
+            }.take(25).toList()
+        } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+    }.catch { emit(emptyList()) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun loadSimInfos(context: Context) {
         viewModelScope.launch {
@@ -101,22 +108,55 @@ class CallerViewModel(
     }
 
     fun updateDialerInput(input: String) {
-        _dialerInput.value = input
+        // Cap length: unbounded paste otherwise thrashes filter + scan on every keystroke.
+        _dialerInput.value = try { input.take(20) } catch (_: Exception) { "" } catch (_: Error) { "" }
     }
 
     fun searchNumber(phoneNumber: String) {
-        when (com.infocaller.app.util.IdentifierRouter.routeType(phoneNumber)) {
+        val raw = try { phoneNumber.trim().take(120) } catch (_: Exception) { "" } catch (_: Error) { "" }
+        if (raw.isBlank()) return
+        // Never scan USSD/MMI codes or garbage: instant no-op keeps dialer smooth.
+        if (raw.contains("*") || raw.contains("#")) {
+            try {
+                activeSearchJob?.cancel()
+                _scanActive.value = false
+                _searchResult.value = SearchUiState.Idle
+            } catch (_: Exception) { } catch (_: Error) { }
+            return
+        }
+        val routeType = try { com.infocaller.app.util.IdentifierRouter.routeType(raw) } catch (_: Exception) { com.infocaller.app.domain.engine.IdentifierType.PHONE } catch (_: Error) { com.infocaller.app.domain.engine.IdentifierType.PHONE }
+        when (routeType) {
             com.infocaller.app.domain.engine.IdentifierType.EMAIL -> {
-                searchEmailManual(phoneNumber)
+                searchEmailManual(raw)
                 return
             }
             com.infocaller.app.domain.engine.IdentifierType.USERNAME -> {
-                searchUsernameManual(phoneNumber)
-                return
+                // Bare short handles typed in dialer are usually not usernames (e.g. "8801").
+                // Only treat as username if it looks like a real handle; else phone path.
+                val handle = raw.removePrefix("@")
+                val looksLikeHandle = handle.length >= 3 && handle.any { it.isLetter() } &&
+                    handle.all { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' }
+                if (looksLikeHandle) {
+                    searchUsernameManual(raw)
+                    return
+                }
             }
             else -> {}
         }
-        val normalized = PhoneNumberUtils.normalize(phoneNumber)
+        val normalized = try { PhoneNumberUtils.normalize(raw) } catch (_: Exception) { raw } catch (_: Error) { raw }
+        // Phone sanity: digits 7..15, else instant idle (no provider fan-out, no crash).
+        try {
+            val digits = normalized.filter { it.isDigit() }
+            if (digits.length < 7 || digits.length > 15) {
+                try {
+                    activeSearchJob?.cancel()
+                    _scanActive.value = false
+                    // Keep UX calm: bad input = idle, not a red error.
+                    if (_searchResult.value !is SearchUiState.Success) _searchResult.value = SearchUiState.Idle
+                } catch (_: Exception) { } catch (_: Error) { }
+                return
+            }
+        } catch (_: Exception) { } catch (_: Error) { }
         searchByIdentifier(normalized, com.infocaller.app.domain.engine.IdentifierType.PHONE)
     }
 
@@ -124,111 +164,204 @@ class CallerViewModel(
         searchNumber(phoneNumber)
     }
 
+    // NID / NID|DOB / DOB manual search. Dead no-op before — now routes to the
+    // on-device NID database provider via the normal scan pipeline.
     fun searchNidManual(identifier: String) {
-        return
+        val cleaned = try { identifier.trim().take(60) } catch (_: Exception) { return } catch (_: Error) { return }
+        if (cleaned.isBlank()) return
+        val nidType = com.infocaller.app.domain.engine.IdentifierType.NID
+        val dobType = com.infocaller.app.domain.engine.IdentifierType.DOB
+        when {
+            cleaned.contains("|") -> {
+                val parts = cleaned.split("|").map { it.trim() }.filter { it.isNotBlank() }
+                if (parts.size != 2) return
+                if (!parts[0].all { it.isDigit() } || parts[0].length !in 10..17) return
+                searchByIdentifier(parts[0] + "|" + parts[1].take(12), nidType)
+            }
+            cleaned.all { it.isDigit() } && cleaned.length in 10..17 ->
+                searchByIdentifier(cleaned, nidType)
+            Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(cleaned) ||
+                Regex("^\\d{2}/\\d{2}/\\d{4}$").matches(cleaned) ->
+                searchByIdentifier(cleaned, dobType)
+            else -> return
+        }
     }
 
     fun searchEmailManual(email: String) {
-        val cleaned = email.trim().lowercase()
-        if (cleaned.isBlank() || !com.infocaller.app.util.IdentifierRouter.isEmail(cleaned)) return
+        val cleaned = try { email.trim().lowercase().take(120) } catch (_: Exception) { "" } catch (_: Error) { "" }
+        if (cleaned.isBlank() || cleaned.length > 120) return
+        val ok = try { com.infocaller.app.util.IdentifierRouter.isEmail(cleaned) } catch (_: Exception) { false } catch (_: Error) { false }
+        if (!ok) return
         searchByIdentifier(cleaned, com.infocaller.app.domain.engine.IdentifierType.EMAIL)
     }
 
     fun searchUsernameManual(username: String) {
-        val cleaned = username.trim().lowercase().removePrefix("@")
+        val cleaned = try { username.trim().lowercase().removePrefix("@").take(40) } catch (_: Exception) { "" } catch (_: Error) { "" }
         if (cleaned.length !in 2..40 || cleaned.contains(" ") || cleaned.contains("@")) return
+        if (cleaned.all { it.isDigit() }) return
         searchByIdentifier(cleaned, com.infocaller.app.domain.engine.IdentifierType.USERNAME)
     }
 
     fun performFullLookup(phoneNumber: String) {
-        val normalized = PhoneNumberUtils.normalize(phoneNumber)
+        val raw = try { phoneNumber.trim().take(120) } catch (_: Exception) { return } catch (_: Error) { return }
+        if (raw.isBlank() || raw.contains("*") || raw.contains("#")) return
+        val normalized = try { PhoneNumberUtils.normalize(raw) } catch (_: Exception) { return } catch (_: Error) { return }
+        try {
+            if (normalized.filter { it.isDigit() }.length !in 7..15) return
+        } catch (_: Exception) { return } catch (_: Error) { return }
         viewModelScope.launch {
-            repository.startScan(normalized, com.infocaller.app.domain.engine.ScanPriority.CRITICAL)
-                .collect { state ->
-                    if (state is com.infocaller.app.domain.engine.ScanState.Progress ||
-                        state is com.infocaller.app.domain.engine.ScanState.Completed) {
-                        val result = if (state is com.infocaller.app.domain.engine.ScanState.Progress) state.result else (state as com.infocaller.app.domain.engine.ScanState.Completed).result
-                        _fullLookupResult.value = result
-                    }
+            try {
+                // Timeout guard: never hang the sheet forever.
+                kotlinx.coroutines.withTimeoutOrNull(45_000L) {
+                    repository.startScan(normalized, com.infocaller.app.domain.engine.ScanPriority.CRITICAL)
+                        .collect { state ->
+                            if (state is com.infocaller.app.domain.engine.ScanState.Progress ||
+                                state is com.infocaller.app.domain.engine.ScanState.Completed) {
+                                val result = if (state is com.infocaller.app.domain.engine.ScanState.Progress) state.result else (state as com.infocaller.app.domain.engine.ScanState.Completed).result
+                                try { _fullLookupResult.value = result } catch (_: Exception) { } catch (_: Error) { }
+                            }
+                        }
                 }
+            } catch (_: Exception) { } catch (_: Error) { }
         }
     }
 
     fun searchByIdentifier(identifier: String, type: String) {
-        if (identifier.isBlank()) return
+        val safeId = try { identifier.trim().take(120) } catch (_: Exception) { return } catch (_: Error) { return }
+        if (safeId.isBlank()) return
+        if (type == com.infocaller.app.domain.engine.IdentifierType.PHONE) {
+            try {
+                if (safeId.contains("*") || safeId.contains("#")) return
+                if (safeId.filter { it.isDigit() }.length !in 7..15) return
+            } catch (_: Exception) { return } catch (_: Error) { return }
+        }
         val generation = ++searchGeneration
-        activeSearchJob?.cancel()
+        try { activeSearchJob?.cancel() } catch (_: Exception) { } catch (_: Error) { }
         activeSearchJob = viewModelScope.launch {
             if (type == com.infocaller.app.domain.engine.IdentifierType.PHONE) {
-                val cached = repository.getFreshCachedCaller(identifier)
-                if (cached != null && generation == searchGeneration) {
-                    _searchResult.value = SearchUiState.Success(cached, isLive = false)
-                    _scanActive.value = false
+                try {
+                    val cached = repository.getFreshCachedCaller(safeId)
+                    if (cached != null && generation == searchGeneration) {
+                        _searchResult.value = SearchUiState.Success(cached, isLive = false)
+                        _scanActive.value = false
+                        return@launch
+                    }
+                } catch (_: Exception) { } catch (_: Error) { }
+            }
+            try { _searchResult.value = SearchUiState.Loading } catch (_: Exception) { } catch (_: Error) { }
+            try { _scanSteps.value = emptyList() } catch (_: Exception) { } catch (_: Error) { }
+            try { _scanActive.value = true } catch (_: Exception) { } catch (_: Error) { }
+            try {
+                val scanFlow = try {
+                    repository.startScan(safeId, com.infocaller.app.domain.engine.ScanPriority.CRITICAL, type)
+                } catch (_: Exception) { null } catch (_: Error) { null }
+                if (scanFlow == null) {
+                    if (generation != searchGeneration) return@launch
+                    try {
+                        val cached = repository.searchCaller(safeId)
+                        if (cached != null) _searchResult.value = SearchUiState.Success(cached, isLive = false)
+                        else _searchResult.value = SearchUiState.NotFound
+                    } catch (_: Exception) { try { _searchResult.value = SearchUiState.NotFound } catch (_: Exception) { } catch (_: Error) { } }
+                    catch (_: Error) { try { _searchResult.value = SearchUiState.NotFound } catch (_: Exception) { } catch (_: Error) { } }
+                    try { _scanActive.value = false } catch (_: Exception) { } catch (_: Error) { }
                     return@launch
                 }
-            }
-            _searchResult.value = SearchUiState.Loading
-            _scanSteps.value = emptyList()
-            _scanActive.value = true
-            try {
-                val scanFlow = repository.startScan(identifier, com.infocaller.app.domain.engine.ScanPriority.CRITICAL, type)
                 var sawProviderStep = false
-                scanFlow.collect { state ->
-                        if (generation != searchGeneration) return@collect
-                        when (state) {
-                            is com.infocaller.app.domain.engine.ScanState.ProviderStep -> {
-                                sawProviderStep = true
-                                applyScanStep(state)
-                            }
-                            is com.infocaller.app.domain.engine.ScanState.Progress -> {
-                                try {
-                                    repository.saveLookupResult(state.result)
-                                } catch (_: Exception) { }
-                                if (generation != searchGeneration) return@collect
-                                _searchResult.value = SearchUiState.Success(
-                                    mapToCaller(state.result),
-                                    isLive = true,
-                                    lastProvider = state.lastProvider,
-                                    livePartial = state.result,
-                                )
-                            }
-                            is com.infocaller.app.domain.engine.ScanState.Completed -> {
-                                repository.saveLookupResult(state.result)
-                                if (generation != searchGeneration) return@collect
-                                _searchResult.value = SearchUiState.Success(mapToCaller(state.result), isLive = false)
-                                _scanActive.value = false
-                                try {
-                                    autoSyncToPhonebook(state.result)
-                                } catch (_: Exception) { }
-                            }
-                            is com.infocaller.app.domain.engine.ScanState.Error -> {
-                                if (generation != searchGeneration) return@collect
-                                val cached = try {
-                                    repository.searchCaller(identifier)
-                                } catch (_: Exception) { null }
-                                if (cached != null) {
-                                    _searchResult.value = SearchUiState.Success(cached, isLive = false)
-                                } else {
-                                    _searchResult.value = SearchUiState.Error(state.message)
+                try {
+                    kotlinx.coroutines.withTimeoutOrNull(50_000L) {
+                        scanFlow.collect { state ->
+                            if (generation != searchGeneration) return@collect
+                            when (state) {
+                                is com.infocaller.app.domain.engine.ScanState.ProviderStep -> {
+                                    sawProviderStep = true
+                                    try { applyScanStep(state) } catch (_: Exception) { } catch (_: Error) { }
                                 }
-                                _scanActive.value = false
+                                is com.infocaller.app.domain.engine.ScanState.Progress -> {
+                                    try {
+                                        repository.saveLookupResult(state.result)
+                                    } catch (_: Exception) { } catch (_: Error) { }
+                                    if (generation != searchGeneration) return@collect
+                                    try {
+                                        _searchResult.value = SearchUiState.Success(
+                                            mapToCaller(state.result),
+                                            isLive = true,
+                                            lastProvider = try { state.lastProvider.take(64) } catch (_: Exception) { null } catch (_: Error) { null },
+                                            livePartial = state.result,
+                                        )
+                                    } catch (_: Exception) { } catch (_: Error) { }
+                                }
+                                is com.infocaller.app.domain.engine.ScanState.Completed -> {
+                                    try { repository.saveLookupResult(state.result) } catch (_: Exception) { } catch (_: Error) { }
+                                    if (generation != searchGeneration) return@collect
+                                    try {
+                                        // Empty result = NotFound UI (not a crash, not a red error).
+                                        val mapped = try { mapToCaller(state.result) } catch (_: Exception) { null } catch (_: Error) { null }
+                                        val hasAnything = mapped != null && (!mapped.displayName.isNullOrBlank() || !mapped.photoUrl.isNullOrBlank())
+                                        if (hasAnything) _searchResult.value = SearchUiState.Success(mapped!!, isLive = false)
+                                        else {
+                                            val cached = try { repository.searchCaller(safeId) } catch (_: Exception) { null } catch (_: Error) { null }
+                                            if (cached != null) _searchResult.value = SearchUiState.Success(cached, isLive = false)
+                                            else _searchResult.value = SearchUiState.NotFound
+                                        }
+                                    } catch (_: Exception) { } catch (_: Error) { }
+                                    try { _scanActive.value = false } catch (_: Exception) { } catch (_: Error) { }
+                                    try {
+                                        autoSyncToPhonebook(state.result)
+                                    } catch (_: Exception) { } catch (_: Error) { }
+                                }
+                                is com.infocaller.app.domain.engine.ScanState.Error -> {
+                                    if (generation != searchGeneration) return@collect
+                                    val cached = try {
+                                        repository.searchCaller(safeId)
+                                    } catch (_: Exception) { null } catch (_: Error) { null }
+                                    try {
+                                        if (cached != null) {
+                                            _searchResult.value = SearchUiState.Success(cached, isLive = false)
+                                        } else {
+                                            // Soft-fail: show NotFound instead of scary error for manual scans.
+                                            _searchResult.value = SearchUiState.NotFound
+                                        }
+                                    } catch (_: Exception) { } catch (_: Error) { }
+                                    try { _scanActive.value = false } catch (_: Exception) { } catch (_: Error) { }
+                                }
+                                else -> {}
                             }
-                            else -> {}
                         }
                     }
+                } catch (_: Exception) { } catch (_: Error) { }
+                // Timeout path: if still loading, fall back to cache/NotFound (never hang).
+                if (generation == searchGeneration) {
+                    val cur = try { _searchResult.value } catch (_: Exception) { null } catch (_: Error) { null }
+                    if (cur is SearchUiState.Loading) {
+                        try {
+                            val cached = try { repository.searchCaller(safeId) } catch (_: Exception) { null } catch (_: Error) { null }
+                            if (cached != null) _searchResult.value = SearchUiState.Success(cached, isLive = false)
+                            else _searchResult.value = SearchUiState.NotFound
+                        } catch (_: Exception) { } catch (_: Error) { }
+                        try { _scanActive.value = false } catch (_: Exception) { } catch (_: Error) { }
+                    } else {
+                        try { _scanActive.value = false } catch (_: Exception) { } catch (_: Error) { }
+                    }
+                }
             } catch (e: Exception) {
                 if (generation != searchGeneration) return@launch
                 try {
-                    val cached = repository.searchCaller(identifier)
+                    val cached = try { repository.searchCaller(safeId) } catch (_: Exception) { null } catch (_: Error) { null }
                     if (cached != null) {
                         _searchResult.value = SearchUiState.Success(cached, isLive = false)
                     } else {
-                        _searchResult.value = SearchUiState.Error(e.message ?: "Unknown error")
+                        _searchResult.value = SearchUiState.NotFound
                     }
                 } catch (_: Exception) {
-                    _searchResult.value = SearchUiState.Error(e.message ?: "Unknown error")
+                    try { _searchResult.value = SearchUiState.NotFound } catch (_: Exception) { } catch (_: Error) { }
+                } catch (_: Error) {
+                    try { _searchResult.value = SearchUiState.NotFound } catch (_: Exception) { } catch (_: Error) { }
                 }
-                _scanActive.value = false
+                try { _scanActive.value = false } catch (_: Exception) { } catch (_: Error) { }
+            } catch (_: Error) {
+                if (generation != searchGeneration) return@launch
+                try { _searchResult.value = SearchUiState.NotFound } catch (_: Exception) { } catch (_: Error) { }
+                try { _scanActive.value = false } catch (_: Exception) { } catch (_: Error) { }
             }
         }
     }
@@ -356,6 +489,8 @@ class CallerViewModel(
         viewModelScope.launch { contactEnrichmentService.updateExistingContact(phoneNumber, caller) }
     }
 
+    // User tap = explicit choice: stamped as user:<provider> so mergers and
+    // persistence never overwrite it with a Telegram/Twitch/logo photo.
     fun setPrimaryPhoto(identifier: String, url: String, provider: String) {
         if (identifier.isBlank() || url.isBlank()) return
         val key = try {
@@ -367,9 +502,12 @@ class CallerViewModel(
                 else -> PhoneNumberUtils.normalize(identifier)
             }
         } catch (_: Exception) { return }
+        val cleanUrl = try { url.trim().take(2000) } catch (_: Exception) { url } catch (_: Error) { url }
+        try { if (!com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(cleanUrl)) return } catch (_: Exception) { return } catch (_: Error) { return }
+        val userSource = try { com.infocaller.app.util.PhotoPolicy.userSourceOf(provider) } catch (_: Exception) { "user:manual" } catch (_: Error) { "user:manual" }
         viewModelScope.launch {
             try {
-                database.enrichmentDao().setPrimaryPhoto(key, url, provider)
+                database.enrichmentDao().setPrimaryPhoto(key, cleanUrl, userSource)
             } catch (_: Exception) { }
             try {
                 contactEnrichmentService.forcePhonebookPhoto(key, url)

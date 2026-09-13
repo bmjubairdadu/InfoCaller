@@ -24,13 +24,18 @@ class TikTokProfileProvider : LookupProvider {
             val doc = Jsoup.connect(url)
                 .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
                 .header("Accept-Language","en-US,en;q=0.9")
-                .timeout(10000).ignoreHttpErrors(true).followRedirects(true).get()
-            val ogTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")
+                .timeout(8000).maxBodySize(100_000).ignoreHttpErrors(true).followRedirects(true).get()
+            // Live probe: missing TikTok pages return HTTP 200 with empty og:title.
+            // Strict: no og:title mentioning the handle = not a real account.
+            val ogTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()?.takeIf { it.isNotBlank() }
+            if (ogTitle.isNullOrBlank()) return@withContext null
+            if (!ogTitle.contains(username, true) && !ogTitle.contains("@", false)) return@withContext null
+            if (ogTitle.contains("TikTok", true) && ogTitle.length < 12) return@withContext null
             val ogDesc = doc.selectFirst("meta[property=og:description]")?.attr("content")
-            val ogImage = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf{ it.startsWith("http") }
-            val name = ogTitle?.substringBefore("(")?.trim()?.takeIf{ it.length in 2..50 && !it.contains("TikTok", true) }
+            val ogImageRaw = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf{ it.startsWith("http") }
+            val ogImage = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(ogImageRaw)) ogImageRaw else null } catch (_: Exception) { null } catch (_: Error) { null }
+            val name = ogTitle.substringBefore("(").trim().takeIf{ it.length in 2..50 && !it.contains("TikTok", true) }
             val bio = ogDesc?.take(400)
-            if (ogTitle.isNullOrBlank() && !doc.html().contains("@$username", true)) return@withContext null
             if (doc.text().contains("Couldn't find this account", true)) return@withContext null
             val social = listOf(com.infocaller.app.domain.model.SocialProfile("TikTok", username, url, com.infocaller.app.domain.model.SocialLookupStatus.PUBLIC_MATCH))
             return@withContext PartialResult(

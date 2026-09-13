@@ -26,7 +26,7 @@ import com.infocaller.app.data.local.entity.LocalContactEntity
         com.infocaller.app.data.local.entity.ScanJobStateEntity::class,
         com.infocaller.app.data.local.entity.NidEntity::class
     ],
-    version = 25,
+    version = 26,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -92,7 +92,7 @@ abstract class AppDatabase : RoomDatabase() {
         }
         val MIGRATION_19_20 = object : Migration(19, 20) {
             override fun migrate(database: SupportSQLiteDatabase) {
-                database.execSQL("CREATE TABLE IF NOT EXISTS nid_records (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, number TEXT NOT NULL, nid TEXT NOT NULL, dob TEXT NOT NULL, `database` TEXT, tg TEXT, nameEn TEXT, nameBn TEXT, fatherName TEXT, motherName TEXT, address TEXT, photoUrl TEXT, photoBase64 TEXT, lastEnrichedAt INTEGER NOT NULL)")
+                database.execSQL("CREATE TABLE IF NOT EXISTS nid_records (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, number TEXT NOT NULL, nid TEXT NOT NULL, dob TEXT NOT NULL, nameEn TEXT, nameBn TEXT, fatherName TEXT, motherName TEXT, address TEXT, photoUrl TEXT, photoBase64 TEXT, lastEnrichedAt INTEGER NOT NULL)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_nid_records_nid ON nid_records(nid)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_nid_records_number ON nid_records(number)")
                 database.execSQL("CREATE INDEX IF NOT EXISTS index_nid_records_dob ON nid_records(dob)")
@@ -130,6 +130,18 @@ abstract class AppDatabase : RoomDatabase() {
                 database.execSQL("DROP TABLE IF EXISTS contribution_queue")
             }
         }
+        val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Drop unused database/tg columns from nid_records; recreate table.
+                database.execSQL("CREATE TABLE IF NOT EXISTS nid_records_new (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, number TEXT NOT NULL, nid TEXT NOT NULL, dob TEXT NOT NULL, nameEn TEXT, nameBn TEXT, fatherName TEXT, motherName TEXT, address TEXT, photoUrl TEXT, photoBase64 TEXT, lastEnrichedAt INTEGER NOT NULL)")
+                database.execSQL("INSERT INTO nid_records_new (id, number, nid, dob, nameEn, nameBn, fatherName, motherName, address, photoUrl, photoBase64, lastEnrichedAt) SELECT id, number, nid, dob, nameEn, nameBn, fatherName, motherName, address, photoUrl, photoBase64, lastEnrichedAt FROM nid_records")
+                database.execSQL("DROP TABLE nid_records")
+                database.execSQL("ALTER TABLE nid_records_new RENAME TO nid_records")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_nid_records_nid ON nid_records(nid)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_nid_records_number ON nid_records(number)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_nid_records_dob ON nid_records(dob)")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -138,7 +150,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "infocaller_database"
                 )
-                .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
+                .addMigrations(MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26)
                 .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance

@@ -3,7 +3,9 @@ package com.infocaller.app.data.remote
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -19,26 +21,24 @@ class SocialSearcherPhoneProviderImpl(private val httpClient: OkHttpClient) : Lo
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         if (type != IdentifierType.PHONE) return@withContext null
-        val digits = identifier.filter { it.isDigit() }
-        if (digits.length < 7) return@withContext null
-        val e164 = if (identifier.trim().startsWith("+")) identifier.trim() else "+$digits"
+        val digits = try { identifier.filter { it.isDigit() } } catch (_: Exception) { return@withContext null } catch (_: Error) { return@withContext null }
+        if (digits.length < 7 || digits.length > 15) return@withContext null
+        val e164 = try { if (identifier.trim().startsWith("+")) identifier.trim().take(20) else "+$digits" } catch (_: Exception) { "+$digits" } catch (_: Error) { "+$digits" }
         try {
             var name: String? = null
             try {
-                val req = Request.Builder().url("https://sync.me/search/?number=${java.net.URLEncoder.encode(e164, "UTF-8")}")
-                    .header("User-Agent", ua()).build()
-                httpClient.newCall(req).await().use { r ->
-                    if (r.isSuccessful) {
-                        val body = r.body?.string().orEmpty()
-                        val m = Regex("""<title>(.*?)</title>""", RegexOption.IGNORE_CASE).find(body)
-                        val title = m?.groupValues?.getOrNull(1)?.trim()
-                        // Name pivot only. Never use sync.me og:image (site logo) as a
-                        // profile photo, never emit a Sync.ME "account".
-                        if (!title.isNullOrBlank() && !title.contains("Sync.ME", true) &&
-                            !title.contains("not found", true) && title.length in 3..60) name = title
-                    }
-                }
-            } catch (_: Exception) { }
+                coroutineContext.ensureActive()
+                val enc = try { java.net.URLEncoder.encode(e164, "UTF-8") } catch (_: Exception) { e164 } catch (_: Error) { e164 }
+                // Capped fetch — never unbounded body?.string() (OOMs manual scans).
+                val body = com.infocaller.app.util.SafeWebFetch.fetchBodyCapped(
+                    httpClient, "https://sync.me/search/?number=$enc", ua(), 4500L, 80_000
+                )
+                val title = com.infocaller.app.util.SafeWebFetch.extractTitle(body ?: "")
+                // Name pivot only. Never use sync.me og:image (site logo) as a
+                // profile photo, never emit a Sync.ME "account".
+                if (!title.isNullOrBlank() && !title.contains("Sync.ME", true) &&
+                    !title.contains("not found", true) && title.length in 3..60) name = title
+            } catch (_: Exception) { } catch (_: Error) { }
             if (name == null) return@withContext null
             PartialResult(
                 name = name,
@@ -49,6 +49,6 @@ class SocialSearcherPhoneProviderImpl(private val httpClient: OkHttpClient) : Lo
                 source = "Social Searcher (Sync.ME phone pivot)",
                 providerId = id, providerVersion = version
             )
-        } catch (_: Exception) { null }
+        } catch (_: Exception) { null } catch (_: Error) { null }
     }
 }

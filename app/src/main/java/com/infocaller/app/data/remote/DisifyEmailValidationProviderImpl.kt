@@ -34,8 +34,9 @@ class DisifyEmailValidationProviderImpl(
                     .build()
                 val body = httpClient.newCall(req).await().use { r ->
                     if (!r.isSuccessful) return@withContext null
-                    r.body?.string()
+                    try { r.peekBody(50_000L).string() } catch (_: Exception) { return@withContext null } catch (_: Error) { return@withContext null }
                 } ?: return@withContext null
+                if (body.length > 50_000) return@withContext null
                 val root = try { JsonParser.parseString(body).asJsonObject } catch (_: Exception) { return@withContext null }
                 val format = root.get("format")?.asBoolean ?: return@withContext null
                 if (!format) {

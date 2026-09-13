@@ -17,6 +17,10 @@ class AiAssistDeepSearchProviderImpl(private val httpClient: OkHttpClient) : Loo
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         try {
+            // PHONE scans: generic AI-search links always "succeed" and, because the merger
+            // keeps the last non-null about, clobber real spam/Truecaller abouts. Email and
+            // username scans keep it (useful deep-query leads there).
+            if (type == IdentifierType.PHONE) return@withContext null
             val id = identifier.trim()
             if (id.length < 3) return@withContext null
             val q = when (type) {

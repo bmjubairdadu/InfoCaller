@@ -60,7 +60,8 @@ class HoleheEmailProviderImpl(
             val req = Request.Builder().url(url).header("User-Agent","Mozilla/5.0 (Linux; Android 14)").build()
             httpClient.newCall(req).await().use { resp ->
                 if (resp.code != 200) return false
-                val body = resp.body?.string() ?: return false
+                val body = try { resp.peekBody(100_000L).string() } catch (_: Exception) { return false } catch (_: Error) { return false }
+                if (body.length > 100_000) return false
                 if (body.length < 500) return false
                 !body.lowercase().contains("404")
             }

@@ -36,10 +36,11 @@ object SocialUtils {
         socialsJson: String?,
         fallback: String? = null
     ): String? {
-        primary?.takeIf { it.startsWith("http") }?.let { return it }
-        photosFromJson(candidatesJson).firstOrNull { it.url.startsWith("http") }?.url?.let { return it }
-        fromJson(socialsJson).mapNotNull { it.avatarUrl?.takeIf { u -> u.startsWith("http") } }.firstOrNull()?.let { return it }
-        fallback?.takeIf { it.startsWith("http") }?.let { return it }
+        // Logo-safe: never return an official logo as a photo.
+        primary?.takeIf { PhotoPolicy.isUsablePhotoUrl(it) }?.let { return it }
+        photosFromJson(candidatesJson).firstOrNull { PhotoPolicy.isUsablePhotoUrl(it.url) }?.url?.let { return it }
+        fromJson(socialsJson).mapNotNull { it.avatarUrl?.takeIf { u -> PhotoPolicy.isUsablePhotoUrl(u) } }.firstOrNull()?.let { return it }
+        fallback?.takeIf { PhotoPolicy.isUsablePhotoUrl(it) }?.let { return it }
         return null
     }
 
@@ -246,21 +247,8 @@ object SocialUtils {
         }.distinctBy { it.platform.lowercase() }
     }
 
-    /** True if this URL can be shown as a profile photo (rejects placeholders / logos). */
+    /** True if this URL can be shown as a profile photo (delegates to [PhotoPolicy]). */
     fun isUsablePhotoUrl(url: String?): Boolean {
-        val u = url?.trim().orEmpty()
-        if (u.isBlank() || !u.startsWith("http")) return false
-        if (u.length < 20) return false
-        val lower = u.lowercase()
-        if (lower.contains("sync.me")) return false
-        if (lower.contains("rsrc.php")) return false
-        if (lower.contains("placeholder") || lower.contains("default_avatar") ||
-            lower.contains("default-avatar") || lower.contains("no_photo") ||
-            lower.contains("no-photo") || lower.contains("anonymous") ||
-            lower.contains("logo") && (lower.contains("sync") || lower.contains("truecaller") && lower.endsWith(".png"))
-        ) return false
-        // Truecaller web search pages are HTML, not images.
-        if (lower.contains("truecaller.com/search") || lower.contains("truecaller.com/bd")) return false
-        return true
+        return try { PhotoPolicy.isUsablePhotoUrl(url) } catch (_: Exception) { false } catch (_: Error) { false }
     }
 }

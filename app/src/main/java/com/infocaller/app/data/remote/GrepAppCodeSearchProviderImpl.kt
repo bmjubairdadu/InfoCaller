@@ -54,10 +54,12 @@ class GrepAppCodeSearchProviderImpl(
                     .header("User-Agent", "InfoCaller-OSINT/2.0")
                     .header("Accept", "application/json")
                     .build()
+                // Capped JSON read: unbounded body?.string() risks OOM on grep.app pages.
                 val body = httpClient.newCall(req).await().use { r ->
                     if (!r.isSuccessful) return@withContext null
-                    r.body?.string()
+                    try { r.peekBody(200_000L).string() } catch (_: Exception) { return@withContext null } catch (_: Error) { return@withContext null }
                 } ?: return@withContext null
+                if (body.length > 200_000) return@withContext null
                 val root = try { JsonParser.parseString(body).asJsonObject } catch (_: Exception) { return@withContext null }
                 val hitsObj = root.getAsJsonObject("hits") ?: return@withContext null
                 val hits = try { hitsObj.getAsJsonArray("hits") } catch (_: Exception) { null }

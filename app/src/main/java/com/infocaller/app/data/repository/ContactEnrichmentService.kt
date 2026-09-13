@@ -72,14 +72,17 @@ class ContactEnrichmentService(
     }
 
     private suspend fun saveLookupResultToCache(result: LookupResult, contactId: Long? = null) {
+        // Logo-safe write path too (fast-save): logos never persist as photos.
+        val safeImage = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(result.imageUrl)) result.imageUrl else null } catch (_: Exception) { null } catch (_: Error) { null }
+        val safeSource = if (safeImage != null) result.imageSource else null
         database?.enrichmentDao()?.insertEnrichment(
             ContactEnrichmentEntity(
                 normalizedPhoneNumber = result.phoneNumber,
                 contactId = contactId,
                 publicName = result.name,
                 alternateName = result.alternateName,
-                profileImageUrl = result.imageUrl,
-                profileImageSource = result.imageSource,
+                profileImageUrl = safeImage,
+                profileImageSource = safeSource,
                 about = result.about,
                 city = result.city,
                 carrier = result.carrier,
@@ -326,20 +329,81 @@ class ContactEnrichmentService(
 
     private fun downloadBitmap(url: String): Bitmap? {
         return try {
-            if (url.startsWith("content://") || url.startsWith("file://")) {
-                context.contentResolver.openInputStream(url.toUri())?.use { inputStream ->
-                    BitmapFactory.decodeStream(inputStream)
-                }
+            val safe = try { url.trim() } catch (_: Exception) { "" } catch (_: Error) { "" }
+            if (safe.isBlank() || safe.length > 2000) return null
+            if (safe.startsWith("content://") || safe.startsWith("file://")) {
+                try {
+                    context.contentResolver.openInputStream(safe.toUri())?.use { inputStream ->
+                        // Bounds first → downsample so longest side ≤ 720px (OOM-safe).
+                        val raw = try {
+                            val out = ByteArrayOutputStream(32_768)
+                            val buf = ByteArray(8_192)
+                            var total = 0
+                            while (true) {
+                                val n = try { inputStream.read(buf) } catch (_: Exception) { break } catch (_: Error) { break }
+                                if (n <= 0) break
+                                total += n
+                                if (total > 1_500_000) return null
+                                out.write(buf, 0, n)
+                            }
+                            out.toByteArray()
+                        } catch (_: Exception) { return null } catch (_: Error) { return null }
+                        if (raw.isEmpty() || raw.size < 200) return null
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        try { BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds) } catch (_: Exception) { return null } catch (_: Error) { return null }
+                        val bw = bounds.outWidth
+                        val bh = bounds.outHeight
+                        if (bw <= 0 || bh <= 0 || bw > 8000 || bh > 8000) return null
+                        var sample = 1
+                        while (maxOf(bw, bh) / sample > 720) sample *= 2
+                        val opts = BitmapFactory.Options().apply {
+                            inSampleSize = sample.coerceIn(1, 8)
+                            inPreferredConfig = Bitmap.Config.RGB_565
+                        }
+                        try { BitmapFactory.decodeByteArray(raw, 0, raw.size, opts) } catch (_: OutOfMemoryError) { null } catch (_: Exception) { null } catch (_: Error) { null }
+                    }
+                } catch (_: Exception) { null } catch (_: Error) { null }
             } else {
-                val connection = URL(url).openConnection()
-                connection.doInput = true
-                connection.connectTimeout = 10000
-                connection.readTimeout = 10000
-                connection.getInputStream().use { input ->
-                    BitmapFactory.decodeStream(input)
-                }
+                if (!safe.startsWith("http")) return null
+                try {
+                    val connection = URL(safe).openConnection()
+                    connection.doInput = true
+                    connection.connectTimeout = 8000
+                    connection.readTimeout = 8000
+                    try { connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)") } catch (_: Exception) { } catch (_: Error) { }
+                    val len = try { connection.contentLengthLong } catch (_: Exception) { -1L } catch (_: Error) { -1L }
+                    if (len > 1_500_000L) return null
+                    val raw = connection.getInputStream().use { input ->
+                        val out = ByteArrayOutputStream(32_768)
+                        val buf = ByteArray(8_192)
+                        var total = 0
+                        while (true) {
+                            val n = try { input.read(buf) } catch (_: Exception) { break } catch (_: Error) { break }
+                            if (n <= 0) break
+                            total += n
+                            if (total > 1_500_000) return null
+                            out.write(buf, 0, n)
+                        }
+                        out.toByteArray()
+                    }
+                    if (raw.isEmpty() || raw.size < 200) return null
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    try { BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds) } catch (_: Exception) { return null } catch (_: Error) { return null }
+                    val bw = bounds.outWidth
+                    val bh = bounds.outHeight
+                    if (bw <= 0 || bh <= 0 || bw > 8000 || bh > 8000) return null
+                    var sample = 1
+                    while (maxOf(bw, bh) / sample > 720) sample *= 2
+                    val opts = BitmapFactory.Options().apply {
+                        inSampleSize = sample.coerceIn(1, 8)
+                        inPreferredConfig = Bitmap.Config.RGB_565
+                    }
+                    try { BitmapFactory.decodeByteArray(raw, 0, raw.size, opts) } catch (_: OutOfMemoryError) { null } catch (_: Exception) { null } catch (_: Error) { null }
+                } catch (_: Exception) { null } catch (_: Error) { null }
             }
         } catch (e: Exception) {
+            null
+        } catch (_: Error) {
             null
         }
     }

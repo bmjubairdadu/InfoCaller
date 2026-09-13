@@ -56,7 +56,16 @@ class InstagramDeepProvider(private val context: Context) : LookupProvider {
                 }
             }
             if (name.isNullOrBlank()) name = oembedName
-            if (name.isNullOrBlank() && ogTitle.isNullOrBlank()) return@withContext null
+            // Missing IG pages return HTTP 200 with empty/generic og:title (probe: 622KB login HTML).
+            // Strict: og:title must mention the exact handle; bare login HTML = not found.
+            if (ogTitle.isNullOrBlank() || !ogTitle.contains(username, true)) {
+                if (oembedName == null) return@withContext null
+                return@withContext PartialResult(
+                    name = oembedName,
+                    socialProfiles = listOf(com.infocaller.app.domain.model.SocialProfile("Instagram", username, url, com.infocaller.app.domain.model.SocialLookupStatus.POSSIBLE_MATCH)),
+                    confidence = 0.45f, source = oembedName, providerId = id, providerVersion = version
+                )
+            }
             if (doc.text().contains("Sorry, this page isn't available", true)) {
                 if (oembedName == null) return@withContext null
                 return@withContext PartialResult(
@@ -82,7 +91,7 @@ class InstagramDeepProvider(private val context: Context) : LookupProvider {
         return try {
             val doc = Jsoup.connect("https://www.instagram.com/$username/embed/captioned/")
                 .userAgent("Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 Chrome/96.0 Mobile Safari/537.36")
-                .timeout(8000).ignoreHttpErrors(true).followRedirects(true).get()
+                .timeout(7000).maxBodySize(100_000).ignoreHttpErrors(true).followRedirects(true).get()
             if (isLoginWall(doc)) return null
             val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
             title?.substringBefore("(")?.trim()?.takeIf { it.length in 2..60 && !it.contains("Instagram", true) }
@@ -101,8 +110,8 @@ class InstagramDeepProvider(private val context: Context) : LookupProvider {
             val doc = Jsoup.connect(url)
                 .userAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1")
                 .header("X-IG-App-ID", "936619743392459")
-                .timeout(10000).ignoreHttpErrors(true).followRedirects(true).get()
+                .timeout(7000).maxBodySize(100_000).ignoreHttpErrors(true).followRedirects(true).get()
             if (isLoginWall(doc)) null else doc
-        } catch (_: Exception) { null }
+        } catch (_: Exception) { null } catch (_: Error) { null }
     }
 }

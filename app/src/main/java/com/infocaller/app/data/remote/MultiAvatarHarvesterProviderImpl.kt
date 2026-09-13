@@ -39,8 +39,9 @@ class MultiAvatarHarvesterProviderImpl(private val httpClient: OkHttpClient) : L
                     if (headOk(g200)) cands.add(PhotoCandidate(provider = "Gravatar", url = g200, sourcePriority = 60))
                 }
                 IdentifierType.USERNAME, IdentifierType.FULL_NAME -> {
-                    val u = identifier.trim()
-                    if (u.length < 3 || u.contains(" ")) return@withContext null
+                    val u = identifier.trim().removePrefix("@")
+                    if (u.length < 3 || u.length > 39 || u.contains(" ") || u.contains("@")) return@withContext null
+                    if (u.all { it.isDigit() }) return@withContext null
                     val gh = "https://github.com/$u.png"
                     if (headOk(gh)) cands.add(PhotoCandidate(provider = "GitHub", url = gh, sourcePriority = 60))
                     val gl = "https://gitlab.com/$u.png"

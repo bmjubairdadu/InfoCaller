@@ -12,9 +12,9 @@ class PublicLookupEngine(
     companion object {
         const val PROVIDER_TIMEOUT_MS = 5000L
 
-        const val MAX_PROVIDERS_PER_SCAN = 16
+        const val MAX_PROVIDERS_PER_SCAN = 12
 
-        const val MAX_PIVOTS = 3
+        const val MAX_PIVOTS = 2
 
         const val BETWEEN_PROVIDER_DELAY_MS = 60L
 
@@ -36,7 +36,12 @@ class PublicLookupEngine(
         onProviderStep: suspend (providerId: String, providerName: String, stepIndex: Int, stepTotal: Int, status: StepStatus) -> Unit
     ): LookupResult = coroutineScope {
         val finalResults = mutableListOf<PartialResult>()
-        val normalized = if (type == IdentifierType.PHONE) PhoneNumberUtils.normalize(identifier) else identifier
+        val normalized = try {
+            if (type == IdentifierType.PHONE) PhoneNumberUtils.normalize(identifier) else identifier.trim().take(120)
+        } catch (_: Exception) { identifier } catch (_: Error) { identifier }
+        if (normalized.isBlank()) {
+            return@coroutineScope com.infocaller.app.domain.model.LookupResult(phoneNumber = identifier.take(40))
+        }
 
         val deepScanned = mutableSetOf<String>()
         deepScanned.add(normalized)
@@ -159,61 +164,86 @@ class PublicLookupEngine(
 
             attempts++
             try {
-                try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.RUNNING) } catch (_: Exception) { }
+                try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.RUNNING) } catch (_: Exception) { } catch (_: Error) { }
                 if (attempts > 1) {
-                    try { kotlinx.coroutines.delay(BETWEEN_PROVIDER_DELAY_MS) } catch (_: Exception) { }
+                    try { kotlinx.coroutines.delay(BETWEEN_PROVIDER_DELAY_MS) } catch (_: Exception) { } catch (_: Error) { }
                 }
                 val start = System.currentTimeMillis()
-                val photoCtx = finalResults
-                    .flatMap { r ->
-                        listOfNotNull(r.imageUrl) + r.photoCandidates.map { it.url } +
-                            r.socialProfiles.mapNotNull { it.avatarUrl }
-                    }
-                    .filter { it.startsWith("http") }.distinct().take(5)
-                val nameCtx = finalResults.firstNotNullOfOrNull { it.name?.takeIf { n -> n.isNotBlank() } }
+                val photoCtx = try {
+                    finalResults
+                        .flatMap { r ->
+                            listOfNotNull(r.imageUrl) + r.photoCandidates.map { it.url } +
+                                r.socialProfiles.mapNotNull { it.avatarUrl }
+                        }
+                        .filter { it.startsWith("http") }.distinct().take(3)
+                } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+                val nameCtx = try { finalResults.firstNotNullOfOrNull { it.name?.takeIf { n -> n.isNotBlank() } }?.take(80) } catch (_: Exception) { null } catch (_: Error) { null }
                 val ctx = LookupContext(foundPhotos = photoCtx, foundName = nameCtx)
-                val result = withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
-                    provider.lookup(normalized, type = type, context = ctx)
-                }
+                val result = try {
+                    withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
+                        try { provider.lookup(normalized, type = type, context = ctx) } catch (_: Exception) { null } catch (_: Error) { null }
+                    }
+                } catch (_: Exception) { null } catch (_: Error) { null }
 
                 if (result != null) {
-                    try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.SUCCESS) } catch (_: Exception) { }
-                    val duration = System.currentTimeMillis() - start
-                    val finalRes = result.copy(durationMs = duration, identifier = normalized, identifierType = type)
-                    providerManager.reportResult(provider.id, true, duration)
+                    try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.SUCCESS) } catch (_: Exception) { } catch (_: Error) { }
+                    val duration = try { System.currentTimeMillis() - start } catch (_: Exception) { 0L } catch (_: Error) { 0L }
+                    val finalRes = try {
+                        val capped = result.copy(
+                            name = result.name?.trim()?.take(80)?.takeIf { it.isNotBlank() },
+                            imageUrl = result.imageUrl?.trim()?.take(2000)?.takeIf { it.startsWith("http") },
+                            photoCandidates = result.photoCandidates.take(6),
+                            socialProfiles = result.socialProfiles.take(12),
+                            about = result.about?.take(500),
+                            durationMs = duration, identifier = normalized, identifierType = type
+                        )
+                        capped
+                    } catch (_: Exception) { result } catch (_: Error) { result }
+                    try { providerManager.reportResult(provider.id, true, duration) } catch (_: Exception) { } catch (_: Error) { }
 
-                    finalResults.add(finalRes)
-                    onPartialResult(finalRes)
-                    if (!finalRes.name.isNullOrBlank()) nameFound = true
-                    if (!finalRes.imageUrl.isNullOrBlank() || finalRes.photoCandidates.isNotEmpty() ||
-                        finalRes.socialProfiles.any { !it.avatarUrl.isNullOrBlank() }
-                    ) photoFound = true
+                    try { finalResults.add(finalRes) } catch (_: Exception) { } catch (_: Error) { }
+                    try { onPartialResult(finalRes) } catch (_: Exception) { } catch (_: Error) { }
+                    try {
+                        if (!finalRes.name.isNullOrBlank()) nameFound = true
+                        if (!finalRes.imageUrl.isNullOrBlank() || finalRes.photoCandidates.isNotEmpty() ||
+                            finalRes.socialProfiles.any { !it.avatarUrl.isNullOrBlank() }
+                        ) photoFound = true
+                    } catch (_: Exception) { } catch (_: Error) { }
 
                     ensureActive()
-                    performDeepDiscovery(finalRes, deepScanned, onPartialResult, finalResults)
+                    try { performDeepDiscovery(finalRes, deepScanned, onPartialResult, finalResults) } catch (_: Exception) { } catch (_: Error) { }
 
-                    updateRemainingCapabilities(finalRes, remainingCapabilities)
+                    try { updateRemainingCapabilities(finalRes, remainingCapabilities) } catch (_: Exception) { } catch (_: Error) { }
 
-                    if (isSufficientlyDetailed(finalResults)) break
+                    try { if (isSufficientlyDetailed(finalResults)) break } catch (_: Exception) { } catch (_: Error) { }
 
-                    if (remainingCapabilities.isEmpty()) break
+                    try { if (remainingCapabilities.isEmpty()) break } catch (_: Exception) { } catch (_: Error) { }
                 } else {
-                    try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.FAILED) } catch (_: Exception) { }
+                    try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.FAILED) } catch (_: Exception) { } catch (_: Error) { }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
+            } catch (_: Error) {
+                try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.FAILED) } catch (_: Exception) { } catch (_: Error) { }
+                try { providerManager.reportResult(provider.id, false, PROVIDER_TIMEOUT_MS) } catch (_: Exception) { } catch (_: Error) { }
             } catch (e: Exception) {
-                try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.FAILED) } catch (_: Exception) { }
-                providerManager.reportResult(provider.id, false, PROVIDER_TIMEOUT_MS)
+                try { onProviderStep(provider.id, provider.name, planIndex + 1, planTotal, StepStatus.FAILED) } catch (_: Exception) { } catch (_: Error) { }
+                try { providerManager.reportResult(provider.id, false, PROVIDER_TIMEOUT_MS) } catch (_: Exception) { } catch (_: Error) { }
             }
         }
 
         try {
             ensureActive()
             runAutoPhotoOsint(normalized, type, finalResults, onPartialResult, onProviderStep)
-        } catch (_: Exception) { }
+        } catch (_: Exception) { } catch (_: Error) { }
 
-        ConfidenceEngine.merge(normalized, finalResults)
+        try {
+            ConfidenceEngine.merge(normalized, finalResults)
+        } catch (_: Error) {
+            try { ConfidenceEngine.merge(normalized, finalResults.take(4)) } catch (_: Exception) { com.infocaller.app.domain.model.LookupResult(phoneNumber = normalized) } catch (_: Error) { com.infocaller.app.domain.model.LookupResult(phoneNumber = normalized) }
+        } catch (e: Exception) {
+            try { ConfidenceEngine.merge(normalized, finalResults.take(8)) } catch (_: Exception) { com.infocaller.app.domain.model.LookupResult(phoneNumber = normalized) } catch (_: Error) { com.infocaller.app.domain.model.LookupResult(phoneNumber = normalized) }
+        }
     }
 
     private suspend fun runAutoPhotoOsint(
@@ -223,51 +253,80 @@ class PublicLookupEngine(
         onPartialResult: suspend (PartialResult) -> Unit,
         onProviderStep: suspend (providerId: String, providerName: String, stepIndex: Int, stepTotal: Int, status: StepStatus) -> Unit
     ) {
-        val photos = finalResults
-            .flatMap { r ->
-                listOfNotNull(r.imageUrl) + r.photoCandidates.map { it.url } +
-                    r.socialProfiles.mapNotNull { it.avatarUrl }
-            }
-            .filter { it.startsWith("http") }.distinct().take(5)
+        // Manual (dialer) scans must stay light: photo pivots are slow + OOM-prone.
+        // Only run them when we already have a photo candidate worth pivoting.
+        try {
+            if (type == IdentifierType.PHONE && finalResults.none {
+                try { !it.imageUrl.isNullOrBlank() || it.photoCandidates.isNotEmpty() } catch (_: Exception) { false } catch (_: Error) { false }
+            }) return
+        } catch (_: Exception) { return } catch (_: Error) { return }
+        val photos = try {
+            finalResults
+                .flatMap { r ->
+                    listOfNotNull(r.imageUrl) + r.photoCandidates.map { it.url } +
+                        r.socialProfiles.mapNotNull { it.avatarUrl }
+                }
+                .filter { it.startsWith("http") }.distinct().take(3)
+        } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
         if (photos.isEmpty()) return
-        val pivotDone = finalResults.any { r ->
-            r.providerId == "face_matched_reverse_search" ||
-                ((r.providerId == "reverse_image_search" || r.providerId == "pimeyes_photo_pivot") &&
-                    (r.about?.contains("lens.google.com/uploadbyurl", true) == true))
-        }
+        val pivotDone = try {
+            finalResults.any { r ->
+                r.providerId == "face_matched_reverse_search" ||
+                    ((r.providerId == "reverse_image_search" || r.providerId == "pimeyes_photo_pivot") &&
+                        (r.about?.contains("lens.google.com/uploadbyurl", true) == true))
+            }
+        } catch (_: Exception) { true } catch (_: Error) { true }
         if (pivotDone) return
-        val nameCtx = finalResults.firstNotNullOfOrNull { it.name?.takeIf { n -> n.isNotBlank() } }
+        val nameCtx = try { finalResults.firstNotNullOfOrNull { it.name?.takeIf { n -> n.isNotBlank() } }?.take(80) } catch (_: Exception) { null } catch (_: Error) { null }
         val ctx = LookupContext(foundPhotos = photos, foundName = nameCtx)
-        val pivots = providerManager.getAllProviders().filter {
-            (it.id == "face_matched_reverse_search" || it.id == "reverse_image_search" || it.id == "pimeyes_photo_pivot") &&
-                providerManager.getHealth(it.id)?.status != ProviderStatus.BROKEN
-        }.sortedWith(
-            compareBy<LookupProvider> { if (it.id == "face_matched_reverse_search") 0 else 1 }
-                .thenByDescending { it.priority }
-        ).take(3)
+        val pivots = try {
+            providerManager.getAllProviders().filter {
+                (it.id == "face_matched_reverse_search" || it.id == "reverse_image_search" || it.id == "pimeyes_photo_pivot") &&
+                    providerManager.getHealth(it.id)?.status != ProviderStatus.BROKEN
+            }.sortedWith(
+                compareBy<LookupProvider> { if (it.id == "face_matched_reverse_search") 0 else 1 }
+                    .thenByDescending { it.priority }
+            ).take(1)
+        } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
         var faceMatched = false
         pivots.forEachIndexed { i, pivot ->
             try {
-                try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.RUNNING) } catch (_: Exception) { }
-                val res = withTimeoutOrNull(if (pivot.id == "face_matched_reverse_search") 20_000L else PROVIDER_TIMEOUT_MS) {
-                    pivot.lookup(normalized, type = type, context = ctx)
-                }
-                if (res != null) {
-                    try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.SUCCESS) } catch (_: Exception) { }
-                    val finalRes = res.copy(durationMs = 0L, identifier = normalized, identifierType = type)
-                    finalResults.add(finalRes)
-                    onPartialResult(finalRes)
-                    if (pivot.id == "face_matched_reverse_search" &&
-                        (res.photoCandidates.any { it.faceCount > 0 } || res.confidence >= 0.8f)
-                    ) {
-                        faceMatched = true
-                        return
+                try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.RUNNING) } catch (_: Exception) { } catch (_: Error) { }
+                val res = try {
+                    withTimeoutOrNull(8000L) {
+                        try { pivot.lookup(normalized, type = type, context = ctx) } catch (_: Exception) { null } catch (_: Error) { null }
                     }
+                } catch (_: Exception) { null } catch (_: Error) { null }
+                if (res != null) {
+                    try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.SUCCESS) } catch (_: Exception) { } catch (_: Error) { }
+                    val finalRes = try {
+                        res.copy(
+                            name = res.name?.take(80),
+                            imageUrl = res.imageUrl?.take(2000)?.takeIf { it.startsWith("http") },
+                            photoCandidates = res.photoCandidates.take(6),
+                            socialProfiles = res.socialProfiles.take(12),
+                            about = res.about?.take(500),
+                            durationMs = 0L, identifier = normalized, identifierType = type
+                        )
+                    } catch (_: Exception) { res } catch (_: Error) { res }
+                    try { finalResults.add(finalRes) } catch (_: Exception) { } catch (_: Error) { }
+                    try { onPartialResult(finalRes) } catch (_: Exception) { } catch (_: Error) { }
+                    try {
+                        if (pivot.id == "face_matched_reverse_search" &&
+                            (res.photoCandidates.any { it.faceCount > 0 } || res.confidence >= 0.8f)
+                        ) {
+                            faceMatched = true
+                            return
+                        }
+                    } catch (_: Exception) { } catch (_: Error) { }
                 } else {
-                    try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.FAILED) } catch (_: Exception) { }
+                    try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.FAILED) } catch (_: Exception) { } catch (_: Error) { }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (_: Error) {
+                try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.FAILED) } catch (_: Exception) { } catch (_: Error) { }
             } catch (_: Exception) {
-                try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.FAILED) } catch (_: Exception) { }
+                try { onProviderStep(pivot.id, pivot.name, i + 1, pivots.size, StepStatus.FAILED) } catch (_: Exception) { } catch (_: Error) { }
             }
             if (faceMatched) return
         }

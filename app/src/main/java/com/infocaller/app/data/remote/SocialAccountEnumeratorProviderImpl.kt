@@ -7,10 +7,11 @@ import com.infocaller.app.domain.model.SocialProfile
 import com.infocaller.app.util.ContactUtils
 import com.infocaller.app.util.await
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.jsoup.Jsoup
 
 class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) : LookupProvider {
     override val id = "social_account_enumerator"
@@ -43,35 +44,34 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
         var photo: String? = null
         var about: String? = null
 
+        // Capped sync.me title fetch (never unbounded body?.string() — that OOMs manual scans).
         try {
-            val enc = java.net.URLEncoder.encode(e164, "UTF-8")
-            val req = Request.Builder().url("https://sync.me/search/?number=$enc")
-                .header("User-Agent", ua()).build()
-            httpClient.newCall(req).await().use { r ->
-                if (r.isSuccessful) {
-                    val body = r.body?.string().orEmpty()
-                    val title = Regex("""<title>(.*?)</title>""", RegexOption.IGNORE_CASE)
-                        .find(body)?.groupValues?.getOrNull(1)?.trim()
-                    // Only use the name pivot; never use sync.me og:image/description:
-                    // it is a site logo / SEO text, not the person's photo/about.
-                    // Never emit a "Sync.ME" SocialProfile either (not a real account).
-                    if (!title.isNullOrBlank() && !title.contains("Sync.ME", true) &&
-                        !title.contains("not found", true) && title.length in 3..60) {
-                        name = title
-                    }
-                }
+            coroutineContext.ensureActive()
+            val enc = try { java.net.URLEncoder.encode(e164, "UTF-8") } catch (_: Exception) { e164 } catch (_: Error) { e164 }
+            val body = com.infocaller.app.util.SafeWebFetch.fetchBodyCapped(
+                httpClient, "https://sync.me/search/?number=$enc", ua(), 4500L, 80_000
+            )
+            val title = com.infocaller.app.util.SafeWebFetch.extractTitle(body ?: "")
+            // Only use the name pivot; never use sync.me og:image/description:
+            // it is a site logo / SEO text, not the person's photo/about.
+            // Never emit a "Sync.ME" SocialProfile either (not a real account).
+            if (!title.isNullOrBlank() && !title.contains("Sync.ME", true) &&
+                !title.contains("not found", true) && title.length in 3..60) {
+                name = title
             }
-        } catch (_: Exception) { }
+        } catch (_: Exception) { } catch (_: Error) { }
 
+        // No-login Truecaller web title — capped, no Jsoup DOM (DOM OOMs on big pages).
         if (name == null) {
             for (path in listOf("bd/${digits.takeLast(10)}", "search/${digits.takeLast(10)}")) {
                 try {
-                    val doc = Jsoup.connect("https://www.truecaller.com/$path")
-                        .userAgent(ua()).timeout(6000).ignoreHttpErrors(true).followRedirects(true).get()
-                    val cand = doc.select("title").text().substringBefore("- Truecaller").trim()
-                        .takeIf { it.length in 3..50 && !it.contains("Truecaller", true) }
-                    if (cand != null) { name = cand; break }
-                } catch (_: Exception) { }
+                    coroutineContext.ensureActive()
+                    val title = com.infocaller.app.util.SafeWebFetch.fetchTitle(
+                        httpClient, "https://www.truecaller.com/$path", ua(), 4500L
+                    )
+                    val cand = com.infocaller.app.util.SafeWebFetch.truecallerTitleToName(title)
+                    if (cand != null) { name = cand.take(50); break }
+                } catch (_: Exception) { continue } catch (_: Error) { continue }
             }
         }
 
@@ -159,7 +159,8 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
                 .header("User-Agent", ua()).build()
             httpClient.newCall(req).await().use { r ->
                 if (r.isSuccessful) {
-                    val j = r.body?.string().orEmpty()
+                    val j = try { r.peekBody(100_000L).string() } catch (_: Exception) { "" } catch (_: Error) { "" }
+                    if (j.length > 100_000) return@use
                     if (j.contains("\"entry\"")) {
                         val entry = com.google.gson.JsonParser.parseString(j).asJsonObject
                             .getAsJsonArray("entry").firstOrNull()?.asJsonObject
@@ -199,7 +200,8 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
                 .header("User-Agent", ua()).build()
             httpClient.newCall(req).await().use { r ->
                 if (r.isSuccessful) {
-                    val body = r.body?.string().orEmpty()
+                    val body = try { r.peekBody(100_000L).string() } catch (_: Exception) { "" } catch (_: Error) { "" }
+                    if (body.length > 100_000) return@use
                     if (!body.contains("\"message\"")) {
                         val u = com.google.gson.JsonParser.parseString(body).asJsonObject
                         val login = u.get("login")?.takeIf { !it.isJsonNull }?.asString

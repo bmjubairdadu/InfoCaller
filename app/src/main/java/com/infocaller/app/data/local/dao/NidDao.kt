@@ -11,11 +11,16 @@ interface NidDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(items: List<NidEntity>)
 
+    // Substring fallback is last-resort only: exact index hits first (see provider).
+    // Short patterns (<9 digits) are rejected by the provider before reaching here.
     @Query("SELECT * FROM nid_records WHERE REPLACE(REPLACE(number,'+',''), ' ','') LIKE '%' || :digits || '%' LIMIT 1")
     suspend fun findByPhone(digits: String): NidEntity?
 
     @Query("SELECT * FROM nid_records WHERE REPLACE(REPLACE(number,'+',''), ' ','') = :digits LIMIT 1")
     suspend fun findByPhoneExact(digits: String): NidEntity?
+
+    @Query("SELECT * FROM nid_records WHERE REPLACE(REPLACE(number,'+',''), ' ','') IN (:variants) LIMIT 1")
+    suspend fun findByPhoneVariants(variants: List<String>): NidEntity?
 
     @Query("SELECT * FROM nid_records WHERE nid = :nid LIMIT 1")
     suspend fun findByNid(nid: String): NidEntity?

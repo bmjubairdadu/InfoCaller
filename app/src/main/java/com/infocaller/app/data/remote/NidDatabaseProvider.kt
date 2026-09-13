@@ -21,33 +21,46 @@ class NidDatabaseProvider(
         try {
             when (type) {
                 IdentifierType.PHONE -> {
-                    val digits = identifier.filter { it.isDigit() }
-                    val candidates = linkedSetOf(
+                    val digits = try { identifier.filter { it.isDigit() } } catch (_: Exception) { "" } catch (_: Error) { "" }
+                    if (digits.length < 7 || digits.length > 15) return@withContext null
+                    // Canonical local form first (import normalizes to 016.../017...),
+                    // then E.164 variants — single indexed query, no LIKE substring scan.
+                    val local = com.infocaller.app.data.local.NidDatabaseImporter.normalizeNumber(digits)
+                    val variants = linkedSetOf(
+                        local,
                         digits,
                         if (digits.startsWith("880")) digits.substring(3) else "0$digits".takeLast(11),
                         digits.takeLast(11),
                         if (digits.startsWith("880")) digits else "880${digits.trimStart('0')}",
                         digits.takeLast(10),
-                    ).filter { it.length >= 7 }
+                    ).filter { it.length in 10..13 }.take(6)
                     var rec: com.infocaller.app.data.local.entity.NidEntity? = null
-                    for (c in candidates) {
-                        rec = dao.findByPhoneExact(c)
-                        if (rec != null) break
-                    }
+                    try {
+                        rec = if (variants.isNotEmpty()) dao.findByPhoneVariants(variants) else null
+                    } catch (_: Exception) { rec = null } catch (_: Error) { rec = null }
                     if (rec == null) {
-                        for (c in candidates) {
-                            rec = dao.findByPhone(c)
+                        for (c in variants) {
+                            try { rec = dao.findByPhoneExact(c) } catch (_: Exception) { } catch (_: Error) { }
                             if (rec != null) break
                         }
+                    }
+                    // Substring fallback only for full-length numbers (never short patterns —
+                    // LIKE '%017%' would false-match thousands of rows).
+                    if (rec == null && digits.length >= 10) {
+                        try { rec = dao.findByPhone(digits.takeLast(11)) } catch (_: Exception) { } catch (_: Error) { }
                     }
                     return@withContext toPartial(rec ?: return@withContext null)
                 }
                 IdentifierType.NID -> {
-                    val rec = dao.findByNid(identifier.trim()) ?: return@withContext null
+                    val digits = identifier.filter { it.isDigit() }
+                    if (digits.length !in 10..17) return@withContext null
+                    val rec = dao.findByNid(digits) ?: dao.findByNid(identifier.trim()) ?: return@withContext null
                     return@withContext toPartial(rec)
                 }
                 IdentifierType.DOB -> {
-                    val list = dao.findByDob(identifier.trim())
+                    val dob = identifier.trim().take(12)
+                    if (dob.length < 8) return@withContext null
+                    val list = dao.findByDob(dob)
                     if (list.isEmpty()) return@withContext null
                     val rec = list.first()
                     return@withContext toPartial(rec).copy(about = "${toPartial(rec).about} | DOB matches ${list.size} records")

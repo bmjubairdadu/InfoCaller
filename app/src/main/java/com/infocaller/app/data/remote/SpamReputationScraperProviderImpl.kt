@@ -61,12 +61,13 @@ class SpamReputationScraperProviderImpl : LookupProvider {
 
     private data class BoardHit(val board: String, val reports: Int, val score: String?)
 
+    // OOM-safe: small cap + Error catch. Big spam boards otherwise blow the DOM heap.
     private fun fetchText(url: String): String? {
         return try {
-            Jsoup.connect(url).userAgent(ua()).timeout(7000)
-                .ignoreHttpErrors(true).followRedirects(true).maxBodySize(500_000)
+            Jsoup.connect(url).userAgent(ua()).timeout(5000)
+                .ignoreHttpErrors(true).followRedirects(true).maxBodySize(100_000)
                 .get().text().take(6000)
-        } catch (_: Exception) { null }
+        } catch (_: Exception) { null } catch (_: Error) { null }
     }
 
     private fun extractReports(text: String): Int {
@@ -103,7 +104,12 @@ class SpamReputationScraperProviderImpl : LookupProvider {
         for (c in candidates) {
             val t = fetchText("https://whocallsme.com/Phone-Number-$c") ?: continue
             if (t.length < 300) continue
-            return BoardHit("WhoCallsMe", extractReports(t), extractScore(t))
+            // Live probe: missing numbers return HTTP 404 page (~4.7KB) with zero
+            // complaint markers. Without report/score evidence it is NOT a hit.
+            val reports = extractReports(t)
+            val score = extractScore(t)
+            if (reports == 0 && score == null) continue
+            return BoardHit("WhoCallsMe", reports, score)
         }
         return null
     }

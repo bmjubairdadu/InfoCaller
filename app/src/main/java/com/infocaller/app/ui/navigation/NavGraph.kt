@@ -83,7 +83,14 @@ fun NavGraph(
                 SearchScreen(
                     viewModel = viewModel,
                     onNavigateToDetails = { number ->
-                        viewModel.searchNumber(number)
+                        // NID-scan results carry the phone in caller.phoneNumber; route by
+                        // identifier type so Details re-scans with NID instead of misfiring
+                        // a phone scan on an NID string.
+                        try {
+                            val t = com.infocaller.app.util.IdentifierRouter.routeType(number)
+                            if (t == com.infocaller.app.domain.engine.IdentifierType.EMAIL) viewModel.searchEmailManual(number)
+                            else viewModel.searchNumber(number)
+                        } catch (_: Exception) { viewModel.searchNumber(number) }
                         navController.navigate("details/" + android.net.Uri.encode(number))
                     },
                     onBack = {
@@ -100,7 +107,25 @@ fun NavGraph(
                 }.orEmpty()
                 androidx.compose.runtime.LaunchedEffect(argNumber) {
                     viewModel.clearSearch()
-                    if (argNumber.isNotBlank()) viewModel.searchNumber(argNumber)
+                    if (argNumber.isNotBlank()) {
+                        try {
+                            val digits = argNumber.filter { it.isDigit() }
+                            // Pure 10-17 digit strings reaching details are NID scans
+                            // (phone scans go through normalized +880... with >=7 digits
+                            // but NID results re-enter here as bare NID).
+                            // Route conservatively: try NID only when it is NOT a valid
+                            // phone shape, else phone path as before.
+                            val looksPhone = try {
+                                val n = com.infocaller.app.util.PhoneNumberUtils.normalize(argNumber)
+                                n.filter { it.isDigit() }.length in 7..15
+                            } catch (_: Exception) { false }
+                            if (!looksPhone && digits.length in 10..17 && !argNumber.contains("@")) {
+                                viewModel.searchNidManual(argNumber)
+                            } else {
+                                viewModel.searchNumber(argNumber)
+                            }
+                        } catch (_: Exception) { viewModel.searchNumber(argNumber) }
+                    }
                 }
                 DetailsScreen(
                     viewModel = viewModel,

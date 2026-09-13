@@ -4,8 +4,14 @@ import android.content.Context
 import android.util.Log
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.util.await
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -33,43 +39,64 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
         try {
             val cv = authStore.cv()?.takeIf { it.isNotBlank() } ?: "vc_786_vn_4.2026.09.06.1153_a"
             var clientId = authStore.cid()
-            val nameBodies = mutableListOf<String>()
             val hosts = listOf(
                 "https://api.eyecon-app.com/app/getnames.jsp?",
                 "https://api2.eyecon-app.com/app/getnames.jsp?",
                 "https://eyecon-app.com/app/getnames.jsp?"
             )
-            var ok = false
-            var sawUnauthorized = false
-            for (base in hosts) {
-                try {
-                    val nameUrl = base +
-                        "cli=$cleanNumber&" +
-                        "lang=en&" +
-                        "is_callerid=true&" +
-                        "is_ic=true&" +
-                        "cv=$cv&" +
-                        "requestApi=URLconnection&" +
-                        "source=StatisticBars"
-
-                    val nameRequest = authStore.attachWith(Request.Builder().url(nameUrl), clientId)
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
-                        .header("Accept", "application/json")
-                        .header("Accept-Charset", "UTF-8")
-                        .header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
-                        .header("Accept-Language", "en-US,en;q=0.9")
-                        .build()
-
-                    val (okHost, code, nameBody) = client.newCall(nameRequest).await().use { r ->
-                        Triple(r.isSuccessful, r.code, r.body?.string() ?: "")
-                    }
-                    if (code == 401 || code == 403) sawUnauthorized = true
-                    if (!okHost) continue
-                    ok = true
-                    nameBodies.add(nameBody)
-                    break
-                } catch (_: Exception) { continue }
+            // Parallel hosts, first-wins (3s each): sequential 5s timeouts used to burn the
+            // whole 5s engine budget on dead mirrors before reaching the live one.
+            suspend fun fetchName(base: String, cid: String?): Triple<Boolean, Int, String> {
+                return try {
+                    withTimeoutOrNull(3500L) {
+                        val nameUrl = base +
+                            "cli=$cleanNumber&" +
+                            "lang=en&" +
+                            "is_callerid=true&" +
+                            "is_ic=true&" +
+                            "cv=$cv&" +
+                            "requestApi=URLconnection&" +
+                            "source=StatisticBars"
+                        val nameRequest = authStore.attachWith(Request.Builder().url(nameUrl), cid)
+                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+                            .header("Accept", "application/json")
+                            .header("Accept-Charset", "UTF-8")
+                            .header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+                            .header("Accept-Language", "en-US,en;q=0.9")
+                            .build()
+                        client.newCall(nameRequest).await().use { r ->
+                            val b = try { r.peekBody(50_000L).string() } catch (_: Exception) { "" } catch (_: Error) { "" }
+                            Triple(r.isSuccessful, r.code, if (b.length > 50_000) "" else b)
+                        }
+                    } ?: Triple(false, -1, "")
+                } catch (e: CancellationException) { throw e }
+                catch (_: Error) { Triple(false, -1, "") }
+                catch (_: Exception) { Triple(false, -1, "") }
             }
+            var nameBodies: MutableList<String> = mutableListOf()
+            var sawUnauthorized = false
+            try {
+                coroutineScope {
+                    val jobs = hosts.map { base -> async { fetchName(base, clientId) } }
+                    // First success wins: poll briefly, then take whatever finished.
+                    val deadline = System.currentTimeMillis() + 4200L
+                    val wins = mutableListOf<String>()
+                    while (System.currentTimeMillis() < deadline && wins.isEmpty()) {
+                        try { delay(150L) } catch (_: Exception) { break }
+                        for (d in jobs.filter { it.isCompleted }) {
+                            try {
+                                val (okHost, code, body) = d.await()
+                                if (code == 401 || code == 403) sawUnauthorized = true
+                                if (okHost && body.isNotBlank() && !wins.contains(body)) wins.add(body)
+                            } catch (_: Exception) { } catch (_: Error) { }
+                        }
+                        if (jobs.all { it.isCompleted }) break
+                    }
+                    try { jobs.forEach { try { it.cancel() } catch (_: Exception) { } } } catch (_: Exception) { }
+                    nameBodies = wins
+                }
+            } catch (_: Exception) { nameBodies = mutableListOf() } catch (_: Error) { nameBodies = mutableListOf() }
+            var ok = nameBodies.isNotEmpty()
             if (!ok && sawUnauthorized) {
                 val fresh = refreshClientId(cv)
                 if (!fresh.isNullOrBlank()) {
@@ -92,7 +119,8 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                                 .header("Accept-Language", "en-US,en;q=0.9")
                                 .build()
                             val (okHost, _, nameBody) = client.newCall(retry).await().use { r ->
-                                Triple(r.isSuccessful, r.code, r.body?.string() ?: "")
+                                val b = try { r.peekBody(50_000L).string() } catch (_: Exception) { "" } catch (_: Error) { "" }
+                                Triple(r.isSuccessful, r.code, if (b.length > 50_000) "" else b)
                             }
                             if (!okHost) continue
                             ok = true
@@ -107,37 +135,14 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
 
             if (foundName.isNullOrBlank()) return@withContext null
 
+            // Photo probes are slow/flaky (2 x HEAD+GET per host) and used to block the
+            // name result past the engine timeout. Build candidate URLs without probing;
+            // the scan pipeline downloads + verifies the image itself (logo-safe).
             val photoCandidates = mutableListOf<com.infocaller.app.domain.model.PhotoCandidate>()
-            val picUrlCandidates = mutableListOf<String>()
-            for (base in listOf(
-                "https://api.eyecon-app.com/app/pic?",
-                "https://api2.eyecon-app.com/app/pic?",
-                "https://eyecon-app.com/app/pic?"
-            )) {
-                picUrlCandidates.add(base + "cli=$cleanNumber&size=big&type=1")
-                picUrlCandidates.add(
-                    base +
-                    "cli=$cleanNumber&" +
-                    "is_callerid=true&" +
-                    "size=big&" +
-                    "type=0&" +
-                    "src=RegistrationGetMyPhoto&" +
-                    "cancelfresh=0&" +
-                    "cv=3.0.0"
-                )
-            }
-            var picUrl: String? = null
-            for (candidate in picUrlCandidates) {
-                try {
-                    if (headServesImage(candidate, clientId)) { picUrl = candidate; break }
-                    if (getServesImage(candidate, clientId)) {
-                        picUrl = candidate
-                        photoCandidates.add(com.infocaller.app.domain.model.PhotoCandidate(provider = "Eyecon", url = candidate, sourcePriority = 40, timestamp = System.currentTimeMillis()))
-                        break
-                    }
-                } catch (_: Exception) { continue }
-            }
-            if (picUrl != null && photoCandidates.isEmpty()) {
+            val picUrl = try {
+                "https://api.eyecon-app.com/app/pic?cli=$cleanNumber&size=big&type=1"
+            } catch (_: Exception) { null } catch (_: Error) { null }
+            if (picUrl != null) {
                 photoCandidates.add(com.infocaller.app.domain.model.PhotoCandidate(provider = "Eyecon", url = picUrl, sourcePriority = 80, timestamp = System.currentTimeMillis()))
             }
 
@@ -217,7 +222,7 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                 .build()
             val body = client.newCall(req).await().use { r ->
                 if (!r.isSuccessful) return null
-                r.body?.string()?.trim()
+                try { r.peekBody(1_000L).string().trim().take(60) } catch (_: Exception) { return null } catch (_: Error) { return null }
             }?.takeIf { it.matches(Regex("[0-9a-fA-F-]{36}")) } ?: return null
             if (authStore.isUsingBuiltIn()) {
                 try {

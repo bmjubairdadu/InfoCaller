@@ -49,10 +49,14 @@ class CommunitySpamCsvProviderImpl(
                 .build()
             client.newCall(req).await().use { resp ->
                 if (!resp.isSuccessful) return cached
-                val body = resp.body?.string() ?: return cached
+                // Capped: unbounded CSV body OOMs manual scans.
+                val body = try { resp.peekBody(1_000_000L).string() } catch (_: Exception) { return cached } catch (_: Error) { return cached }
+                if (body.length > 1_000_000) return cached
                 val map = HashMap<String, CsvRow>(1024)
                 var first = true
+                var lines = 0
                 for (rawLine in body.lineSequence()) {
+                    if (++lines > 30_000) break
                     val line = rawLine.trim()
                     if (line.isEmpty()) continue
                     if (first) { first = false; if (line.startsWith("number")) continue }

@@ -30,22 +30,30 @@ class GitHubSearchProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                         .header("User-Agent","InfoCaller-OSINT")
                         .header("Accept","application/vnd.github+json")
                         .build()
+                    // Capped GitHub JSON: unbounded body OOMs scans.
                     val items = httpClient.newCall(req).await().use { r ->
                         if (!r.isSuccessful) return@withContext null
+                        val body = try { r.peekBody(200_000L).string() } catch (_: Exception) { return@withContext null } catch (_: Error) { return@withContext null }
+                        if (body.length > 200_000) return@withContext null
                         val json = try {
-                            JsonParser.parseString(r.body?.string()).asJsonObject
+                            JsonParser.parseString(body).asJsonObject
                         } catch (_: Exception) {
                             return@withContext null
                         }
                         json.getAsJsonArray("items")
                     } ?: return@withContext null
                     if (items.size() == 0) return@withContext null
+                    // Strict: search "in:login" is fuzzy — keep only exact login matches,
+                    // else unrelated accounts leak into results.
+                    val want = q.trim().lowercase()
                     val profiles = items.mapNotNull {
                         val o = it.asJsonObject
                         val login = o.get("login")?.asString ?: return@mapNotNull null
+                        if (!login.equals(want, ignoreCase = true)) return@mapNotNull null
                         val html = o.get("html_url")?.asString ?: "https://github.com/$login"
                         SocialProfile("GitHub", login, html, SocialLookupStatus.PUBLIC_MATCH)
                     }
+                    if (profiles.isEmpty()) return@withContext null
                     if (profiles.isEmpty()) return@withContext null
                     var displayName: String? = null
                     try {
@@ -54,8 +62,10 @@ class GitHubSearchProviderImpl(private val httpClient: OkHttpClient) : LookupPro
                         if (userUrl != null) {
                             httpClient.newCall(Request.Builder().url(userUrl).header("User-Agent","InfoCaller").build()).await().use { r2 ->
                                 if (r2.isSuccessful) {
+                                    val body2 = try { r2.peekBody(100_000L).string() } catch (_: Exception) { null } catch (_: Error) { null }
+                                    if (body2 == null || body2.length > 100_000) return@use
                                     val u = try {
-                                        JsonParser.parseString(r2.body?.string()).asJsonObject
+                                        JsonParser.parseString(body2).asJsonObject
                                     } catch (_: Exception) {
                                         null
                                     }

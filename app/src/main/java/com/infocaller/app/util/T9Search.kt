@@ -6,9 +6,22 @@ object T9Search {
         '6' to "mno", '7' to "pqrs", '8' to "tuv", '9' to "wxyz"
     )
 
-    fun matches(input: String, name: String): Boolean {
-        if (input.isEmpty()) return true
-        val normalizedName = name.lowercase()
+    fun matches(input: String, name: String?): Boolean {
+        return try {
+            if (input.isEmpty()) return true
+            if (name.isNullOrBlank()) return false
+            // Dialer typing is digits-only; non-digit input never matches names (fast exit).
+            if (input.any { !it.isDigit() }) {
+                if (!name.contains(input, ignoreCase = true)) return false
+                return true
+            }
+            if (input.length > 15) return false
+            matchesSafe(input, name)
+        } catch (_: Exception) { false } catch (_: Error) { false }
+    }
+
+    private fun matchesSafe(input: String, name: String): Boolean {
+        val normalizedName = try { name.lowercase() } catch (_: Exception) { return false } catch (_: Error) { return false }
 
         if (normalizedName.contains(input)) return true
 

@@ -31,7 +31,10 @@ class FacebookProfileProvider : LookupProvider {
             if (title.isNullOrBlank() || title.contains("not found", true) || doc.text().lowercase().contains("page not found")) return@withContext null
             if (doc.text().contains("content isn’t available", true) || doc.text().contains("this page isn't available", true)) return@withContext null
 
-            val name = title.takeIf { it.length in 3..50 && !it.startsWith("Facebook") } ?: username
+            // Missing FB pages return HTTP 200 login HTML (probe: 320KB). Strict: title must
+            // mention the handle or a real display name; generic "Facebook" titles = not found.
+            if (title.equals("Facebook", true) || title.equals("Facebook - log in or sign up", true)) return@withContext null
+            val name = title.takeIf { it.length in 3..50 && !it.startsWith("Facebook") } ?: return@withContext null
             val canonicalUrl = "https://www.facebook.com/$username"
             val social = mutableListOf<com.infocaller.app.domain.model.SocialProfile>()
             social.add(com.infocaller.app.domain.model.SocialProfile("Facebook", username, canonicalUrl, com.infocaller.app.domain.model.SocialLookupStatus.PUBLIC_MATCH))
@@ -60,9 +63,9 @@ class FacebookProfileProvider : LookupProvider {
             val doc = Jsoup.connect(url)
                 .userAgent(ua)
                 .header("Accept-Language", "en-US,en;q=0.9")
-                .timeout(8000).ignoreHttpErrors(true).followRedirects(true).get()
+                .timeout(7000).maxBodySize(100_000).ignoreHttpErrors(true).followRedirects(true).get()
             if (isLoginWall(doc)) null else doc
-        } catch (_: Exception) { null }
+        } catch (_: Exception) { null } catch (_: Error) { null }
     }
 
     private fun fetchWww(username: String) = fetchDoc(

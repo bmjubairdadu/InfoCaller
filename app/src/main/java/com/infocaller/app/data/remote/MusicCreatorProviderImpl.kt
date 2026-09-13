@@ -33,10 +33,16 @@ class MusicCreatorProviderImpl(private val httpClient: OkHttpClient) : LookupPro
             val url = "https://soundcloud.com/$slug"
             val doc = Jsoup.connect(url)
                 .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
-                .timeout(7000).ignoreHttpErrors(true).followRedirects(true).get()
+                .timeout(7000).maxBodySize(100_000).ignoreHttpErrors(true).followRedirects(true).get()
             val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-            val img = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
-            if (!title.isNullOrBlank() && !title.contains("soundcloud home", true) && title.length in 2..60) {
+            val imgRaw = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
+            val img = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(imgRaw)) imgRaw else null } catch (_: Exception) { null } catch (_: Error) { null }
+            // Missing SoundCloud pages serve generic chrome: title must resemble the slug.
+            val normTitle = title?.lowercase()?.replace(Regex("[^a-z0-9]"), "").orEmpty()
+            val normSlug = slug.lowercase().replace(Regex("[^a-z0-9]"), "")
+            val titleMatches = normTitle.isNotBlank() && normSlug.isNotBlank() &&
+                (normTitle.contains(normSlug) || normSlug.contains(normTitle))
+            if (!title.isNullOrBlank() && !title.contains("soundcloud home", true) && titleMatches && title.length in 2..60) {
                 if (name == null) name = title.take(50)
                 img?.let { photos.add(PhotoCandidate(provider = "SoundCloud", url = it, sourcePriority = 53)) }
                 socials.add(SocialProfile("SoundCloud", handle, url, SocialLookupStatus.PUBLIC_MATCH))

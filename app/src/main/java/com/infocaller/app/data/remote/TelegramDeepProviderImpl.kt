@@ -5,7 +5,9 @@ import com.infocaller.app.domain.model.PhotoCandidate
 import com.infocaller.app.domain.model.SocialLookupStatus
 import com.infocaller.app.domain.model.SocialProfile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
@@ -18,20 +20,41 @@ class TelegramDeepProviderImpl(private val httpClient: OkHttpClient) : LookupPro
     override val priority = 53
     override val costClass = CostClass.FREE
 
-    private fun scrape(url: String): Triple<String?, String?, String?> {
+    // OOM-safe scrape: capped body + regex meta extraction, never a Jsoup DOM fetch.
+    // Jsoup.connect().get() downloads unbounded HTML and crashes manual scans.
+    private suspend fun scrape(url: String): Triple<String?, String?, String?> {
         return try {
-            val doc = Jsoup.connect(url)
-                .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
-                .timeout(8000).ignoreHttpErrors(true).followRedirects(true).get()
-            if (doc.text().contains("login", true) && doc.select("meta[property=og:title]").isEmpty()) {
-                return Triple(null, null, null)
+            coroutineContext.ensureActive()
+            val body = com.infocaller.app.util.SafeWebFetch.fetchBodyCapped(
+                httpClient, url,
+                "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+                5000L, 80_000
+            ) ?: return Triple(null, null, null)
+            val head = try { body.take(80_000) } catch (_: Exception) { return Triple(null, null, null) } catch (_: Error) { return Triple(null, null, null) }
+            fun meta(prop: String): String? = try {
+                Regex("""<meta[^>]+property=["']""" + prop + """["'][^>]*content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                    .find(head)?.groupValues?.getOrNull(1)?.trim()
+                    ?: Regex("""<meta[^>]+content=["']([^"']+)["'][^>]*property=["']""" + prop + """["']""", RegexOption.IGNORE_CASE)
+                        .find(head)?.groupValues?.getOrNull(1)?.trim()
+            } catch (_: Exception) { null } catch (_: Error) { null }
+            // Live probe (2026-09-13): t.me/<anything> returns HTTP 200 with generic
+            // og:title "Telegram: Contact @handle" + logo for EVERY handle, real or not.
+            // Generic contact-chrome titles are NOT proof -> only a real display name counts.
+            // Real public t.me profiles render og:title = the person's/channel name.
+            val rawTitle = meta("og:title")?.trim().orEmpty()
+            val title = rawTitle.takeIf {
+                it.length in 2..80 &&
+                    !it.equals("Telegram: Contact", true) &&
+                    !it.startsWith("Telegram: Contact @", true) &&
+                    !it.startsWith("Join group chat", true) &&
+                    !it.contains("Telegram", true)
             }
-            val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-                ?.takeIf { it.length in 2..80 && !it.contains("Telegram", true) }
-            val desc = doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim()?.take(350)
-            val img = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
-            Triple(title, desc, img)
-        } catch (_: Exception) { Triple(null, null, null) }
+            val desc = meta("og:description")?.takeIf { it.isNotBlank() && !it.contains("Telegram", true) }?.take(350)
+            // Official Telegram chrome (telegram.org/img/...) is a logo, never a profile photo.
+            val rawImg = meta("og:image")?.takeIf { it.startsWith("http") && it.length in 20..2000 }
+            val img = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(rawImg)) rawImg else null } catch (_: Exception) { null } catch (_: Error) { null }
+            if (title == null && img == null) Triple(null, null, null) else Triple(title, desc, img)
+        } catch (_: Exception) { Triple(null, null, null) } catch (_: Error) { Triple(null, null, null) }
     }
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {

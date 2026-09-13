@@ -63,7 +63,25 @@ class ScanOrchestrator(
     data class ScanJobInfo(val job: Job, val priority: ScanPriority)
 
     override fun startScan(identifier: String, priority: ScanPriority, type: String): Flow<ScanState> {
-        val normalized = if (type == IdentifierType.PHONE) PhoneNumberUtils.normalize(identifier) else identifier
+        val rawId = try { identifier.trim().take(120) } catch (_: Exception) { "" } catch (_: Error) { "" }
+        if (rawId.isBlank()) {
+            return flowOf(ScanState.Error(identifier.take(40), "Empty number"))
+        }
+        val normalized = try {
+            if (type == IdentifierType.PHONE) PhoneNumberUtils.normalize(rawId) else rawId
+        } catch (_: Exception) { rawId } catch (_: Error) { rawId }
+        if (normalized.isBlank()) {
+            return flowOf(ScanState.Error(rawId.take(40), "Invalid number"))
+        }
+        // Phone sanity: avoid scanning garbage that fans out 16 providers for nothing.
+        if (type == IdentifierType.PHONE) {
+            try {
+                val digits = normalized.filter { it.isDigit() }
+                if (digits.length < 7 || digits.length > 15) {
+                    return flowOf(ScanState.Error(normalized.take(40), "Invalid number"))
+                }
+            } catch (_: Exception) { } catch (_: Error) { }
+        }
         val scanKey = "$type:$normalized"
 
         if (priority == ScanPriority.CRITICAL || priority == ScanPriority.FOREGROUND) {
@@ -89,9 +107,10 @@ class ScanOrchestrator(
         }
 
         val scanChannel = Channel<ScanState>(Channel.UNLIMITED)
-        scanChannel.trySend(ScanState.Started(normalized))
+        try { scanChannel.trySend(ScanState.Started(normalized)) } catch (_: Exception) { } catch (_: Error) { }
 
         val job = scope.launch {
+            var finished: ScanState? = null
             try {
                 updateGlobalState(scanKey, ScanState.Started(normalized))
 
@@ -100,120 +119,220 @@ class ScanOrchestrator(
                 fun parseProviders(s: String?): MutableSet<String> {
                     if (s.isNullOrBlank()) return mutableSetOf()
                     return try {
-                        if (s.trim().startsWith("[")) com.google.gson.Gson().fromJson(s, Array<String>::class.java).toMutableSet()
-                        else s.split(",").filter { it.isNotBlank() }.map { it.trim() }.toMutableSet()
-                    } catch (_: Exception) { s.split(",").filter { it.isNotBlank() }.map { it.trim() }.toMutableSet() }
+                        if (s.trim().startsWith("[")) {
+                            val arr = try { com.google.gson.Gson().fromJson(s, Array<String>::class.java) } catch (_: Exception) { null } catch (_: Error) { null }
+                            arr?.mapNotNull { try { it.trim().take(64).takeIf { t -> t.isNotBlank() } } catch (_: Exception) { null } catch (_: Error) { null } }?.take(64)?.toMutableSet() ?: mutableSetOf()
+                        } else s.split(",").mapNotNull { try { it.trim().take(64).takeIf { t -> t.isNotBlank() } } catch (_: Exception) { null } catch (_: Error) { null } }.take(64).toMutableSet()
+                    } catch (_: Exception) { mutableSetOf() } catch (_: Error) { mutableSetOf() }
                 }
                 fun parseCaps(s: String?): MutableSet<Capability> {
                     if (s.isNullOrBlank()) return mutableSetOf()
                     val names: List<String> = try {
-                        if (s.trim().startsWith("[")) com.google.gson.Gson().fromJson(s, Array<String>::class.java).toList()
-                        else s.split(",").filter { it.isNotBlank() }.map { it.trim() }
-                    } catch (_: Exception) { s.split(",").filter { it.isNotBlank() }.map { it.trim() } }
-                    return names.mapNotNull { try { Capability.valueOf(it) } catch (_: Exception) { null } }.toMutableSet()
+                        if (s.trim().startsWith("[")) {
+                            try { com.google.gson.Gson().fromJson(s, Array<String>::class.java)?.toList() ?: emptyList() } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+                        } else s.split(",").map { try { it.trim() } catch (_: Exception) { "" } catch (_: Error) { "" } }
+                    } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+                    return try {
+                        names.take(32).mapNotNull { try { Capability.valueOf(it) } catch (_: Exception) { null } catch (_: Error) { null } }.toMutableSet()
+                    } catch (_: Exception) { mutableSetOf() } catch (_: Error) { mutableSetOf() }
                 }
-                val savedState = if (type == IdentifierType.PHONE) scanJobDao.getState(normalized) else null
+                val savedState = try {
+                    if (type == IdentifierType.PHONE) scanJobDao.getState(normalized) else null
+                } catch (_: Exception) { null } catch (_: Error) { null }
                 val completedProviders = parseProviders(savedState?.completedProviders)
                 val satisfiedCaps = parseCaps(savedState?.satisfiedCapabilities)
 
+                fun currentResultSnapshot(): LookupResult = try { currentResult.copy() } catch (_: Exception) { currentResult } catch (_: Error) { currentResult }
+                // Watchdog: never let a manual scan hang the UI forever.
+                val watchdog = launch {
+                    try {
+                        delay(SCAN_TIMEOUT_MS)
+                        try { scanChannel.trySend(ScanState.Completed(normalized, currentResultSnapshot())) } catch (_: Exception) { } catch (_: Error) { }
+                    } catch (_: Exception) { } catch (_: Error) { }
+                }
+
+                try {
                 lookupEngine.performLookup(
                     normalized,
                     type = type,
                     alreadyCompletedProviders = completedProviders,
-                    requiredCapabilities = Capability.entries.toSet() - satisfiedCaps,
+                    requiredCapabilities = try { Capability.entries.toSet() - satisfiedCaps } catch (_: Exception) { emptySet() } catch (_: Error) { emptySet() },
                     onPartialResult = { partial ->
-                    partial.providerId?.let { id ->
-                        completedProviders.add(id)
-                    }
-
-                    val photoPool = when {
-                        partial.photoCandidates.isNotEmpty() -> partial.photoCandidates
-                        !partial.imageUrl.isNullOrBlank() && partial.imageUrl.startsWith("http") -> listOf(
-                            com.infocaller.app.domain.model.PhotoCandidate(
-                                provider = partial.source ?: partial.providerId ?: "photo",
-                                url = partial.imageUrl
-                            )
+                    val safePartial = try {
+                        // Clamp unbounded provider payloads before merge (OOM-safe).
+                        // Logo-safe: drop official logos before they ever reach the merger/DB.
+                        val rawCandidates = try { partial.photoCandidates.take(6) } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+                        val cleanCandidates = try {
+                            rawCandidates.filter { c ->
+                                try { com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(c.url) } catch (_: Exception) { false } catch (_: Error) { false }
+                            }
+                        } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+                        val cappedSocials = try { partial.socialProfiles.take(12) } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+                        val cleanSocials = try {
+                            cappedSocials.map { s ->
+                                try {
+                                    val av = s.avatarUrl
+                                    if (av != null && !com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(av)) s.copy(avatarUrl = null) else s
+                                } catch (_: Exception) { s } catch (_: Error) { s }
+                            }
+                        } catch (_: Exception) { cappedSocials } catch (_: Error) { cappedSocials }
+                        val rawImage = try { partial.imageUrl?.trim()?.take(2000)?.takeIf { it.startsWith("http") } } catch (_: Exception) { null } catch (_: Error) { null }
+                        val cleanImage = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(rawImage)) rawImage else null } catch (_: Exception) { null } catch (_: Error) { null }
+                        partial.copy(
+                            name = try { partial.name?.trim()?.take(80)?.takeIf { it.isNotBlank() } } catch (_: Exception) { null } catch (_: Error) { null },
+                            alternateName = try { partial.alternateName?.trim()?.take(80) } catch (_: Exception) { null } catch (_: Error) { null },
+                            imageUrl = cleanImage,
+                            about = try { partial.about?.take(500) } catch (_: Exception) { null } catch (_: Error) { null },
+                            photoCandidates = cleanCandidates,
+                            socialProfiles = cleanSocials,
                         )
-                        else -> emptyList()
-                    }
+                    } catch (_: Exception) { partial } catch (_: Error) { partial }
+                    val partial = safePartial
+                    try { partial.providerId?.let { id -> if (id.length <= 64) completedProviders.add(id) } } catch (_: Exception) { } catch (_: Error) { }
+
+                    val photoPool = try {
+                        // Logo-safe pool: official logos never enter the bitmap decoder.
+                        val cleanCands = try {
+                            partial.photoCandidates.filter { c ->
+                                try { com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(c.url) } catch (_: Exception) { false } catch (_: Error) { false }
+                            }
+                        } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+                        val cleanImage = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(partial.imageUrl)) partial.imageUrl else null } catch (_: Exception) { null } catch (_: Error) { null }
+                        when {
+                            cleanCands.isNotEmpty() -> cleanCands.take(2)
+                            !cleanImage.isNullOrBlank() && cleanImage.startsWith("http") -> listOf(
+                                com.infocaller.app.domain.model.PhotoCandidate(
+                                    provider = (try { partial.source ?: partial.providerId } catch (_: Exception) { null } catch (_: Error) { null }) ?: "photo",
+                                    url = cleanImage
+                                )
+                            )
+                            else -> emptyList()
+                        }
+                    } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
                     val analyzedPartials = if (photoPool.isNotEmpty()) {
-                        val analyzed = photoPool.take(2).mapNotNull { candidate ->
-                            withTimeoutOrNull(4000) {
-                                ensureActive()
-                                imageAnalysisService.analyze(candidate)
+                        val analyzed = try {
+                            photoPool.take(1).mapNotNull { candidate ->
+                                try {
+                                    withTimeoutOrNull(3000) {
+                                        ensureActive()
+                                        try { imageAnalysisService.analyze(candidate) } catch (_: Exception) { null } catch (_: Error) { null }
+                                    }
+                                } catch (_: Exception) { null } catch (_: Error) { null }
                             }
-                        }
-                        if (analyzed.isEmpty()) {
-                            if (partial.photoCandidates.isNotEmpty()) partial
-                            else partial.copy(photoCandidates = photoPool, imageUrl = partial.imageUrl ?: photoPool.first().url)
-                        } else {
-                            val faceClear = analyzed.filter { c ->
-                                c.faceCount > 0 && c.faceConfidence >= 0.7f && c.faceCoverage >= 0.02f && c.imageQuality >= 0.01f && c.width >= 80 && c.height >= 80
-                            }
-                            if (faceClear.isEmpty()) {
-                                partial.copy(photoCandidates = emptyList(), imageUrl = null)
+                        } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+                        try {
+                            if (analyzed.isEmpty()) {
+                                // Keep name result even if photo failed; never crash on empty pool.
+                                if (partial.photoCandidates.isNotEmpty()) partial
+                                else {
+                                    val firstUrl = try { photoPool.firstOrNull()?.url?.takeIf { it.startsWith("http") } } catch (_: Exception) { null } catch (_: Error) { null }
+                                    partial.copy(photoCandidates = photoPool, imageUrl = partial.imageUrl ?: firstUrl)
+                                }
                             } else {
-                                val bestFirst = faceClear.sortedByDescending { it.faceCoverage * (0.5f + it.imageQuality) }
-                                partial.copy(photoCandidates = bestFirst, imageUrl = bestFirst.first().url)
+                                val faceClear = analyzed.filter { c ->
+                                    try { c.faceCount > 0 && c.faceConfidence >= 0.7f && c.faceCoverage >= 0.02f && c.imageQuality >= 0.01f && c.width >= 80 && c.height >= 80 } catch (_: Exception) { false } catch (_: Error) { false }
+                                }
+                                if (faceClear.isEmpty()) {
+                                    partial.copy(photoCandidates = emptyList(), imageUrl = null)
+                                } else {
+                                    val bestFirst = try { faceClear.sortedByDescending { it.faceCoverage * (0.5f + it.imageQuality) } } catch (_: Exception) { faceClear } catch (_: Error) { faceClear }
+                                    val bestUrl = try { bestFirst.firstOrNull()?.url } catch (_: Exception) { null } catch (_: Error) { null }
+                                    partial.copy(photoCandidates = bestFirst, imageUrl = bestUrl)
+                                }
                             }
-                        }
+                        } catch (_: Exception) { partial } catch (_: Error) { partial }
                     } else {
                         partial
                     }
 
-                    currentResult = IntelligenceResultMerger.merge(currentResult, analyzedPartials)
+                    try {
+                        currentResult = IntelligenceResultMerger.merge(currentResult, analyzedPartials)
+                    } catch (_: Exception) { } catch (_: Error) { }
 
-                    resultSaver?.invoke(currentResult)
+                    try { resultSaver?.invoke(currentResult) } catch (_: Exception) { } catch (_: Error) { }
 
-                    updateLocalSatisfiedCaps(currentResult, satisfiedCaps)
+                    try { updateLocalSatisfiedCaps(currentResult, satisfiedCaps) } catch (_: Exception) { } catch (_: Error) { }
 
-                    val gson = com.google.gson.Gson()
-                    scanJobDao.insertState(ScanJobStateEntity(
-                        phoneNumber = normalized,
-                        completedProviders = gson.toJson(completedProviders.toList()),
-                        satisfiedCapabilities = gson.toJson(satisfiedCaps.map { it.name })
-                    ))
+                    try {
+                        val gson = com.google.gson.Gson()
+                        scanJobDao.insertState(ScanJobStateEntity(
+                            phoneNumber = normalized,
+                            completedProviders = gson.toJson(completedProviders.toList().take(64)),
+                            satisfiedCapabilities = gson.toJson(satisfiedCaps.map { it.name }.take(32))
+                        ))
+                    } catch (_: Exception) { } catch (_: Error) { }
 
-                    val progress = ScanState.Progress(normalized, currentResult, partial.providerId ?: "unknown")
-                    scanChannel.trySend(progress)
-                    updateGlobalState(scanKey, progress)
+                    val progress = try { ScanState.Progress(normalized, currentResultSnapshot(), (try { partial.providerId } catch (_: Exception) { null } catch (_: Error) { null }) ?: "unknown") } catch (_: Exception) { null } catch (_: Error) { null }
+                    if (progress != null) {
+                        try { scanChannel.trySend(progress) } catch (_: Exception) { } catch (_: Error) { }
+                        try { updateGlobalState(scanKey, progress) } catch (_: Exception) { } catch (_: Error) { }
+                    }
                     },
                     onProviderStep = { providerId, providerName, stepIndex, stepTotal, status ->
-                        val step = ScanState.ProviderStep(
-                            normalized, providerId, providerName, stepIndex, stepTotal, status
-                        )
-                        scanChannel.trySend(step)
-                        updateGlobalState(scanKey, step)
+                        try {
+                            val pid = providerId.take(64)
+                            val pname = providerName.take(64).ifBlank { pid }
+                            val step = ScanState.ProviderStep(
+                                normalized, pid, pname, stepIndex.coerceIn(0, 999), stepTotal.coerceIn(1, 999), status
+                            )
+                            try { scanChannel.trySend(step) } catch (_: Exception) { } catch (_: Error) { }
+                            updateGlobalState(scanKey, step)
+                        } catch (_: Exception) { } catch (_: Error) { }
                     }
                 )
+                } catch (e: CancellationException) { throw e }
+                catch (_: Error) {
+                    // OOM inside provider fan-out: still return whatever we gathered.
+                } catch (_: Exception) { }
 
-                scanJobDao.deleteState(normalized)
+                try { watchdog.cancel() } catch (_: Exception) { } catch (_: Error) { }
 
-                val finalState = ScanState.Completed(normalized, currentResult)
-                scanChannel.trySend(finalState)
-                updateGlobalState(scanKey, finalState)
-            } catch (e: Exception) {
+                try { scanJobDao.deleteState(normalized) } catch (_: Exception) { } catch (_: Error) { }
+
+                val finalState = ScanState.Completed(normalized, currentResultSnapshot())
+                finished = finalState
+                try { scanChannel.trySend(finalState) } catch (_: Exception) { } catch (_: Error) { }
+                try { updateGlobalState(scanKey, finalState) } catch (_: Exception) { } catch (_: Error) { }
+            } catch (e: CancellationException) {
                 if (e is CancellationException) {
                     if (priority == ScanPriority.BACKGROUND) {
-                        updateGlobalState(scanKey, ScanState.Idle)
+                        try { updateGlobalState(scanKey, ScanState.Idle) } catch (_: Exception) { } catch (_: Error) { }
                     }
                     throw e
                 }
                 val errorState = ScanState.Error(normalized, e.message ?: "Unknown error")
-                scanChannel.trySend(errorState)
-                updateGlobalState(scanKey, errorState)
+                try { scanChannel.trySend(errorState) } catch (_: Exception) { } catch (_: Error) { }
+                try { updateGlobalState(scanKey, errorState) } catch (_: Exception) { } catch (_: Error) { }
+            } catch (_: Error) {
+                // Never crash the app from a scan: surface current partials as Completed.
+                try {
+                    val fallback = ScanState.Completed(normalized, LookupResult(phoneNumber = normalized))
+                    finished = fallback
+                    try { scanChannel.trySend(fallback) } catch (_: Exception) { } catch (_: Error) { }
+                    try { updateGlobalState(scanKey, fallback) } catch (_: Exception) { } catch (_: Error) { }
+                } catch (_: Exception) { } catch (_: Error) { }
+            } catch (e: Exception) {
+                val msg = try { (e.message ?: "Unknown error").take(300) } catch (_: Exception) { "Unknown error" } catch (_: Error) { "Unknown error" }
+                val errorState = ScanState.Error(normalized, msg)
+                try { scanChannel.trySend(errorState) } catch (_: Exception) { } catch (_: Error) { }
+                try { updateGlobalState(scanKey, errorState) } catch (_: Exception) { } catch (_: Error) { }
             } finally {
-                val thisJob = coroutineContext[Job]
-                val current = activeScans[scanKey]
-                if (current?.job === thisJob) activeScans.remove(scanKey)
+                try { scanChannel.close() } catch (_: Exception) { } catch (_: Error) { }
+                val thisJob = try { coroutineContext[Job] } catch (_: Exception) { null } catch (_: Error) { null }
+                try {
+                    val current = activeScans[scanKey]
+                    if (current?.job === thisJob) activeScans.remove(scanKey)
+                } catch (_: Exception) { } catch (_: Error) { }
                 if (priority == ScanPriority.CRITICAL || priority == ScanPriority.FOREGROUND) {
-                    val stillHasPriority = activeScans.values.any {
-                        (it.priority == ScanPriority.CRITICAL || it.priority == ScanPriority.FOREGROUND) && it.job.isActive
-                    }
-                    if (!stillHasPriority) {
-                        _isPriorityScanActive.value = false
-                        resumeBackgroundScans()
-                    }
+                    try {
+                        val stillHasPriority = activeScans.values.any {
+                            try { (it.priority == ScanPriority.CRITICAL || it.priority == ScanPriority.FOREGROUND) && it.job.isActive } catch (_: Exception) { false } catch (_: Error) { false }
+                        }
+                        if (!stillHasPriority) {
+                            _isPriorityScanActive.value = false
+                            resumeBackgroundScans()
+                        }
+                    } catch (_: Exception) { } catch (_: Error) { }
                 }
             }
         }
@@ -281,6 +400,7 @@ class ScanOrchestrator(
 
     companion object {
         private const val MAX_TRACKED_STATES = 100
+        private const val SCAN_TIMEOUT_MS = 45_000L
     }
 
     override fun getScanState(identifier: String): ScanState {

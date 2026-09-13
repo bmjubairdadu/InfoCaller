@@ -41,6 +41,9 @@ class ReverseImageSearchProviderImpl(private val httpClient: OkHttpClient) : Loo
                     providerId = id, providerVersion = version
                 )
             }
+            // PHONE with no found photo: generic upload links are noise that clobber real
+            // abouts in the merger (last non-null about wins). Stay silent instead.
+            if (type == IdentifierType.PHONE) return@withContext null
             var seedPhoto: String? = null
             var name: String? = null
             when (type) {

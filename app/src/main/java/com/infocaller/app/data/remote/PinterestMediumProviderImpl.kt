@@ -41,13 +41,17 @@ class PinterestMediumProviderImpl(private val httpClient: OkHttpClient) : Lookup
             try {
                 val doc = Jsoup.connect(t.url)
                     .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
-                    .timeout(7000).ignoreHttpErrors(true).followRedirects(true).get()
+                    .timeout(5000).maxBodySize(100_000).ignoreHttpErrors(true).followRedirects(true).get()
                 if (doc.text().contains("page not found", true)) continue
                 if (doc.text().contains("user not found", true)) continue
                 val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
                 val desc = doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim()?.take(300)
-                val img = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
+                val imgRaw = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
+                val img = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(imgRaw)) imgRaw else null } catch (_: Exception) { null } catch (_: Error) { null }
+                // Live probe: Pinterest serves HTTP 200 + 1.1MB login/chrome HTML for missing
+                // handles. Strict: og:title must mention the handle, else it is chrome.
                 val ok = !title.isNullOrBlank() && title.length in 2..60 &&
+                    title.contains(handle, true) &&
                     !title.contains("not found", true) && !title.contains("pinterest home", true) &&
                     !title.contains("medium home", true)
                 if (!ok && img == null) continue

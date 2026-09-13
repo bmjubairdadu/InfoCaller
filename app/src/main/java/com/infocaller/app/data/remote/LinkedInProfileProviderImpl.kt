@@ -50,7 +50,7 @@ class LinkedInProfileProviderImpl(private val httpClient: OkHttpClient) : Lookup
                 val doc = Jsoup.connect(url)
                     .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
                     .header("Accept-Language", "en-US,en;q=0.9")
-                    .timeout(8000).ignoreHttpErrors(true).followRedirects(true).get()
+                    .timeout(7000).maxBodySize(100_000).ignoreHttpErrors(true).followRedirects(true).get()
                 val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
                 val desc = doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim()?.take(400)
                 val img = doc.selectFirst("meta[property=og:image]")?.attr("content")?.takeIf { it.startsWith("http") }
