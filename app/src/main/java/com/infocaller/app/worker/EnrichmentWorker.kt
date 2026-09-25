@@ -18,7 +18,9 @@ class EnrichmentWorker(
     workerParams: WorkerParameters
 ) : CoroutineWorker(context, workerParams) {
     companion object {
-        private const val MAX_CONTRIBUTIONS_PER_PASS = 40
+        private const val MAX_CONTRIBUTIONS_PER_PASS = 60
+        private const val CONTRIBUTION_WINDOW = 150
+        private const val CONTRIBUTION_COOLDOWN_MS = 2 * 3600000L
     }
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
@@ -108,24 +110,33 @@ class EnrichmentWorker(
     ) {
         try {
             if (!com.infocaller.app.data.remote.CommunityConsent.isEnabled(applicationContext)) return
-            val registry = app.sharedRegistry ?: return
-            if (!registry.isConfigured()) return
+            if (!app.sharedRegistry.isConfigured()) return
             val prefs = applicationContext.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             val lastRun = prefs.getLong("contacts_contributed_at", 0L)
-            if (System.currentTimeMillis() - lastRun < 6 * 3600000L) return
+            if (System.currentTimeMillis() - lastRun < CONTRIBUTION_COOLDOWN_MS) return
 
-            val numbers = try {
+            val allNumbers = try {
                 localContactDao.getAllContactsSync()
                     .map { it.phoneNumber }
                     .filter { it.isNotBlank() }
                     .distinct()
+                    .sorted()
             } catch (_: Exception) { emptyList() }
-            if (numbers.isEmpty()) return
+            if (allNumbers.isEmpty()) return
+
+            val total = allNumbers.size
+            val window = minOf(CONTRIBUTION_WINDOW, total)
+            val cursor = (prefs.getInt("contacts_contrib_cursor", 0) % total + total) % total
+            val batch = ArrayList<String>(window)
+            var idx = cursor
+            while (batch.size < window) {
+                batch.add(allNumbers[idx])
+                idx = (idx + 1) % total
+            }
 
             val enriched = try {
-                enrichmentDao.getEnrichmentsSync(numbers.take(400))
+                enrichmentDao.getEnrichmentsSync(batch)
             } catch (_: Exception) { emptyList() }
-            if (enriched.isEmpty()) return
 
             val socialUtilsClass = com.infocaller.app.util.SocialUtils
             var published = 0
@@ -163,11 +174,15 @@ class EnrichmentWorker(
                 )
                 try { app.repository.publishToSharedRegistry(result) } catch (_: Exception) { }
                 published++
-                kotlinx.coroutines.delay(300)
+                kotlinx.coroutines.delay(200)
+            }
+
+            prefs.edit {
+                putInt("contacts_contrib_cursor", (cursor + window) % total)
+                putLong("contacts_contributed_at", System.currentTimeMillis())
             }
             if (published > 0) {
-                prefs.edit { putLong("contacts_contributed_at", System.currentTimeMillis()) }
-                Log.i("EnrichmentWorker", "Contributed $published enriched contacts to shared registry")
+                Log.i("EnrichmentWorker", "Contributed $published/${enriched.size} contacts to shared registry, cursor now ${(cursor + window) % total}/$total")
             }
         } catch (_: Exception) { } catch (_: Error) { }
     }
