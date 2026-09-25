@@ -759,6 +759,10 @@ app.post('/api/v1/lookup/phone', authenticate, async (req, res) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`InfoCaller Backend listening at http://localhost:${port}`);
-});
+if (require.main === module) {
+    app.listen(port, () => {
+        console.log(`InfoCaller Backend listening at http://localhost:${port}`);
+    });
+}
+
+module.exports = app;
