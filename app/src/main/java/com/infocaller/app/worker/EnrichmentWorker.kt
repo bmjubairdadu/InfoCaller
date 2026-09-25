@@ -1,0 +1,237 @@
+package com.infocaller.app.worker
+
+import android.content.Context
+import android.provider.ContactsContract
+import android.util.Log
+import androidx.core.content.edit
+import androidx.work.CoroutineWorker
+import androidx.work.WorkerParameters
+import com.infocaller.app.InfoCallerApplication
+import com.infocaller.app.data.local.entity.LocalContactEntity
+import com.infocaller.app.data.local.entity.QueuePriority
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+
+class EnrichmentWorker(
+    context: Context,
+    workerParams: WorkerParameters
+) : CoroutineWorker(context, workerParams) {
+    companion object {
+        private const val MAX_CONTRIBUTIONS_PER_PASS = 40
+    }
+
+    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        val app = applicationContext as InfoCallerApplication
+        val enrichmentDao = app.database.enrichmentDao()
+        val localContactDao = app.database.localContactDao()
+        val deviceRepo = app.deviceDataRepository
+
+        if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(applicationContext, com.infocaller.app.permissions.PermissionManager.CONTACTS_PERMISSIONS)) {
+            return@withContext Result.success()
+        }
+
+        try {
+            val prefs = applicationContext.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+            val lastFullScan = prefs.getLong("last_full_contact_scan", 0L)
+            val isFullScanNeeded = System.currentTimeMillis() - lastFullScan > 90 * 60 * 1000L
+
+            importSystemContacts(localContactDao)
+
+            contributeEnrichedContacts(app, localContactDao, enrichmentDao)
+
+            try {
+                val enriched = com.infocaller.app.data.repository.BulkIdentityEngine.runFullPass(applicationContext)
+                if (isFullScanNeeded && enriched >= 0) {
+                    prefs.edit { putLong("last_full_contact_scan", System.currentTimeMillis()) }
+                }
+                if (enriched > 0) {
+                    Log.i("EnrichmentWorker", "Bulk identity pass enriched $enriched numbers")
+                    return@withContext Result.success()
+                }
+            } catch (_: Exception) { }
+
+            val callerLogNumbers = try { deviceRepo.fetchRecentCallsSync().map { it.number } } catch (_: Exception) { emptyList() }
+            val recentNumbers = callerLogNumbers
+
+            val contactNumbers = if (isFullScanNeeded) {
+                deviceRepo.fetchContactsSync().mapNotNull { it.phoneNumber }
+            } else emptyList()
+
+            val numbersToProcess: List<String> = (recentNumbers + contactNumbers)
+                .map { com.infocaller.app.util.PhoneNumberUtils.normalize(it) }
+                .filter { it.isNotBlank() }
+                .distinct()
+
+            val currentTime = System.currentTimeMillis()
+            val cachedByNumber: Map<String, com.infocaller.app.data.local.entity.ContactEnrichmentEntity> = try {
+                if (numbersToProcess.isEmpty()) emptyMap()
+                else enrichmentDao.getEnrichmentsSync(numbersToProcess).associateBy { it.normalizedPhoneNumber }
+            } catch (_: Exception) { emptyMap() }
+            for (number in numbersToProcess) {
+                val cached = cachedByNumber[number]
+                val gaps = com.infocaller.app.util.EnrichmentGapChecker.check(cached)
+                val expired = cached != null && cached.expiresAt < currentTime
+                val shouldEnqueue = when {
+                    cached == null -> true
+                    expired -> gaps.hasAnyGap
+                    gaps.isComplete -> false
+                    else -> gaps.hasAnyGap
+                }
+                if (shouldEnqueue) app.enrichmentEngine.enqueue(number, priority = QueuePriority.LOW)
+            }
+
+            var drained = 0
+            while (drained < 25) {
+                if (!app.enrichmentEngine.isOnline.value) break
+                val before = System.currentTimeMillis()
+                app.enrichmentEngine.processNextOneByOne()
+                drained++
+                if (System.currentTimeMillis() - before < 200) break
+            }
+
+            if (isFullScanNeeded) {
+                prefs.edit { putLong("last_full_contact_scan", System.currentTimeMillis()) }
+            }
+
+            Result.success()
+        } catch (e: Exception) {
+            Log.e("EnrichmentWorker", "Work failed", e)
+            Result.retry()
+        }
+    }
+
+    private suspend fun contributeEnrichedContacts(
+        app: InfoCallerApplication,
+        localContactDao: com.infocaller.app.data.local.dao.LocalContactDao,
+        enrichmentDao: com.infocaller.app.data.local.dao.EnrichmentDao
+    ) {
+        try {
+            if (!com.infocaller.app.data.remote.CommunityConsent.isEnabled(applicationContext)) return
+            val registry = app.sharedRegistry ?: return
+            if (!registry.isConfigured()) return
+            val prefs = applicationContext.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+            val lastRun = prefs.getLong("contacts_contributed_at", 0L)
+            if (System.currentTimeMillis() - lastRun < 6 * 3600000L) return
+
+            val numbers = try {
+                localContactDao.getAllContactsSync()
+                    .map { it.phoneNumber }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+            } catch (_: Exception) { emptyList() }
+            if (numbers.isEmpty()) return
+
+            val enriched = try {
+                enrichmentDao.getEnrichmentsSync(numbers.take(400))
+            } catch (_: Exception) { emptyList() }
+            if (enriched.isEmpty()) return
+
+            val socialUtilsClass = com.infocaller.app.util.SocialUtils
+            var published = 0
+            for (e in enriched) {
+                if (published >= MAX_CONTRIBUTIONS_PER_PASS) break
+                val name = e.publicName?.takeIf { it.isNotBlank() }
+                val photo = e.profileImageUrl?.takeIf { it.isNotBlank() }
+                if (name == null && photo == null) continue
+                val socials = try {
+                    e.socialProfilesJson?.let { socialUtilsClass.fromJson(it) } ?: emptyList()
+                } catch (_: Exception) { emptyList() }
+                val result = com.infocaller.app.domain.model.LookupResult(
+                    phoneNumber = e.normalizedPhoneNumber,
+                    name = name,
+                    nameSource = e.publicNameSource,
+                    alternateName = e.alternateName?.takeIf { it.isNotBlank() },
+                    imageUrl = photo,
+                    imageSource = e.profileImageSource,
+                    photoCandidates = if (photo != null) {
+                        listOf(com.infocaller.app.domain.model.PhotoCandidate(provider = "Community", url = photo))
+                    } else emptyList(),
+                    about = e.about?.takeIf { it.isNotBlank() },
+                    city = e.city,
+                    country = e.country,
+                    region = e.region,
+                    timezone = e.timezone,
+                    email = e.email,
+                    emailSource = e.emailSource,
+                    carrier = e.carrier,
+                    lineType = e.lineType,
+                    isBusiness = e.isBusiness,
+                    socialProfiles = socials,
+                    sources = listOf("Community"),
+                    confidence = 0.7f
+                )
+                try { app.repository.publishToSharedRegistry(result) } catch (_: Exception) { }
+                published++
+                kotlinx.coroutines.delay(300)
+            }
+            if (published > 0) {
+                prefs.edit { putLong("contacts_contributed_at", System.currentTimeMillis()) }
+                Log.i("EnrichmentWorker", "Contributed $published enriched contacts to shared registry")
+            }
+        } catch (_: Exception) { } catch (_: Error) { }
+    }
+
+    private fun importSystemContacts(dao: com.infocaller.app.data.local.dao.LocalContactDao) {
+        try {
+            val resolver = applicationContext.contentResolver
+            val currentTime = System.currentTimeMillis()
+            val cursor = try {
+                resolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(
+                        ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+                        ContactsContract.CommonDataKinds.Phone.LOOKUP_KEY,
+                        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                        ContactsContract.CommonDataKinds.Phone.NUMBER,
+                        ContactsContract.CommonDataKinds.Phone.PHOTO_URI,
+                        ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI
+                    ),
+                    null,
+                    null,
+                    null
+                )
+            } catch (_: Exception) {
+                return
+            }
+
+            cursor?.use {
+                val contacts = mutableListOf<LocalContactEntity>()
+                val idIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
+                val keyIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.LOOKUP_KEY)
+                val nameIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                val numIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                val photoIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_URI)
+                val thumbIdx = it.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI)
+                if (idIdx < 0 || numIdx < 0) return
+
+                val seen = HashSet<Pair<Long, String>>()
+                val rowIndexPerContact = HashMap<Long, Int>()
+                while (it.moveToNext()) {
+                    val contactId = try { it.getLong(idIdx) } catch (_: Exception) { continue }
+                    val name = try { it.getString(nameIdx) } catch (_: Exception) { null } ?: "Unknown"
+                    val rawNumber = try { it.getString(numIdx) } catch (_: Exception) { null } ?: ""
+                    val normalized = com.infocaller.app.util.PhoneNumberUtils.normalize(rawNumber)
+                    if (normalized.isBlank()) continue
+                    if (!seen.add(contactId to normalized)) continue
+
+                    val rowIdx = rowIndexPerContact.getOrDefault(contactId, 0)
+                    rowIndexPerContact[contactId] = rowIdx + 1
+                    contacts.add(LocalContactEntity(
+                        id = contactId * 1000 + rowIdx,
+                        lookupKey = try { it.getString(keyIdx) } catch (_: Exception) { null } ?: "",
+                        displayName = name,
+                        phoneNumber = normalized,
+                        photoUri = try { it.getString(photoIdx) } catch (_: Exception) { null },
+                        photoThumbnailUri = try { it.getString(thumbIdx) } catch (_: Exception) { null },
+                        lastSynced = currentTime
+                    ))
+                }
+
+                runBlocking {
+                    dao.insertContacts(contacts)
+                }
+            }
+        } catch (_: Exception) { }
+    }
+}

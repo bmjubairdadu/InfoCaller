@@ -1,0 +1,24 @@
+## Android SDK location - machine specific
+sdk.dir=C\:\\AndroidSdk
+
+## Release signing - keep private, never commit
+release.store.file=keystore/infocaller-release.jks
+release.store.password=
+release.key.alias=
+release.key.password=
+
+## Truecaller request signing secret
+## Without this, OTP login cannot start. The app shows a clear error instead of failing silently.
+truecaller.request.secret=
+
+## Optional - social/platform logo CDN client id. Logos are skipped if blank.
+brandfetch.client.id=
+
+## Backend that serves the shared caller registry, NID lookups and premium intel.
+## Leave both blank and those features stay switched off; everything else keeps working.
+backend.base.url=
+infocaller.api.key=
+
+## Supabase community lookups
+supabase.url=
+supabase.anon.key=

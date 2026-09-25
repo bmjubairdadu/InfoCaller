@@ -1,0 +1,111 @@
+package com.infocaller.app.ui.viewmodel
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.infocaller.app.domain.model.User
+import com.infocaller.app.domain.repository.AuthRepository
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+class AuthViewModel(
+    private val repository: AuthRepository,
+    private val context: android.content.Context
+) : ViewModel() {
+    private val _authState = MutableStateFlow<AuthUiState>(AuthUiState.Idle)
+    val authState: StateFlow<AuthUiState> = _authState.asStateFlow()
+
+    private val _tcAuthResult = MutableStateFlow<com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult?>(null)
+    val tcAuthResult = _tcAuthResult.asStateFlow()
+
+    private val _tcPhone = MutableStateFlow("")
+    val tcPhone = _tcPhone.asStateFlow()
+
+    fun setTcAuthResult(result: com.infocaller.app.data.remote.TruecallerProviderImpl.AuthRequestResult?) {
+        if (result != null && result.requestId != _tcAuthResult.value?.requestId) {
+            try {
+                com.infocaller.app.util.OtpManager.clearOtp()
+                com.infocaller.app.util.OtpManager.clearMissedCallTail()
+            } catch (_: Exception) { }
+        }
+        _tcAuthResult.value = result
+    }
+
+    fun setTcPhone(phone: String) {
+        _tcPhone.value = phone
+    }
+
+    fun refreshTcSession(context: android.content.Context) {
+        val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        editor.remove("tc_device_id")
+        editor.remove("truecaller_token")
+        editor.remove("last_tc_request_id")
+        editor.remove("last_tc_phone")
+        for (key in prefs.all.keys) {
+            if (key.startsWith("tc_device_id_")) {
+                editor.remove(key)
+            }
+        }
+        editor.apply()
+    }
+
+    init {
+        checkInitialAuthState()
+    }
+
+    fun checkInitialAuthState() {
+        val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+        val token = prefs.getString("truecaller_token", "")
+
+        if (!token.isNullOrBlank()) {
+            _authState.value = AuthUiState.Authenticated(User("tc-saved", null, "Verified User", null))
+        } else {
+            _authState.value = AuthUiState.Idle
+        }
+    }
+
+    val currentUser = repository.currentUser
+
+    fun loginWithTruecaller(displayName: String?) {
+        viewModelScope.launch {
+            _authState.value = AuthUiState.Loading
+            val user = User(
+                id = "tc-${System.currentTimeMillis()}",
+                email = null,
+                displayName = displayName ?: "Truecaller User",
+                photoUrl = null
+            )
+            _authState.value = AuthUiState.Authenticated(user)
+        }
+    }
+
+    fun logout() {
+        viewModelScope.launch {
+            repository.signOut()
+            _authState.value = AuthUiState.Idle
+        }
+    }
+
+    class Factory(
+        private val repository: AuthRepository,
+        private val context: android.content.Context
+    ) : ViewModelProvider.Factory {
+        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            if (modelClass.isAssignableFrom(AuthViewModel::class.java)) {
+                @Suppress("UNCHECKED_CAST")
+                return AuthViewModel(repository, context.applicationContext) as T
+            }
+            throw IllegalArgumentException("Unknown ViewModel class")
+        }
+    }
+}
+
+sealed class AuthUiState {
+    object Idle : AuthUiState()
+    object Loading : AuthUiState()
+    data class Authenticated(val user: User) : AuthUiState()
+    data class Error(val message: String) : AuthUiState()
+}
