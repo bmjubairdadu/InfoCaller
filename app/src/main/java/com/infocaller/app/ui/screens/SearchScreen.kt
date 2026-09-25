@@ -7,6 +7,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -66,7 +67,39 @@ fun SearchScreen(
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("NID / DOB") })
         }
         if (tab == 1) {
+            val backendConfigured = remember {
+                try {
+                    com.infocaller.app.BuildConfig.BACKEND_BASE_URL.trim().isNotBlank() &&
+                        com.infocaller.app.BuildConfig.INFOCALLER_API_KEY.trim().isNotBlank()
+                } catch (_: Exception) { false }
+            }
             Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (!backendConfigured) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(Radii.md)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(Space.md),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.CloudOff,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(Space.sm))
+                            Text(
+                                "NID lookup needs a backend, which is not configured in this build. Nothing is stored on the device — see backend/DATA-SETUP.md.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(Space.xs))
+                }
                 OutlinedTextField(
                     value = nidInput,
                     onValueChange = { nidInput = it.filter { c -> c.isDigit() }.take(17) },
