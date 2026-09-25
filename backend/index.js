@@ -276,10 +276,14 @@ async function fetchNidBytes(url) {
         meta = await axios.get(url, { headers, timeout: 30000 });
     } catch (e) {
         const code = e.response ? e.response.status : 0;
-        if (code === 401) throw new Error('GITHUB_TOKEN is invalid or expired');
-        if (code === 403) throw new Error('GITHUB_TOKEN rate limit exceeded or blocked from this address');
+        const detail = e.response && e.response.data && e.response.data.message
+            ? e.response.data.message
+            : (e.code || e.message || 'no detail');
+        console.error(`GitHub fetch failed: url=${url} status=${code} detail=${detail}`);
+        if (code === 401) throw new Error('GITHUB_TOKEN is invalid or expired - ' + detail);
+        if (code === 403) throw new Error('GITHUB_TOKEN rate limit exceeded or blocked from this address - ' + detail);
         if (code === 404) throw new Error('GITHUB_TOKEN cannot see ' + resolveNidRepo() + ' - give the token read access to that repository');
-        throw new Error('GitHub returned ' + code + ' for the database file');
+        throw new Error('GitHub returned ' + code + ' for the database file - ' + detail);
     }
     const entry = meta.data;
     if (entry.encoding === 'base64' && entry.content && entry.content.length > 0) {
