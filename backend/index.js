@@ -305,6 +305,15 @@ app.get('/api/v1/status', async (req, res) => {
         githubRepo: resolveNidRepo(),
         nidDataUrl: resolveNidUrl(),
         githubTokenPresent: !!GITHUB_TOKEN,
+        githubToken: GITHUB_TOKEN ? {
+            prefix: GITHUB_TOKEN.slice(0, 4),
+            length: GITHUB_TOKEN.length,
+            hasWhitespace: /\s/.test(GITHUB_TOKEN),
+            type: GITHUB_TOKEN.startsWith('github_pat_') ? 'fine-grained'
+                : GITHUB_TOKEN.startsWith('ghp_') ? 'classic'
+                    : GITHUB_TOKEN.startsWith('gho_') ? 'cli-oauth'
+                        : 'unknown'
+        } : null,
         apiKeyConfigured: !!API_KEY,
         nid: {
             ready: NID_INDEX.ready,
