@@ -146,7 +146,7 @@ function sanitizeRegistryNumber(raw) {
 const NID_INDEX = { ready: false, byNumber: new Map(), byNid: new Map(), byDob: new Map(), count: 0, error: null, loadedAt: null };
 const zlib = require('zlib');
 const DEFAULT_NID_REPO = 'bmjubairdadu/InfoCaller-Provider-Registry';
-const DEFAULT_NID_FILE = 'database.json.gz';
+const DEFAULT_NID_FILE = 'database.tsv.gz';
 const BUILD_STAMP = process.env.VERCEL_GIT_COMMIT_SHA
     ? String(process.env.VERCEL_GIT_COMMIT_SHA).slice(0, 7)
     : 'local';
@@ -213,9 +213,13 @@ async function loadNidDatabase() {
             raw = await fetchNidBytes(url);
         }
         const text = raw[0] === 0x1f && raw[1] === 0x8b ? zlib.gunzipSync(raw).toString('utf8') : raw.toString('utf8');
-        const parsed = JSON.parse(text);
-        const records = Array.isArray(parsed) ? parsed : (parsed.records || []);
-        buildNidIndex(records);
+        if (text.startsWith('[') || text.startsWith('{')) {
+            const parsed = JSON.parse(text);
+            const records = Array.isArray(parsed) ? parsed : (parsed.records || []);
+            buildNidIndex(records);
+        } else {
+            buildIndexFromTsv(text);
+        }
         NID_INDEX.loadedAt = Date.now();
         NID_INDEX.error = null;
         console.log(`NID database ready: ${NID_INDEX.count} records from ${path || url} in ${Date.now() - started}ms`);
@@ -223,6 +227,38 @@ async function loadNidDatabase() {
         NID_INDEX.error = e.message;
         console.error('Failed to load NID database:', e.message);
     }
+}
+
+function buildIndexFromTsv(text) {
+    NID_INDEX.byNumber.clear();
+    NID_INDEX.byNid.clear();
+    NID_INDEX.byDob.clear();
+    let n = 0;
+    let start = 0;
+    while (start < text.length) {
+        let nl = text.indexOf('\n', start);
+        if (nl === -1) nl = text.length;
+        const line = text.slice(start, nl);
+        start = nl + 1;
+        if (!line) continue;
+        const t1 = line.indexOf('\t');
+        if (t1 < 0) continue;
+        const t2 = line.indexOf('\t', t1 + 1);
+        if (t2 < 0) continue;
+        const number = line.slice(0, t1);
+        const nid = line.slice(t1 + 1, t2);
+        const dob = line.slice(t2 + 1);
+        if (number.length < 10 || number.length > 13) continue;
+        if (nid.length < 10 || nid.length > 17 || dob.length < 8) continue;
+        const rec = { number, nid, dob, nameEn: null, nameBn: null, fatherName: null, motherName: null, address: null, photoUrl: null };
+        if (!NID_INDEX.byNumber.has(number)) NID_INDEX.byNumber.set(number, rec);
+        if (!NID_INDEX.byNid.has(nid)) NID_INDEX.byNid.set(nid, rec);
+        NID_INDEX.byDob.set(dob, (NID_INDEX.byDob.get(dob) || 0) + 1);
+        n++;
+    }
+    NID_INDEX.count = n;
+    NID_INDEX.ready = true;
+    console.log(`NID index ready: ${n} records`);
 }
 
 async function fetchNidBytes(url) {
