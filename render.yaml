@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: infocaller-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    healthCheckPath: /api/v1/status
+    envVars:
+      - key: INFOCALLER_API_KEY
+        value: pMuzljfGSmolxFFuVNt02qIIjh5HgvJenvSo2TK5Gbc
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_REPO
+        value: bmjubairdadu/InfoCaller-Provider-Registry
+      - key: NID_DATA_URL
+        value: https://api.github.com/repos/bmjubairdadu/InfoCaller-Provider-Registry/contents/database.json.gz
