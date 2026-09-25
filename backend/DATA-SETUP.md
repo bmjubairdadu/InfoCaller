@@ -8,9 +8,12 @@ Nothing sensitive lives in the APK any more. The app only ever asks the backend.
 
 ```json
 [
-  { "number": "01616382033", "nid": "7756684226", "dob": "1969-04-19" }
+  { "number": "00000000000", "nid": "0000000000", "dob": "2000-01-01" }
 ]
 ```
+
+The values above are placeholders. Real records look like `01XXXXXXXXX` for the
+number and a 10- or 17-digit NID.
 
 Optional enrichment fields are also read if present: `nameEn`, `nameBn`, `fatherName`,
 `motherName`, `address`, `photoUrl`.
@@ -42,7 +45,7 @@ seconds once; after that lookups are instant until the process restarts.
 ### Verify
 
 ```bash
-curl -H "x-api-key: $INFOCALLER_API_KEY" http://localhost:3000/api/v1/nid/phone/01616382033
+curl -H "x-api-key: $INFOCALLER_API_KEY" http://localhost:3000/api/v1/nid/phone/01XXXXXXXXX
 ```
 
 Returns the record, or `404` if the number is not in the database.
