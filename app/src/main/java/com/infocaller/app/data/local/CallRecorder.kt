@@ -13,6 +13,7 @@ class CallRecorder(private val context: Context) {
     private var mediaRecorder: MediaRecorder? = null
     private var isRecording = false
     private var currentUri: android.net.Uri? = null
+    private val enhancer = AudioEnhancer()
 
     fun startRecording(phoneNumber: String) {
         if (isRecording) return
@@ -59,6 +60,22 @@ class CallRecorder(private val context: Context) {
 
                 prepare()
                 start()
+
+                try {
+                    val sessionId = try {
+                        val m = javaClass.methods.firstOrNull {
+                            it.name == "getAudioSessionId" && it.parameterCount == 0
+                        }
+                        (m?.invoke(this) as? Int) ?: 0
+                    } catch (_: Exception) { 0 } catch (_: Error) { 0 }
+                    if (sessionId > 0 && enhancer.attach(sessionId)) {
+                        Log.d("CallRecorder", "Audio enhancement attached to session $sessionId")
+                    }
+                } catch (e: Exception) {
+                    Log.w("CallRecorder", "Audio enhancement failed: ${e.message}")
+                } catch (e: Error) {
+                    Log.w("CallRecorder", "Audio enhancement error: ${e.message}")
+                }
             }
 
             isRecording = true
@@ -82,6 +99,7 @@ class CallRecorder(private val context: Context) {
 
     fun stopRecording() {
         if (!isRecording) return
+        try { enhancer.release() } catch (_: Exception) { } catch (_: Error) { }
         try {
             val recorder = mediaRecorder
             if (recorder != null) {

@@ -17,6 +17,24 @@ class InfoInCallService : InCallService() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val enrichmentJobs = java.util.concurrent.ConcurrentHashMap<Call, Job>()
 
+    companion object {
+        @Volatile
+        private var cachedImageLoader: coil.ImageLoader? = null
+
+        fun sharedImageLoader(context: Context): coil.ImageLoader {
+            cachedImageLoader?.let { return it }
+            return synchronized(this) {
+                cachedImageLoader ?: coil.ImageLoader.Builder(context.applicationContext)
+                    .memoryCache { coil.memory.MemoryCache.Builder(context.applicationContext).maxSizePercent(0.15).build() }
+                    .diskCache { coil.disk.DiskCache.Builder().directory(
+                        java.io.File(context.cacheDir, "photo_cache")
+                    ).maxSizeBytes(24L * 1024 * 1024).build() }
+                    .build()
+                    .also { cachedImageLoader = it }
+            }
+        }
+    }
+
     @Deprecated("Use onCallEndpointChanged instead", ReplaceWith("onCallEndpointChanged"))
     override fun onCallAudioStateChanged(audioState: CallAudioState) {
         @Suppress("DEPRECATION")
@@ -166,7 +184,7 @@ class InfoInCallService : InCallService() {
         val photoUrl = enrichment?.profileImageUrl
         if (photoUrl != null) {
             try {
-                val loader = coil.ImageLoader(this)
+                val loader = sharedImageLoader(this)
                 val request = coil.request.ImageRequest.Builder(this)
                     .data(photoUrl)
                     .target(

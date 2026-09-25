@@ -17,6 +17,7 @@ import android.util.Log
 import android.provider.ContactsContract
 import android.view.Gravity
 import android.view.WindowManager
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -95,23 +96,29 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
             return START_NOT_STICKY
         }
         showForegroundNotification()
-        publishIncomingCallNotification(phoneNumber, resolveCachedName(phoneNumber))
+        publishIncomingCallNotification(phoneNumber, null)
         showOverlay(phoneNumber)
         registerCloseReceiver()
+        refreshIncomingName(phoneNumber)
         return START_NOT_STICKY
     }
 
-    private fun resolveCachedName(phoneNumber: String): String? = try {
-        val normalized = PhoneNumberUtils.normalize(phoneNumber)
-        val cached = (getRepository() as? com.infocaller.app.domain.repository.CallerRepository)
-            ?.let { repo ->
-                kotlinx.coroutines.runBlocking {
-                    try { repo.getSharedRegistryCaller(normalized) } catch (_: Exception) { null }
+    private fun refreshIncomingName(phoneNumber: String) {
+        try {
+            CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                val name = try {
+                    val normalized = PhoneNumberUtils.normalize(phoneNumber)
+                    val cached = (getRepository() as? com.infocaller.app.domain.repository.CallerRepository)
+                        ?.let { repo -> try { repo.getSharedRegistryCaller(normalized) } catch (_: Exception) { null } }
+                    cached?.displayName
+                        ?: com.infocaller.app.util.PhoneNumberUtils.getContactName(this@CallOverlayService, phoneNumber)
+                } catch (_: Exception) { null } catch (_: Error) { null }
+                if (!name.isNullOrBlank()) {
+                    publishIncomingCallNotification(phoneNumber, name)
                 }
             }
-        cached?.displayName
-            ?: com.infocaller.app.util.PhoneNumberUtils.getContactName(this, phoneNumber)
-    } catch (_: Exception) { null } catch (_: Error) { null }
+        } catch (_: Exception) { } catch (_: Error) { }
+    }
 
     private val closeReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -334,6 +341,36 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
             catch (_: Exception) { emptyList() }
         }
 
+        val pulseT = androidx.compose.animation.core.rememberInfiniteTransition(label = "pulse")
+        val glowT = androidx.compose.animation.core.rememberInfiniteTransition(label = "glow")
+        val ringT = androidx.compose.animation.core.rememberInfiniteTransition(label = "ring")
+
+        val pulse by pulseT.animateFloat(            initialValue = 0.82f,
+            targetValue = 1.10f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                animation = androidx.compose.animation.core.tween(1500, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+            ),
+            label = "pulseScale"
+        )
+        val glow by glowT.animateFloat(
+            initialValue = 0.10f,
+            targetValue = 0.30f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                animation = androidx.compose.animation.core.tween(1500, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+            ),
+            label = "glowAlpha"
+        )
+        val ringAlpha by ringT.animateFloat(
+            initialValue = 0.45f,
+            targetValue = 0f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                animation = androidx.compose.animation.core.tween(2200),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Restart
+            ),
+            label = "ringAlpha"
+        )
         androidx.compose.animation.AnimatedVisibility(
             visible = true,
             enter = androidx.compose.animation.fadeIn(
@@ -346,6 +383,7 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
+                .shadow(24.dp, RoundedCornerShape(28.dp), clip = false, ambientColor = Color(0xFF4FC3F7), spotColor = Color(0xFF4FC3F7))
                 .glassy(radius = 28.dp, blur = 20.dp),
             colors = CardDefaults.cardColors(containerColor = Color.Transparent)
         ) {
@@ -354,14 +392,39 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(Color(0xFF1B2B4D), Color(0xFF0E1830))
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color(0xFF1B2B4D), Color(0xFF0B1224), Color(0xFF0E1830))
                             )
                         )
                         .padding(20.dp)
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(contentAlignment = Alignment.Center) {
+                            Box(
+                                modifier = Modifier
+                                    .size((150 * pulse).dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF4FC3F7).copy(alpha = ringAlpha * 0.35f))
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size((120 * pulse).dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF4FC3F7).copy(alpha = ringAlpha * 0.25f))
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size((88 * pulse).dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        Brush.radialGradient(
+                                            listOf(
+                                                Color(0xFF4FC3F7).copy(alpha = glow),
+                                                Color.Transparent
+                                            )
+                                        )
+                                    )
+                            )
                             Box(
                                 modifier = Modifier.size(88.dp).clip(CircleShape)
                                     .background(Color.White.copy(alpha = 0.12f))
