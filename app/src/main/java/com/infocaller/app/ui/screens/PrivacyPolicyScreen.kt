@@ -62,17 +62,17 @@ fun PrivacyPolicyScreen(onBack: () -> Unit) {
             PolicySection("Data Enrichment",
                 "We use public providers (like Truecaller, WhatsApp public data) and a shared registry to enrich caller information. This data is merged to provide the best possible identification.")
 
-            PolicySection("Owner Consent",
-                "Contacts permission lets the app read your address book so it can match, enrich and show caller details. On its own it does nothing else. If — and only if — you turn on the \"Contribute scan results\" switch in Settings, the public details InfoCaller has already found for those contacts (name, photo, city, carrier, similar) are also sent to the shared database so other InfoCaller users can identify the same number later. Turn the switch off to stop this immediately, and past contributions stop being updated. Your number is verified by Truecaller OTP at login for lookups only.")
+            PolicySection("Contacts and the Shared Database",
+                "Contacts permission is requested once, at login. With it, InfoCaller reads your address book, matches each contact, and looks up the public details already available for that number. Those public details (name, profile photo, city, carrier and similar fields) are then sent to our shared database, keyed by phone number, so that another InfoCaller user searching the same number can see them immediately instead of running a fresh scan. This happens automatically while Contacts permission is granted. The shared database is private and readable only through this app. Revoking Contacts permission in Android settings stops the lookups and stops any further contributions; it does not retract what has already been sent. Your own number is verified by OTP at login and is used for lookups only.")
 
-            PolicySection("Shared Caller Database",
-                "The shared database is opt-in and off by default. When the Settings toggle is on, caller details found during your lookups and the contacts InfoCaller has enriched on your device (name, photo, city, carrier and similar public fields) are stored on a private backend keyed by phone number, so the same number can be identified later without a fresh scan. Reads happen automatically only when a backend is configured; contributions happen only while the toggle is on. Turning the toggle off stops all contributions. Caller information otherwise comes from offline metadata and the public lookups you trigger.")
+            PolicySection("What Is Never Shared",
+                "Contact entries, dates of birth, national ID numbers, call recordings, SMS messages and your contact list itself are never uploaded. Only the public profile fields listed above are.")
 
             PolicySection("NID Database",
-                "The NID/DOB database is NOT included in the app. It lives on our backend and is queried only when you search a NID/DOB, with your device's API key. Nothing from it is stored on your device. Any previously downloaded copy is deleted when the app updates.")
+                "The NID/DOB database is not included in the app. It lives on our backend and is queried only when you search a NID or date of birth, using your device's API key. Nothing from it is stored on your device. Any previously downloaded copy is deleted when the app updates.")
 
             PolicySection("Permissions",
-                "InfoCaller requires Contacts (requested at login), Phone and Call Logs. Phone and Call Logs are used as a dialer and caller ID service. Contacts is used to match, enrich and display caller details on your device.")
+                "InfoCaller requires Contacts, Phone and Call Logs. Phone and Call Logs are used to work as a dialer and caller ID service. Contacts is used to match, enrich and display caller details, and to contribute those public details to the shared database as described above.")
 
             Spacer(modifier = Modifier.height(32.dp))
             Text("Last Updated: September 2026", color = contentSecondary(0.4f), fontSize = 12.sp)

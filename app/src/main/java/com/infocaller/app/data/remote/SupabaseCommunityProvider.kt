@@ -1,7 +1,6 @@
 package com.infocaller.app.data.remote
 
 import android.content.Context
-import android.content.SharedPreferences
 import com.infocaller.app.InfoCallerApplication
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.util.PhoneNumberUtils
@@ -11,25 +10,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONArray
 import java.security.MessageDigest
-
-object CommunityConsent {
-    private const val PREFS = "community_prefs"
-    private const val KEY_ENABLED = "community_lookup_enabled"
-
-    fun isEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_ENABLED, false)
-    }
-
-    fun setEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putBoolean(KEY_ENABLED, enabled).apply()
-    }
-
-    fun prefs(context: Context): SharedPreferences {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-    }
-}
 
 object PhoneHash {
     fun sha256Hex(normalizedE164: String): String {
@@ -61,7 +41,6 @@ class SupabaseCommunityProvider(
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         if (type != IdentifierType.PHONE) return@withContext null
-        if (!CommunityConsent.isEnabled(this@SupabaseCommunityProvider.context)) return@withContext null
         val (baseUrl, anonKey) = config() ?: return@withContext null
         val normalized = PhoneNumberUtils.normalize(identifier)
         if (normalized.isBlank()) return@withContext null

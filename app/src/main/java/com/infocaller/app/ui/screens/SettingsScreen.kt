@@ -30,7 +30,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.infocaller.app.data.remote.CommunityConsent
 import com.infocaller.app.permissions.PermissionManager
 import com.infocaller.app.ui.components.IconBadge
 import com.infocaller.app.ui.theme.Motion
@@ -323,20 +322,6 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp)
-                )
-            }
-
-            SettingsSection("Shared Caller Database") {
-                var contribute by remember { mutableStateOf(CommunityConsent.isEnabled(context)) }
-                SettingsToggleRow(
-                    title = "Contribute scan results",
-                    subtitle = "Off by default. When on, numbers you look up — and the public details already found for contacts on this device — are sent to the shared database so other users skip re-scanning. Lookups always read from it when available. Turn off any time to stop contributing.",
-                    icon = Icons.Default.CloudUpload,
-                    checked = contribute,
-                    onCheckedChange = {
-                        contribute = it
-                        CommunityConsent.setEnabled(context, it)
-                    }
                 )
             }
 

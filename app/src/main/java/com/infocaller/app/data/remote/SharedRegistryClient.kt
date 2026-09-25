@@ -63,7 +63,6 @@ class SharedRegistryClient(
 
     fun publish(result: LookupResult) {
         if (baseUrl() == null || apiKey() == null) return
-        if (!CommunityConsent.isEnabled(appContext)) return
         if (!isPhone(result.phoneNumber)) return
         if (!hasMeaningfulData(result)) return
         scope.launch { publishBlocking(result) }

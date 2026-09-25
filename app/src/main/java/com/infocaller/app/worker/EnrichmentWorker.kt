@@ -109,7 +109,6 @@ class EnrichmentWorker(
         enrichmentDao: com.infocaller.app.data.local.dao.EnrichmentDao
     ) {
         try {
-            if (!com.infocaller.app.data.remote.CommunityConsent.isEnabled(applicationContext)) return
             if (!app.sharedRegistry.isConfigured()) return
             val prefs = applicationContext.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             val lastRun = prefs.getLong("contacts_contributed_at", 0L)
