@@ -143,8 +143,20 @@ function sanitizeRegistryNumber(raw) {
     return clean;
 }
 
-const NID_INDEX = { ready: false, byNumber: new Map(), byNid: new Map(), byDob: new Map(), count: 0 };
+const NID_INDEX = { ready: false, byNumber: new Map(), byNid: new Map(), byDob: new Map(), count: 0, error: null, loadedAt: null };
 const zlib = require('zlib');
+const DEFAULT_NID_REPO = 'bmjubairdadu/InfoCaller-Provider-Registry';
+const DEFAULT_NID_FILE = 'database.json.gz';
+
+function resolveNidRepo() {
+    return (process.env.GITHUB_REPO || DEFAULT_NID_REPO).trim();
+}
+
+function resolveNidUrl() {
+    const explicit = (process.env.NID_DATA_URL || '').trim();
+    if (explicit) return explicit;
+    return `https://api.github.com/repos/${resolveNidRepo()}/contents/${DEFAULT_NID_FILE}`;
+}
 
 function normalizeNidNumber(raw) {
     let d = String(raw || '').replace(/[^0-9]/g, '');
@@ -187,23 +199,25 @@ function buildNidIndex(records) {
 
 async function loadNidDatabase() {
     if (NID_INDEX.ready) return;
-    const path = process.env.NID_DATA_PATH;
-    const url = process.env.NID_DATA_URL;
+    const started = Date.now();
+    const path = (process.env.NID_DATA_PATH || '').trim();
+    const url = resolveNidUrl();
     try {
         let raw;
         if (path) {
             raw = require('fs').readFileSync(path);
-        } else if (url) {
-            raw = await fetchNidBytes(url);
         } else {
-            console.warn('NID database not configured (set NID_DATA_URL or NID_DATA_PATH)');
-            return;
+            raw = await fetchNidBytes(url);
         }
         const text = raw[0] === 0x1f && raw[1] === 0x8b ? zlib.gunzipSync(raw).toString('utf8') : raw.toString('utf8');
         const parsed = JSON.parse(text);
         const records = Array.isArray(parsed) ? parsed : (parsed.records || []);
         buildNidIndex(records);
+        NID_INDEX.loadedAt = Date.now();
+        NID_INDEX.error = null;
+        console.log(`NID database ready: ${NID_INDEX.count} records from ${path || url} in ${Date.now() - started}ms`);
     } catch (e) {
+        NID_INDEX.error = e.message;
         console.error('Failed to load NID database:', e.message);
     }
 }
@@ -232,6 +246,29 @@ async function fetchNidBytes(url) {
     });
     return Buffer.from(blob.data);
 }
+
+app.get('/api/v1/status', async (req, res) => {
+    await loadNidDatabase();
+    res.json({
+        ok: NID_INDEX.ready,
+        service: 'infocaller-backend',
+        apifyKeys: APIFY_TOKENS.length,
+        githubRepo: resolveNidRepo(),
+        nidDataUrl: resolveNidUrl(),
+        githubTokenPresent: !!GITHUB_TOKEN,
+        apiKeyConfigured: !!API_KEY,
+        nid: {
+            ready: NID_INDEX.ready,
+            records: NID_INDEX.count,
+            byNumber: NID_INDEX.byNumber.size,
+            byNid: NID_INDEX.byNid.size,
+            distinctDob: NID_INDEX.byDob.size,
+            loadedAt: NID_INDEX.loadedAt,
+            loadMs: NID_INDEX.loadedAt ? Date.now() - NID_INDEX.loadedAt : null,
+            error: NID_INDEX.error
+        }
+    });
+});
 
 app.get('/api/v1/nid/phone/:number', authenticate, async (req, res) => {
     if (!NID_INDEX.ready) await loadNidDatabase();
