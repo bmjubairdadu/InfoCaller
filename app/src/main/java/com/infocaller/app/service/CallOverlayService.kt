@@ -1,8 +1,14 @@
 package com.infocaller.app.service
 
 import android.app.*
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.net.Uri
 import android.os.Build
@@ -49,6 +55,8 @@ import kotlinx.coroutines.*
 
 class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
     companion object {
+        const val INCOMING_NOTIFICATION_ID = 4201
+        const val CLOSE_OVERLAY_ACTION = "com.infocaller.app.CLOSE_OVERLAY"
         @Volatile
         private var repositoryInstance: CallerRepository? = null
 
@@ -82,12 +90,48 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val phoneNumber = intent?.getStringExtra("EXTRA_PHONE_NUMBER")
         if (phoneNumber.isNullOrBlank()) {
+            clearIncomingCallNotification()
             stopSelf()
             return START_NOT_STICKY
         }
         showForegroundNotification()
+        publishIncomingCallNotification(phoneNumber, resolveCachedName(phoneNumber))
         showOverlay(phoneNumber)
+        registerCloseReceiver()
         return START_NOT_STICKY
+    }
+
+    private fun resolveCachedName(phoneNumber: String): String? = try {
+        val normalized = PhoneNumberUtils.normalize(phoneNumber)
+        val cached = (getRepository() as? com.infocaller.app.domain.repository.CallerRepository)
+            ?.let { repo ->
+                kotlinx.coroutines.runBlocking {
+                    try { repo.getSharedRegistryCaller(normalized) } catch (_: Exception) { null }
+                }
+            }
+        cached?.displayName
+            ?: com.infocaller.app.util.PhoneNumberUtils.getContactName(this, phoneNumber)
+    } catch (_: Exception) { null } catch (_: Error) { null }
+
+    private val closeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == CLOSE_OVERLAY_ACTION) {
+                clearIncomingCallNotification()
+                stopSelf()
+            }
+        }
+    }
+
+    private fun registerCloseReceiver() {
+        try {
+            val filter = IntentFilter(CLOSE_OVERLAY_ACTION)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(closeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                registerReceiver(closeReceiver, filter)
+            }
+        } catch (_: Exception) { } catch (_: Error) { }
     }
 
     private fun showForegroundNotification() {
@@ -113,6 +157,76 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
         }, 400)
     }
 
+    private fun publishIncomingCallNotification(phoneNumber: String, displayName: String?) {
+        try {
+            val channelId = "incoming_call_channel"
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val mgr = getSystemService(NotificationManager::class.java)
+                if (mgr.getNotificationChannel(channelId) == null) {
+                    val ch = NotificationChannel(channelId, "Incoming calls", NotificationManager.IMPORTANCE_HIGH).apply {
+                        setShowBadge(false)
+                        enableVibration(true)
+                        vibrationPattern = longArrayOf(0, 400, 200, 400)
+                        lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                        setBypassDnd(false)
+                    }
+                    mgr.createNotificationChannel(ch)
+                }
+            }
+
+            val normalized = PhoneNumberUtils.normalize(phoneNumber)
+            val fullScreen = PendingIntent.getActivity(
+                this, normalized.hashCode(),
+                Intent(this, com.infocaller.app.MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra("EXTRA_OPEN_NUMBER", phoneNumber)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val answer = PendingIntent.getBroadcast(
+                this, normalized.hashCode() + 1,
+                Intent(this, com.infocaller.app.receiver.CallActionReceiver::class.java).apply {
+                    action = com.infocaller.app.receiver.CallActionReceiver.ACTION_ANSWER
+                    putExtra("EXTRA_PHONE_NUMBER", phoneNumber)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val decline = PendingIntent.getBroadcast(
+                this, normalized.hashCode() + 2,
+                Intent(this, com.infocaller.app.receiver.CallActionReceiver::class.java).apply {
+                    action = com.infocaller.app.receiver.CallActionReceiver.ACTION_DECLINE
+                    putExtra("EXTRA_PHONE_NUMBER", phoneNumber)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val title = displayName?.takeIf { it.isNotBlank() } ?: phoneNumber
+
+            val builder = NotificationCompat.Builder(this, channelId)
+                .setSmallIcon(R.drawable.app_logo)
+                .setContentTitle(title)
+                .setContentText("Incoming call from $phoneNumber")
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setOngoing(true)
+                .setAutoCancel(false)
+                .setFullScreenIntent(fullScreen, true)
+                .setContentIntent(fullScreen)
+                .addAction(android.R.drawable.ic_menu_call, "Answer", answer)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", decline)
+
+            getSystemService(NotificationManager::class.java)
+                .notify(INCOMING_NOTIFICATION_ID, builder.build())
+        } catch (_: Exception) { } catch (_: Error) { }
+    }
+
+    private fun clearIncomingCallNotification() {
+        try { getSystemService(NotificationManager::class.java).cancel(INCOMING_NOTIFICATION_ID) } catch (_: Exception) { } catch (_: Error) { }
+    }
+
     private fun showOverlay(phoneNumber: String) {
         overlayView?.let {
             try {
@@ -127,15 +241,27 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
             return
         }
 
+        val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+
+        val layoutType = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            layoutType,
+            flags,
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.TOP
-            y = 100
+            gravity = Gravity.CENTER
         }
 
         overlayView = ComposeView(this).apply {
@@ -469,6 +595,8 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
 
     override fun onDestroy() {
         super.onDestroy()
+        try { unregisterReceiver(closeReceiver) } catch (_: Exception) { } catch (_: Error) { }
+        clearIncomingCallNotification()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)

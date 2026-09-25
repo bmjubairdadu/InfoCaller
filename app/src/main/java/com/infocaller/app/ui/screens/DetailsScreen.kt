@@ -115,6 +115,7 @@ fun DetailsScreen(
     }
     val isContact = contact != null
     var showAddContactDialog by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
     val scanSteps by viewModel.scanSteps.collectAsState()
     val scanActive by viewModel.scanActive.collectAsState()
     GlassyBackground {
@@ -159,6 +160,11 @@ fun DetailsScreen(
                                 }
                             }) {
                                 Icon(Icons.Default.Download, "Download PNG", tint = Primary)
+                            }
+                            if (phoneNumber.isNotBlank()) {
+                                IconButton(onClick = { showEditDialog = true }) {
+                                    Icon(Icons.Default.Edit, "Edit info", tint = Primary)
+                                }
                             }
                             if (!isNonPhoneScan && !isContact && phoneNumber.isNotBlank()) {
                                 IconButton(onClick = { showAddContactDialog = true }) {
@@ -988,6 +994,34 @@ fun DetailsScreen(
         }
         if (showAddContactDialog) {
             com.infocaller.app.ui.dialogs.AddContactBottomSheet(viewModel = viewModel, phoneNumber = phoneNumber, initialName = enrichment?.publicName ?: caller?.displayName ?: "", onDismiss = { showAddContactDialog = false }) { showAddContactDialog = false }
+        }
+        if (showEditDialog) {
+            com.infocaller.app.ui.dialogs.EditCallerInfoDialog(
+                number = displayIdentifier.ifBlank { phoneNumber },
+                initialName = enrichment?.publicName,
+                initialCity = enrichment?.city,
+                initialCarrier = enrichment?.carrier,
+                initialPhoto = enrichment?.profileImageUrl,
+                onDismiss = { showEditDialog = false },
+                onSave = { name, city, carrier, photo ->
+                    showEditDialog = false
+                    scope.launch {
+                        val ok = try {
+                            com.infocaller.app.data.repository.ManualCorrections.save(context, displayIdentifier.ifBlank { phoneNumber }, name, city, carrier, photo)
+                        } catch (_: Exception) { false } catch (_: Error) { false }
+                        val applied = try {
+                            (app.repository as? com.infocaller.app.data.repository.CallerRepositoryImpl)
+                                ?.applyManualCorrection(displayIdentifier.ifBlank { phoneNumber }) ?: false
+                        } catch (_: Exception) { false } catch (_: Error) { false }
+                        if (ok && applied) {
+                            snackbarHostState.showSnackbar("Saved and shared with other users")
+                            try { viewModel.searchNumber(displayIdentifier.ifBlank { phoneNumber }) } catch (_: Exception) { }
+                        } else {
+                            snackbarHostState.showSnackbar("Could not save")
+                        }
+                    }
+                }
+            )
         }
     }
 }

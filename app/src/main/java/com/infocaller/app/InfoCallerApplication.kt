@@ -116,7 +116,8 @@ class InfoCallerApplication : Application() {
             lookupEngine,
             orchestrator,
             com.infocaller.app.util.AndroidContextResolver(this),
-            registryClient
+            registryClient,
+            this
         )
 
         scanOrch.setResultSaver { result ->

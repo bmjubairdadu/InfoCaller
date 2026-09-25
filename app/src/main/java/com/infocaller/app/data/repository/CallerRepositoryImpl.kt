@@ -26,7 +26,8 @@ class CallerRepositoryImpl(
     private val lookupEngine: IPublicLookupEngine,
     private val orchestrator: IScanOrchestrator,
     private val contextResolver: com.infocaller.app.util.IContextResolver,
-    private val sharedRegistry: com.infocaller.app.data.remote.SharedRegistryClient? = null
+    private val sharedRegistry: com.infocaller.app.data.remote.SharedRegistryClient? = null,
+    private val appContext: Context? = null
 ) : com.infocaller.app.domain.repository.ICallerRepository {
     private val gson = Gson()
 
@@ -54,6 +55,24 @@ class CallerRepositoryImpl(
 
     override fun publishToSharedRegistry(result: LookupResult) {
         try { sharedRegistry?.publish(result) } catch (_: Exception) { } catch (_: Error) { }
+    }
+
+    suspend fun applyManualCorrection(number: String): Boolean {
+        val context = appContext?.applicationContext ?: return false
+        val normalized = PhoneNumberUtils.normalize(number)
+        if (normalized.isBlank()) return false
+        val dao = enrichmentDao
+        val existing = try { dao.getEnrichmentSync(normalized) } catch (_: Exception) { null } catch (_: Error) { null }
+        val photos = existing?.photoCandidatesJson
+            ?.let { json ->
+                try { com.infocaller.app.util.SocialUtils.photosFromJson(json) } catch (_: Exception) { emptyList() }
+            } ?: emptyList()
+        val merged = ManualCorrections.applyTo(context, normalized, existing, photos) ?: return false
+        if (merged != existing) {
+            try { dao.insertEnrichment(merged) } catch (_: Exception) { } catch (_: Error) { }
+        }
+        try { sharedRegistry?.publish(ManualCorrections.toLookupResult(context, normalized, merged)) } catch (_: Exception) { } catch (_: Error) { }
+        return true
     }
 
     override suspend fun searchCaller(phoneNumber: String): Caller? {

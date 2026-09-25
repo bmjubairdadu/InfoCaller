@@ -52,6 +52,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
+private fun maybeAskForOverlayPermission(context: android.content.Context) {
+    try {
+        if (PermissionManager.canDrawOverlays(context)) return
+        val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+        if (prefs.getBoolean("overlay_asked", false)) return
+        prefs.edit().putBoolean("overlay_asked", true).apply()
+        PermissionManager.openOverlaySettings(context)
+    } catch (_: Exception) { } catch (_: Error) { }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
@@ -136,6 +146,15 @@ fun LoginScreen(
         verifyErrorPopup = null
         authError = null
         requestOtpNow()
+        maybeAskForOverlayPermission(context)
+    }
+
+    var overlayAsked by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!overlayAsked) {
+            overlayAsked = true
+            maybeAskForOverlayPermission(context)
+        }
     }
 
     val smsConsentLauncher = rememberLauncherForActivityResult(

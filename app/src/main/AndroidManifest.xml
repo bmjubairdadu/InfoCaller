@@ -62,6 +62,16 @@
         </receiver>
 
         <receiver
+            android:name=".receiver.CallActionReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.infocaller.app.ACTION_ANSWER" />
+                <action android:name="com.infocaller.app.ACTION_DECLINE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
             android:name=".receiver.BootReceiver"
             android:enabled="true"
             android:exported="true">
