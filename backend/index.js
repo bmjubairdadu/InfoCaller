@@ -147,6 +147,9 @@ const NID_INDEX = { ready: false, byNumber: new Map(), byNid: new Map(), byDob: 
 const zlib = require('zlib');
 const DEFAULT_NID_REPO = 'bmjubairdadu/InfoCaller-Provider-Registry';
 const DEFAULT_NID_FILE = 'database.json.gz';
+const BUILD_STAMP = process.env.VERCEL_GIT_COMMIT_SHA
+    ? String(process.env.VERCEL_GIT_COMMIT_SHA).slice(0, 7)
+    : 'local';
 
 function resolveNidRepo() {
     return (process.env.GITHUB_REPO || DEFAULT_NID_REPO).trim();
@@ -252,6 +255,7 @@ app.get('/api/v1/status', async (req, res) => {
     res.json({
         ok: NID_INDEX.ready,
         service: 'infocaller-backend',
+        build: BUILD_STAMP,
         apifyKeys: APIFY_TOKENS.length,
         githubRepo: resolveNidRepo(),
         nidDataUrl: resolveNidUrl(),
