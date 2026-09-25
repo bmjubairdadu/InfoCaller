@@ -48,6 +48,32 @@ async function runApifyWithFailover(actorPath, payload) {
     throw lastError || new Error('Apify not configured');
 }
 
+const NID_WINDOW_MS = 60 * 1000;
+const NID_MAX_PER_MINUTE = 20;
+const NID_MAX_PER_HOUR = 300;
+const nidHits = new Map();
+
+function nidRateLimit(req, res, next) {
+    const now = Date.now();
+    const key = req.headers['x-api-key'] || 'anon';
+    const entry = nidHits.get(key) || { minute: 0, minuteAt: now, hour: 0, hourAt: now };
+    if (now - entry.minuteAt >= NID_WINDOW_MS) { entry.minute = 0; entry.minuteAt = now; }
+    if (now - entry.hourAt >= 3600000) { entry.hour = 0; entry.hourAt = now; }
+    entry.minute++;
+    entry.hour++;
+    nidHits.set(key, entry);
+    if (nidHits.size > 5000) {
+        for (const [k, v] of nidHits) { if (now - v.minuteAt >= NID_WINDOW_MS) nidHits.delete(k); }
+    }
+    if (entry.minute > NID_MAX_PER_MINUTE) {
+        return res.status(429).json({ error: 'Too many lookups. Try again in a minute.' });
+    }
+    if (entry.hour > NID_MAX_PER_HOUR) {
+        return res.status(429).json({ error: 'Hourly lookup limit reached. Try again later.' });
+    }
+    return next();
+}
+
 const RATE_WINDOW_MS = 15 * 60 * 1000;
 const RATE_MAX = 120;
 const ipHits = new Map();
@@ -332,7 +358,7 @@ app.get('/api/v1/status', async (req, res) => {
     });
 });
 
-app.get('/api/v1/nid/phone/:number', authenticate, async (req, res) => {
+app.get('/api/v1/nid/phone/:number', authenticate, nidRateLimit, async (req, res) => {
     if (!NID_INDEX.ready) await loadNidDatabase();
     if (!NID_INDEX.ready) return res.status(503).json({ error: 'NID database unavailable' });
     const rec = NID_INDEX.byNumber.get(normalizeNidNumber(req.params.number));
@@ -340,7 +366,7 @@ app.get('/api/v1/nid/phone/:number', authenticate, async (req, res) => {
     res.json(rec);
 });
 
-app.get('/api/v1/nid/nid/:nid', authenticate, async (req, res) => {
+app.get('/api/v1/nid/nid/:nid', authenticate, nidRateLimit, async (req, res) => {
     if (!NID_INDEX.ready) await loadNidDatabase();
     if (!NID_INDEX.ready) return res.status(503).json({ error: 'NID database unavailable' });
     const nid = String(req.params.nid).replace(/[^0-9]/g, '');
@@ -350,7 +376,7 @@ app.get('/api/v1/nid/nid/:nid', authenticate, async (req, res) => {
     res.json(rec);
 });
 
-app.get('/api/v1/nid/dob/:dob', authenticate, async (req, res) => {
+app.get('/api/v1/nid/dob/:dob', authenticate, nidRateLimit, async (req, res) => {
     if (!NID_INDEX.ready) await loadNidDatabase();
     if (!NID_INDEX.ready) return res.status(503).json({ error: 'NID database unavailable' });
     const dob = String(req.params.dob).trim().slice(0, 12);

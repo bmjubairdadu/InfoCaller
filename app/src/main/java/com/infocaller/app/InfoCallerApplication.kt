@@ -28,6 +28,7 @@ class InfoCallerApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        try { com.infocaller.app.security.IntegrityGuard.start(this) } catch (_: Exception) { } catch (_: Error) { }
         database = try {
             AppDatabase.getDatabase(this)
         } catch (_: Exception) {
@@ -39,11 +40,12 @@ class InfoCallerApplication : Application() {
         deviceDataRepository = DeviceDataRepositoryImpl(contentResolver)
         authRepository = AuthRepositoryImpl()
 
-        commonHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-            .build()
+        commonHttpClient = com.infocaller.app.security.NetworkPins.apply(
+            OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+        ).build()
 
         providerManager = ProviderManager(this)
         operatorLogoManager = com.infocaller.app.util.OperatorLogoManager(this, database)

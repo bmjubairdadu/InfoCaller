@@ -1,16 +1,34 @@
 -allowaccessmodification
--repackageclasses 'com.infocaller.app.internal'
 -overloadaggressively
--optimizationpasses 5
+-optimizationpasses 7
 
 -assumenosideeffects class android.util.Log {
     public static *** d(...);
     public static *** v(...);
     public static *** i(...);
     public static *** w(...);
+    public static *** e(...);
 }
 
--keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod, SourceFile, LineNumberTable
+-assumenosideeffects class java.lang.Throwable {
+    public <init>(...);
+    public void printStackTrace(...);
+}
+
+-repackageclasses 'com.infocaller.app.internal'
+
+-repackageclasses 'com.infocaller.app.internal'
+-keeppackagenames
+-dontusemixedcaseclassnames
+-keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod
+
+# Gson needs these to reflect over the model classes
+-keep class com.infocaller.app.domain.model.** { *; }
+-keep class com.infocaller.app.data.local.entity.** { *; }
+-keep class com.google.gson.** { *; }
+-keepclassmembers,allowobfuscation class * {
+    @com.google.gson.annotations.SerializedName <fields>;
+}
 
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
@@ -51,3 +69,13 @@
 -keep class com.infocaller.app.domain.model.** { *; }
 -keep class com.infocaller.app.data.local.entity.** { *; }
 -keep class com.infocaller.app.data.remote.dto.** { *; }
+
+# Security checks must not be renamed away or stripped
+-keep class com.infocaller.app.security.** { *; }
+-keep class com.infocaller.app.BuildConfig { *; }
+
+# OkHttp and Okio ship with references that are not all present
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+

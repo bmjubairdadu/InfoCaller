@@ -23,6 +23,9 @@ val supabaseAnonKey = localProperties.getProperty("supabase.anon.key") ?: ""
 val backendBaseUrl = localProperties.getProperty("backend.base.url") ?: ""
 val infocallerApiKey = localProperties.getProperty("infocaller.api.key") ?: ""
 val truecallerRequestSecret = localProperties.getProperty("truecaller.request.secret") ?: ""
+val appSignatureSha256 = localProperties.getProperty("app.signature.sha256") ?: ""
+val pinnedHosts = localProperties.getProperty("backend.pin.hosts") ?: ""
+val certPins = localProperties.getProperty("backend.cert.pins") ?: ""
 
 android {
     namespace = "com.infocaller.app"
@@ -59,6 +62,31 @@ android {
             buildConfigField("String", "BACKEND_BASE_URL", "\"$backendBaseUrl\"")
             buildConfigField("String", "INFOCALLER_API_KEY", "\"$infocallerApiKey\"")
             buildConfigField("String", "TRUECALLER_REQUEST_SECRET", "\"$truecallerRequestSecret\"")
+            buildConfigField("String", "APP_SIGNATURE_SHA256", "\"$appSignatureSha256\"")
+            buildConfigField("String", "PINNED_HOSTS", "\"$pinnedHosts\"")
+            buildConfigField("String", "CERT_PINS", "\"$certPins\"")
+        }
+        create("protected") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("release")
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            applicationIdSuffix = ""
+            buildConfigField("String", "BRANDFETCH_CLIENT_ID", "\"$brandfetchClientId\"")
+            buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+            buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
+            buildConfigField("String", "BACKEND_BASE_URL", "\"$backendBaseUrl\"")
+            buildConfigField("String", "INFOCALLER_API_KEY", "\"$infocallerApiKey\"")
+            buildConfigField("String", "TRUECALLER_REQUEST_SECRET", "\"$truecallerRequestSecret\"")
+            buildConfigField("String", "APP_SIGNATURE_SHA256", "\"$appSignatureSha256\"")
+            buildConfigField("String", "PINNED_HOSTS", "\"$pinnedHosts\"")
+            buildConfigField("String", "CERT_PINS", "\"$certPins\"")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
         release {
             signingConfig = signingConfigs.getByName("release")
@@ -68,6 +96,9 @@ android {
             buildConfigField("String", "BACKEND_BASE_URL", "\"$backendBaseUrl\"")
             buildConfigField("String", "INFOCALLER_API_KEY", "\"$infocallerApiKey\"")
             buildConfigField("String", "TRUECALLER_REQUEST_SECRET", "\"$truecallerRequestSecret\"")
+            buildConfigField("String", "APP_SIGNATURE_SHA256", "\"$appSignatureSha256\"")
+            buildConfigField("String", "PINNED_HOSTS", "\"$pinnedHosts\"")
+            buildConfigField("String", "CERT_PINS", "\"$certPins\"")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
