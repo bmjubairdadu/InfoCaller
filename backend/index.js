@@ -796,7 +796,7 @@ app.post('/api/v1/lookup/phone', authenticate, async (req, res) => {
     }
 });
 
-if (require.main === module) {
+if (require.main === module && !process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
     app.listen(port, () => {
         console.log(`InfoCaller Backend listening at http://localhost:${port}`);
     });
