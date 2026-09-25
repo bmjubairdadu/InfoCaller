@@ -266,12 +266,21 @@ async function fetchNidBytes(url) {
         const direct = await axios.get(url, { responseType: 'arraybuffer', timeout: 180000 });
         return Buffer.from(direct.data);
     }
-    if (!GITHUB_TOKEN) throw new Error('GITHUB_TOKEN required to read NID database from GitHub');
+    if (!GITHUB_TOKEN) throw new Error('GITHUB_TOKEN is not set, so the private database cannot be read');
     const headers = {
         'Authorization': `Bearer ${GITHUB_TOKEN}`,
         'Accept': 'application/vnd.github.v3+json'
     };
-    const meta = await axios.get(url, { headers, timeout: 30000 });
+    let meta;
+    try {
+        meta = await axios.get(url, { headers, timeout: 30000 });
+    } catch (e) {
+        const code = e.response ? e.response.status : 0;
+        if (code === 401) throw new Error('GITHUB_TOKEN is invalid or expired');
+        if (code === 403) throw new Error('GITHUB_TOKEN rate limit exceeded or blocked from this address');
+        if (code === 404) throw new Error('GITHUB_TOKEN cannot see ' + resolveNidRepo() + ' - give the token read access to that repository');
+        throw new Error('GitHub returned ' + code + ' for the database file');
+    }
     const entry = meta.data;
     if (entry.encoding === 'base64' && entry.content && entry.content.length > 0) {
         return Buffer.from(entry.content.replace(/\n/g, ''), 'base64');
