@@ -1,0 +1,36 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build Release APK",
+			"type": "shell",
+			"command": "powershell -NoProfile -Command \"$env:JAVA_HOME='C:\\Windows\\Temp\\jdk\\jdk-17.0.20.1+1'; $env:ANDROID_HOME='C:\\AndroidSdk'; $env:ANDROID_SDK_ROOT='C:\\AndroidSdk'; cd d:\\InfoCaller; .\\gradlew.bat assembleRelease --stacktrace\" ",
+			"group": "build"
+		},
+		{
+			"label": "Build APK cmd",
+			"type": "shell",
+			"command": "cmd /c set JAVA_HOME=C:\\Windows\\Temp\\jdk\\jdk-17.0.20.1+1 && set ANDROID_HOME=C:\\AndroidSdk && set ANDROID_SDK_ROOT=C:\\AndroidSdk && cd /d d:\\InfoCaller && gradlew.bat assembleRelease --stacktrace"
+		},
+		{
+			"label": "Build APK 2",
+			"type": "shell",
+			"command": "cmd /c \"set JAVA_HOME=C:\\Windows\\Temp\\jdk\\jdk-17.0.20.1+1 & set ANDROID_HOME=C:\\AndroidSdk & set ANDROID_SDK_ROOT=C:\\AndroidSdk & cd /d d:\\InfoCaller & gradlew.bat assembleRelease --stacktrace\""
+		},
+		{
+			"label": "Build Debug APK",
+			"type": "shell",
+			"command": "gradlew.bat assembleDebug"
+		},
+		{
+			"label": "Build Debug APK 2",
+			"type": "shell",
+			"command": ".\\gradlew.bat assembleDebug"
+		},
+		{
+			"label": "git-commit-push",
+			"type": "shell",
+			"command": "$env:JAVA_HOME='C:\\Windows\\Temp\\jdk\\jdk-17.0.20.1+1'; git -C d:\\InfoCaller add -A; git -C d:\\InfoCaller commit -m 'Integrate caller-id topic patterns: on-device screening engine (prefixes, anonymous, unknown), blocked-call log, community spam CSV provider, offline operator tables; register providers; settings controls; TopicScreeningTest'; git -C d:\\InfoCaller push origin main"
+		}
+	]
+}
