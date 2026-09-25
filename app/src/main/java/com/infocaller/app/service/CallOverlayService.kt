@@ -165,7 +165,14 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
         val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
         val repository = try { app.repository } catch (_: Exception) { getRepository() }
         val enrichmentEngine = try { app.enrichmentEngine } catch (_: Exception) { null }
-        val enrichmentService = remember { ContactEnrichmentService(context) }
+        val enrichmentService = remember {
+            ContactEnrichmentService(
+                context,
+                try { app.lookupEngine } catch (_: Exception) { null },
+                try { app.repository } catch (_: Exception) { repository },
+                try { app.database } catch (_: Exception) { null }
+            )
+        }
 
         val normalizedNumber = remember(phoneNumber) { PhoneNumberUtils.normalize(phoneNumber) }
         val enrichment by enrichmentEngine?.getEnrichment(normalizedNumber)

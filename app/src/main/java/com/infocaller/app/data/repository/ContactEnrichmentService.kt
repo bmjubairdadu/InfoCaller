@@ -630,6 +630,7 @@ class ContactEnrichmentService(
             val result = lookupEngine?.performLookup(normalized)
             if (result != null) {
                 saveLookupResultToCache(result, contactId)
+                try { repository?.publishToSharedRegistry(result) } catch (_: Exception) { } catch (_: Error) { }
             }
         }
     }

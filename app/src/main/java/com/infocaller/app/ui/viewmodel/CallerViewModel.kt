@@ -280,6 +280,7 @@ class CallerViewModel(
                                     try {
                                         repository.saveLookupResult(state.result)
                                     } catch (_: Exception) { } catch (_: Error) { }
+                                    try { repository.publishToSharedRegistry(state.result) } catch (_: Exception) { } catch (_: Error) { }
                                     if (generation != searchGeneration) return@collect
                                     try {
                                         _searchResult.value = SearchUiState.Success(

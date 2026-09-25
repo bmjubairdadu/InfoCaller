@@ -39,6 +39,42 @@ class SharedRegistryClient(
 
     fun isConfigured(): Boolean = baseUrl() != null
 
+    private fun fingerprint(r: LookupResult): String = try {
+        val sb = StringBuilder()
+        sb.append(r.name?.trim()?.take(80) ?: "")
+        sb.append('|').append(r.imageUrl?.trim()?.take(200) ?: "")
+        sb.append('|').append(r.about?.trim()?.take(160) ?: "")
+        sb.append('|').append(r.city?.trim()?.take(60) ?: "")
+        sb.append('|').append(r.region?.trim()?.take(60) ?: "")
+        sb.append('|').append(r.carrier?.trim()?.take(60) ?: "")
+        sb.append('|').append(r.email?.trim()?.take(80) ?: "")
+        sb.append('|').append(r.isBusiness?.toString() ?: "")
+        sb.append('|').append(r.socialProfiles.size)
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(sb.toString().toByteArray())
+            .joinToString("") { "%02x".format(it) }
+            .take(24)
+    } catch (_: Exception) { "" } catch (_: Error) { "" }
+
+    private val publishedFingerprints = java.util.Collections.synchronizedMap(object : LinkedHashMap<String, String>(64, 0.75f, false) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 400
+    })
+
+    private fun lastFingerprint(number: String): String? = try {
+        appContext.getSharedPreferences("registry_publish", android.content.Context.MODE_PRIVATE)
+            .getString(number, null)
+    } catch (_: Exception) { null } catch (_: Error) { null }
+
+    private fun rememberFingerprint(number: String, value: String) {
+        publishedFingerprints[number] = value
+        try {
+            val prefs = appContext.getSharedPreferences("registry_publish", android.content.Context.MODE_PRIVATE)
+            val trimmed = LinkedHashSet(prefs.all.keys)
+            while (trimmed.size > 400) { prefs.edit().remove(trimmed.first()).apply(); trimmed.remove(trimmed.first()) }
+            prefs.edit().putString(number, value).apply()
+        } catch (_: Exception) { } catch (_: Error) { }
+    }
+
     suspend fun lookup(rawPhone: String): LookupResult? = withContext(Dispatchers.IO) {
         val base = baseUrl() ?: return@withContext null
         val e164 = PhoneNumberUtils.normalize(rawPhone)
@@ -65,15 +101,25 @@ class SharedRegistryClient(
         if (baseUrl() == null || apiKey() == null) return
         if (!isPhone(result.phoneNumber)) return
         if (!hasMeaningfulData(result)) return
-        scope.launch { publishBlocking(result) }
+        val number = PhoneNumberUtils.normalize(result.phoneNumber)
+        if (number.filter { it.isDigit() }.length !in 8..15) return
+        val print = fingerprint(result)
+        if (print.isNotBlank()) {
+            val previous = publishedFingerprints[number] ?: lastFingerprint(number)
+            if (previous == print) return
+            publishedFingerprints[number] = print
+        }
+        scope.launch {
+            if (publishBlocking(result)) rememberFingerprint(number, print)
+        }
     }
 
-    private suspend fun publishBlocking(result: LookupResult) {
-        val base = baseUrl() ?: return
-        val key = apiKey() ?: return
+    private suspend fun publishBlocking(result: LookupResult): Boolean {
+        val base = baseUrl() ?: return false
+        val key = apiKey() ?: return false
         val e164 = PhoneNumberUtils.normalize(result.phoneNumber)
-        if (e164.filter { it.isDigit() }.length !in 8..15) return
-        try {
+        if (e164.filter { it.isDigit() }.length !in 8..15) return false
+        return try {
             val json = buildRecord(e164, result).toString()
             val reqBody = json.toRequestBody("application/json; charset=utf-8".toMediaType())
             val req = Request.Builder()
@@ -82,8 +128,9 @@ class SharedRegistryClient(
                 .header("Accept", "application/json")
                 .post(reqBody)
                 .build()
-            httpClient.newCall(req).await().use { }
-        } catch (_: Exception) { } catch (_: Error) { }
+            val response = httpClient.newCall(req).await()
+            response.use { it.isSuccessful }
+        } catch (_: Exception) { false } catch (_: Error) { false }
     }
 
     private fun isPhone(raw: String): Boolean = try {

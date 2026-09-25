@@ -82,7 +82,13 @@ fun AddContactBottomSheet(
     }
 
     val enrichmentService = remember {
-        ContactEnrichmentService(context, database = (context.applicationContext as com.infocaller.app.InfoCallerApplication).database)
+        val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
+    ContactEnrichmentService(
+        context,
+        try { app.lookupEngine } catch (_: Exception) { null },
+        try { app.repository } catch (_: Exception) { null },
+        app.database
+    )
     }
 
     val normalized = remember(inputNumber) { com.infocaller.app.util.PhoneNumberUtils.normalize(inputNumber) }

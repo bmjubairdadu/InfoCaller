@@ -114,12 +114,19 @@ class ContinuousEnrichmentEngine(
             queueDao.insertOrUpdate(item.copy(status = QueueStatus.PROCESSING, lastAttemptAt = System.currentTimeMillis()))
 
             orchestrator.startScan(identifier, ScanPriority.BACKGROUND).collect { state ->
-                if (state is ScanState.Completed) {
-                    val res = state.result
-                    try {
-                        repository.saveLookupResult(res)
-                    } catch (_: Exception) { }
-                    persistBackgroundResult(identifier, res)
+                when (state) {
+                    is ScanState.Progress -> {
+                        try { repository.publishToSharedRegistry(state.result) } catch (_: Exception) { } catch (_: Error) { }
+                    }
+                    is ScanState.Completed -> {
+                        val res = state.result
+                        try {
+                            repository.saveLookupResult(res)
+                        } catch (_: Exception) { }
+                        try { repository.publishToSharedRegistry(res) } catch (_: Exception) { }
+                        persistBackgroundResult(identifier, res)
+                    }
+                    else -> { }
                 }
             }
 
