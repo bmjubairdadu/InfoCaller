@@ -15,84 +15,125 @@ class CallRecorder(private val context: Context) {
     private var currentUri: android.net.Uri? = null
     private val enhancer = AudioEnhancer()
 
+    private fun isDefaultDialer(): Boolean = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val tm = context.getSystemService(Context.TELECOM_SERVICE) as? android.telecom.TelecomManager
+            tm?.defaultDialerPackage == context.packageName
+        } else false
+    } catch (_: Exception) { false } catch (_: Error) { false }
+
+    private fun allocateUri(displayName: String): android.net.Uri? {
+        val resolver = context.contentResolver
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val contentValues = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "$displayName.m4a")
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "audio/mp4")
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/InfoCaller")
+                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+        } else {
+            val storageDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            val appDir = File(storageDir, "InfoCaller")
+            if (!appDir.exists()) appDir.mkdirs()
+            val file = File(appDir, "$displayName.m4a")
+            android.net.Uri.fromFile(file)
+        }
+    }
+
+    private fun buildRecorder(uri: android.net.Uri, source: Int): MediaRecorder {
+        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            MediaRecorder(context)
+        } else {
+            @Suppress("DEPRECATION")
+            MediaRecorder()
+        }
+        val resolver = context.contentResolver
+        recorder.apply {
+            setAudioSource(source)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            setAudioSamplingRate(44100)
+            setAudioEncodingBitRate(96000)
+            setAudioChannels(1)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val pfd = resolver.openFileDescriptor(uri, "w") ?: throw IOException("Failed to open file descriptor.")
+                pfd.use { setOutputFile(it.fileDescriptor) }
+            } else {
+                setOutputFile(uri.path)
+            }
+            prepare()
+        }
+        return recorder
+    }
+
     fun startRecording(phoneNumber: String) {
         if (isRecording) return
 
         try {
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             val displayName = "Call_${phoneNumber}_$timeStamp"
-            val resolver = context.contentResolver
 
-            val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val contentValues = android.content.ContentValues().apply {
-                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "$displayName.amr")
-                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "audio/amr")
-                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/InfoCaller")
-                    put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
-                }
-                resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+            val canCaptureBothEnds = isDefaultDialer() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+
+            val attempts = if (canCaptureBothEnds) {
+                listOf(
+                    MediaRecorder.AudioSource.VOICE_CALL to "both-end (default dialer)",
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION to "near-end fallback"
+                )
             } else {
-                val storageDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                val appDir = File(storageDir, "InfoCaller")
-                if (!appDir.exists()) appDir.mkdirs()
-                val file = File(appDir, "$displayName.amr")
-                android.net.Uri.fromFile(file)
+                listOf(MediaRecorder.AudioSource.VOICE_COMMUNICATION to "near-end only (not default dialer)")
             }
 
-            if (uri == null) throw IOException("Failed to create new record.")
-
-            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(context)
-            } else {
-                @Suppress("DEPRECATION")
-                MediaRecorder()
-            }.apply {
-                setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-                setOutputFormat(MediaRecorder.OutputFormat.AMR_NB)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB)
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val pfd = resolver.openFileDescriptor(uri, "w") ?: throw IOException("Failed to open file descriptor.")
-                    pfd.use { setOutputFile(it.fileDescriptor) }
-                } else {
-                    setOutputFile(uri.path)
-                }
-
-                prepare()
-                start()
-
+            var lastError: Exception? = null
+            for ((source, label) in attempts) {
+                var uri: android.net.Uri? = null
+                var recorder: MediaRecorder? = null
                 try {
-                    val sessionId = try {
-                        val m = javaClass.methods.firstOrNull {
-                            it.name == "getAudioSessionId" && it.parameterCount == 0
+                    uri = allocateUri(displayName)
+                    if (uri == null) throw IOException("Failed to create new record.")
+                    recorder = buildRecorder(uri, source)
+                    recorder.start()
+
+                    mediaRecorder = recorder
+                    isRecording = true
+                    currentUri = uri
+                    Log.d("CallRecorder", "Started recording [$label]: $uri")
+
+                    try {
+                        val sessionId = try {
+                            val m = recorder.javaClass.methods.firstOrNull {
+                                it.name == "getAudioSessionId" && it.parameterCount == 0
+                            }
+                            (m?.invoke(recorder) as? Int) ?: 0
+                        } catch (_: Exception) { 0 } catch (_: Error) { 0 }
+                        if (sessionId > 0 && enhancer.attach(sessionId)) {
+                            Log.d("CallRecorder", "Audio enhancement attached to session $sessionId")
                         }
-                        (m?.invoke(this) as? Int) ?: 0
-                    } catch (_: Exception) { 0 } catch (_: Error) { 0 }
-                    if (sessionId > 0 && enhancer.attach(sessionId)) {
-                        Log.d("CallRecorder", "Audio enhancement attached to session $sessionId")
+                    } catch (e: Exception) {
+                        Log.w("CallRecorder", "Audio enhancement failed: ${e.message}")
+                    } catch (e: Error) {
+                        Log.w("CallRecorder", "Audio enhancement error: ${e.message}")
                     }
+                    return
                 } catch (e: Exception) {
-                    Log.w("CallRecorder", "Audio enhancement failed: ${e.message}")
-                } catch (e: Error) {
-                    Log.w("CallRecorder", "Audio enhancement error: ${e.message}")
+                    lastError = e
+                    Log.w("CallRecorder", "Source $label failed: ${e.message}")
+                    try { recorder?.release() } catch (_: Exception) { }
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && uri != null) {
+                            context.contentResolver.delete(uri, null, null)
+                        }
+                    } catch (_: Exception) { }
                 }
             }
-
-            isRecording = true
-            currentUri = uri
-            Log.d("CallRecorder", "Started recording: $uri")
+            throw lastError ?: IOException("No usable audio source")
         } catch (e: Exception) {
             Log.e("CallRecorder", "start() failed", e)
             isRecording = false
             try { mediaRecorder?.release() } catch (_: Exception) { }
             mediaRecorder = null
-            currentUri?.let { uri ->
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        context.contentResolver.delete(uri, null, null)
-                    }
-                } catch (_: Exception) { }
-            }
             currentUri = null
         }
     }
