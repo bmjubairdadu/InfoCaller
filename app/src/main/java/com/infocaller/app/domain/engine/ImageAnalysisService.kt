@@ -32,6 +32,28 @@ class ImageAnalysisService(private val context: Context) : IImageAnalysisService
                     )
                 } catch (_: Exception) { candidate } catch (_: Error) { candidate }
             }
+            // App-cached photos (Eyecon/manual downloads) already exist on disk and
+            // are verified — OkHttp cannot fetch file:// URLs, so validate the file
+            // directly instead of failing the probe and zeroing a good photo.
+            if (url.startsWith("file://")) {
+                return@withContext try {
+                    val f = try { java.io.File(java.net.URI(url)) } catch (_: Exception) { null } catch (_: Error) { null }
+                    val len = try { if (f != null && f.isFile && f.canRead()) f.length() else -1L } catch (_: Exception) { -1L } catch (_: Error) { -1L }
+                    if (f == null || len < 500 || len > 8_000_000L) {
+                        candidate.copy(faceCount = 0, faceConfidence = 0f, faceCoverage = 0f, imageQuality = 0f)
+                    } else {
+                        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        try { BitmapFactory.decodeFile(f.absolutePath, opts) } catch (_: Exception) { } catch (_: Error) { }
+                        val bw = opts.outWidth
+                        val bh = opts.outHeight
+                        if (bw < 80 || bh < 80 || bw > 8000 || bh > 8000) {
+                            candidate.copy(faceCount = 0, faceConfidence = 0f, faceCoverage = 0f, imageQuality = 0f, width = bw.coerceIn(0, 8000), height = bh.coerceIn(0, 8000))
+                        } else {
+                            candidate.copy(faceCount = 1, faceConfidence = 0.75f, faceCoverage = 0.25f, imageQuality = 0.5f, width = bw, height = bh)
+                        }
+                    }
+                } catch (_: Exception) { candidate } catch (_: Error) { candidate }
+            }
             val bitmap = try {
                 kotlinx.coroutines.withTimeoutOrNull(6000L) { downloadBitmapSafe(url) }
             } catch (_: Exception) { null } catch (_: Error) { null } ?: return@withContext try {

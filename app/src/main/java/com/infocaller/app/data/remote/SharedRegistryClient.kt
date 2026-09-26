@@ -141,6 +141,11 @@ class SharedRegistryClient(
         return !r.name.isNullOrBlank() ||
             !r.imageUrl.isNullOrBlank() ||
             !r.about.isNullOrBlank() ||
+            !r.city.isNullOrBlank() ||
+            !r.country.isNullOrBlank() ||
+            !r.region.isNullOrBlank() ||
+            !r.carrier.isNullOrBlank() ||
+            !r.email.isNullOrBlank() ||
             r.socialProfiles.isNotEmpty()
     }
 

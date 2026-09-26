@@ -89,7 +89,25 @@ class ApifyBackendPhotoProvider(
         val region = str("region")
         val isBusiness = if (o.has("isBusiness") && !o.isNull("isBusiness")) o.optBoolean("isBusiness") else null
 
-        if (name == null && image == null && about == null) return@withContext null
+        // Real WhatsApp presence from the intel actor (exists=true). Emitted as a
+        // WhatsApp social entry with a wa.me chat link — never guessed.
+        val socials = mutableListOf<com.infocaller.app.domain.model.SocialProfile>()
+        try {
+            val waStatus = str("whatsappStatus")
+            if (waStatus.equals("CONFIRMED", ignoreCase = true)) {
+                socials.add(
+                    com.infocaller.app.domain.model.SocialProfile(
+                        platform = "WhatsApp",
+                        username = "+$digits",
+                        profileUrl = "https://wa.me/$digits",
+                        status = com.infocaller.app.domain.model.SocialLookupStatus.CONFIRMED,
+                        source = "Premium Intel"
+                    )
+                )
+            }
+        } catch (_: Exception) { } catch (_: Error) { }
+
+        if (name == null && image == null && about == null && socials.isEmpty()) return@withContext null
 
         PartialResult(
             identifier = e164,
@@ -103,6 +121,7 @@ class ApifyBackendPhotoProvider(
             region = region,
             carrier = carrier,
             isBusiness = isBusiness,
+            socialProfiles = socials,
             confidence = if (image != null) 0.7f else 0.6f,
             source = "Premium Intel",
             durationMs = System.currentTimeMillis() - started,

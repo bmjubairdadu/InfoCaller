@@ -113,7 +113,29 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
                     UsernameExistenceChecker.fetchVerifiedProfile(httpClient, platform, url)
                 } catch (_: Exception) { null }
             }
-            socials.addAll(found)
+            // Anti-fake gate: a handle guessed from a caller-ID name is only kept
+            // when the page's display name actually matches the source name.
+            // Otherwise any stranger owning "jubairhosen" would show up as this number's owner.
+            fun matchesSourceName(profile: SocialProfile): Boolean {
+                return try {
+                    val disp = profile.displayName?.trim().orEmpty()
+                    if (disp.length < 2) return false
+                    val dn = disp.lowercase().replace(Regex("[^a-z0-9]"), "")
+                    if (dn.isBlank()) return false
+                    for (n in nameCandidates) {
+                        val nn = n.lowercase().replace(Regex("[^a-z0-9]"), "")
+                        if (nn.isBlank()) continue
+                        if (dn == nn) return true
+                        val parts = n.lowercase().split(Regex("\\s+"))
+                            .map { it.replace(Regex("[^a-z0-9]"), "") }
+                            .filter { it.length >= 3 }
+                        if (parts.size >= 2 && parts.all { dn.contains(it) }) return true
+                        if (nn.contains(dn) && dn.length >= 5) return true
+                    }
+                    false
+                } catch (_: Exception) { false } catch (_: Error) { false }
+            }
+            socials.addAll(found.filter { matchesSourceName(it) })
         }
 
 

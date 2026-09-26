@@ -59,12 +59,29 @@ fun AddContactBottomSheet(
     var isNameManuallyEdited by remember { mutableStateOf(false) }
     var userSelectedPhotoUri by remember { mutableStateOf<android.net.Uri?>(null) }
 
+    fun cachePickedPhoto(number: String, uri: android.net.Uri): String? {
+        return try {
+            val digits = com.infocaller.app.util.PhoneNumberUtils.normalize(number)
+                .filter { it.isDigit() }.takeLast(15).ifBlank { "add" }
+            val dir = java.io.File(context.cacheDir, "manual_photos").apply { if (!exists()) mkdirs() }
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+            if (bytes.size < 200 || bytes.size > 12_000_000) return null
+            val file = java.io.File(dir, "add_$digits.jpg")
+            java.io.FileOutputStream(file).use { it.write(bytes) }
+            file.toURI().toString()
+        } catch (_: Exception) { null } catch (_: Error) { null }
+    }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
             userSelectedPhotoUri = uri
-            suggestedPhotoUrl = uri.toString()
+            // Copy to app cache so the photo survives and can be written to the
+            // phonebook on save (content:// URIs lose access after the picker dies).
+            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                suggestedPhotoUrl = cachePickedPhoto(inputNumber, uri) ?: uri.toString()
+            }
         }
     }
 
@@ -151,6 +168,16 @@ fun AddContactBottomSheet(
                 lookupResult = lookupResult
             )
             if (success) {
+                // saveContactFast does not write photos — push the picked/cached
+                // photo into the phonebook explicitly.
+                try {
+                    val picked = suggestedPhotoUrl?.takeIf {
+                        it.startsWith("file://") || it.startsWith("content://")
+                    }
+                    if (picked != null) {
+                        enrichmentService.forcePhonebookPhoto(inputNumber, picked)
+                    }
+                } catch (_: Exception) { } catch (_: Error) { }
                 onContactSaved()
                 onDismiss()
             } else {

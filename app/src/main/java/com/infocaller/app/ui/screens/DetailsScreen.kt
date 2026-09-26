@@ -402,8 +402,13 @@ fun DetailsScreen(
                         fun keepCandidateFace(it: com.infocaller.app.domain.model.PhotoCandidate): Boolean {
                             if (!PhotoPolicy.isUsablePhotoUrl(it.url)) return false
                             if (it.faceCount != 0) return true
+                            // faceCount == 0 means the analyser's download probe failed
+                            // (referer-locked CDN, file:// cache OkHttp can't fetch) — keep
+                            // trusted identity sources anyway instead of hiding their photo.
                             val p = it.provider.lowercase()
-                            return p.contains("gravatar") || p.contains("github") || p.contains("gitlab") || p.contains("email")
+                            return p.contains("gravatar") || p.contains("github") || p.contains("gitlab") || p.contains("email") ||
+                                p.contains("truecaller") || p.contains("eyecon") || p.contains("premium") || p.contains("apify") ||
+                                p.contains("database") || p.contains("unavatar") || p.contains("shared registry")
                         }
                         live?.photoCandidates
                             ?.filter { keepCandidateFace(it) }
@@ -466,94 +471,43 @@ fun DetailsScreen(
                     }
                     if (allPhotos.size > 1) {
                         Spacer(modifier = Modifier.height(12.dp))
-                        DetailSection("Profile Photos (${allPhotos.size})") {
-                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text(
-                                    "Tap a photo to set it as the profile picture",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = contentSecondary(0.6f),
-                                )
-                                allPhotos.chunked(3).forEach { row ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    ) {
-                                        row.forEach { candidate ->
-                                            val isPrimary = candidate.url == primaryPhoto
-                                            Box(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .aspectRatio(1f)
-                                                    .clip(RoundedCornerShape(14.dp))
-                                                    .border(
-                                                        width = if (isPrimary) 3.dp else 1.dp,
-                                                        color = if (isPrimary) Primary else contentSecondary(0.25f),
-                                                        shape = RoundedCornerShape(14.dp)
-                                                    )
-                                                    .clickable {
-                                                        if (!isPrimary) {
-                                                            viewModel.setPrimaryPhoto(
-                                                                lookupKey.ifBlank { displayIdentifier },
-                                                                candidate.url,
-                                                                candidate.provider
-                                                            )
-                                                            scope.launch {
-                                                                snackbarHostState.showSnackbar("Profile photo updated")
-                                                            }
-                                                        }
-                                                    },
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                AsyncImage(
-                                                    model = candidate.url,
-                                                    contentDescription = "${candidate.provider} photo",
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentScale = ContentScale.Crop,
-                                                    error = rememberVectorPainter(Icons.Default.Person),
-                                                    placeholder = rememberVectorPainter(Icons.Default.Person)
-                                                )
-                                                if (isPrimary) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .align(Alignment.TopStart)
-                                                            .padding(6.dp)
-                                                            .background(Primary, RoundedCornerShape(8.dp))
-                                                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                                                    ) {
-                                                        Text(
-                                                            "PRIMARY",
-                                                            style = MaterialTheme.typography.labelSmall,
-                                                            color = Color.White,
-                                                            fontWeight = FontWeight.Bold,
-                                                        )
-                                                    }
-                                                } else {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .align(Alignment.BottomCenter)
-                                                            .padding(6.dp)
-                                                            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
-                                                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                                                    ) {
-                                                        Text(
-                                                            candidate.provider.take(14),
-                                                            style = MaterialTheme.typography.labelSmall,
-                                                            color = Color.White,
-                                                            maxLines = 1,
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        repeat(3 - row.size) {
-                                            Spacer(modifier = Modifier.weight(1f))
+                        val (identityPhotos, socialAvatarPhotos) = remember(allPhotos) {
+                            allPhotos.partition { isIdentityPhotoProvider(it.provider) }
+                        }
+                        if (identityPhotos.isNotEmpty()) {
+                            DetailSection("Profile Photos (${identityPhotos.size})") {
+                                PhotoPickGrid(
+                                    candidates = identityPhotos,
+                                    primaryPhotoUrl = primaryPhoto,
+                                    onPick = { url, provider ->
+                                        viewModel.setPrimaryPhoto(
+                                            lookupKey.ifBlank { displayIdentifier },
+                                            url,
+                                            provider
+                                        )
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Profile photo updated")
                                         }
                                     }
-                                }
-                                Text(
-                                    "Other photos (${(allPhotos.size - 1).coerceAtLeast(0)}) stay here — switch anytime",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = contentSecondary(0.5f),
+                                )
+                            }
+                        }
+                        if (socialAvatarPhotos.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            DetailSection("Social profile photos (${socialAvatarPhotos.size})") {
+                                PhotoPickGrid(
+                                    candidates = socialAvatarPhotos,
+                                    primaryPhotoUrl = primaryPhoto,
+                                    onPick = { url, provider ->
+                                        viewModel.setPrimaryPhoto(
+                                            lookupKey.ifBlank { displayIdentifier },
+                                            url,
+                                            provider
+                                        )
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Profile photo updated")
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -578,14 +532,21 @@ fun DetailsScreen(
                         val showEye = eyeName != null || eyePhoto != null
                         val showFb = fbName != null || fbPhoto != null
                         val showDb = dbName != null || dbPhoto != null
-                        if (showTc || showEye || showFb || showDb) {
-                            DetailSection("Caller ID by source") {
-                                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    if (showTc) SourceIdRow(
-                                        title = "Truecaller Caller ID",
-                                        name = tcName,
-                                        photoUrl = tcPhoto?.url,
-                                        photoLabel = if (tcPhoto != null) "Truecaller photo" else "No Truecaller photo",
+                        // Always show every source with its status — never just one caller ID.
+                        val tcHasSession = try {
+                            com.infocaller.app.data.remote.TruecallerCloudStore.hasValidSession(context)
+                        } catch (_: Exception) { false } catch (_: Error) { false }
+                        DetailSection("Caller ID by source") {
+                            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                SourceIdRow(
+                                    title = "Truecaller Caller ID",
+                                    name = tcName,
+                                    photoUrl = tcPhoto?.url,
+                                    photoLabel = when {
+                                        tcPhoto != null -> "Truecaller photo"
+                                        !tcHasSession -> "Needs Truecaller login — verify again"
+                                        else -> "No Truecaller record"
+                                    },
                                         saveEnabled = tcPhoto != null,
                                         onSave = {
                                             val url = tcPhoto?.url ?: return@SourceIdRow
@@ -603,11 +564,11 @@ fun DetailsScreen(
                                             }
                                         }
                                     )
-                                    if (showEye) SourceIdRow(
+                                    SourceIdRow(
                                         title = "Eyecon Caller ID",
                                         name = eyeName,
                                         photoUrl = eyePhoto?.url,
-                                        photoLabel = if (eyePhoto != null) "Eyecon photo" else "No Eyecon photo",
+                                        photoLabel = if (eyePhoto != null) "Eyecon photo" else "No Eyecon record",
                                         saveEnabled = eyePhoto != null,
                                         onSave = {
                                             val url = eyePhoto?.url ?: return@SourceIdRow
@@ -625,11 +586,11 @@ fun DetailsScreen(
                                             }
                                         }
                                     )
-                                    if (showDb) SourceIdRow(
+                                    SourceIdRow(
                                         title = "My database ($dbSource)",
                                         name = dbName,
                                         photoUrl = dbPhoto,
-                                        photoLabel = if (dbPhoto != null) "Database photo" else "No database photo",
+                                        photoLabel = if (dbPhoto != null) "Database photo" else "Not saved yet",
                                         saveEnabled = dbPhoto != null,
                                         onSave = {
                                             val url = dbPhoto ?: return@SourceIdRow
@@ -647,11 +608,11 @@ fun DetailsScreen(
                                             }
                                         }
                                     )
-                                    if (showFb) SourceIdRow(
+                                    SourceIdRow(
                                         title = "Facebook",
                                         name = fbName,
                                         photoUrl = fbPhoto?.url,
-                                        photoLabel = if (fbPhoto != null) "Facebook photo" else "No Facebook photo",
+                                        photoLabel = if (fbPhoto != null) "Facebook photo" else "Not found",
                                         saveEnabled = fbPhoto != null,
                                         onSave = {
                                             val url = fbPhoto?.url ?: return@SourceIdRow
@@ -671,7 +632,6 @@ fun DetailsScreen(
                                     )
                                 }
                             }
-                        }
                     }
                     Spacer(modifier = Modifier.height(24.dp))
                     CopyableText(
@@ -897,17 +857,18 @@ fun DetailsScreen(
                     Spacer(modifier = Modifier.height(32.dp))
                     DetailSection("Public Information") {
                         val cachedLoc = remember { com.infocaller.app.util.UserLocationResolver.cached(context) }
+                        // Enrichment first: manual edits are merged into enrichment, so a fresh
+                        // scan's generic city must not hide the user's edited location.
                         val liveLoc = LocationUtils.formatCallerLocation(live?.city, live?.region, live?.country)
-                        val location = liveLoc.ifBlank {
-                            LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
-                        }
+                        val enrichmentLoc = LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
+                        val location = enrichmentLoc.ifBlank { liveLoc }
                         val myLoc = cachedLoc?.display()?.takeIf { it.isNotBlank() }
                         if (!myLoc.isNullOrBlank()) DetailRow(Icons.Default.MyLocation, "Your location (on this device)", myLoc, "SIM / IP", onCopy = { copyField("Your location", myLoc) })
                         val locatedSources = remember(live?.city, live?.region, live?.country, live?.nid, enrichment?.city, enrichment?.region, enrichment?.country, enrichment?.nid, location) {
                             LocationUtils.allLocatedSources(
-                                city = live?.city?.takeIf { it.isNotBlank() } ?: enrichment?.city,
-                                region = live?.region?.takeIf { it.isNotBlank() } ?: enrichment?.region,
-                                country = live?.country?.takeIf { it.isNotBlank() } ?: enrichment?.country,
+                                city = enrichment?.city?.takeIf { it.isNotBlank() } ?: live?.city,
+                                region = enrichment?.region?.takeIf { it.isNotBlank() } ?: live?.region,
+                                country = enrichment?.country?.takeIf { it.isNotBlank() } ?: live?.country,
                                 nidAddress = live?.nid?.takeIf { it.isNotBlank() } ?: enrichment?.nid,
                                 emailLocation = live?.email?.takeIf { it.isNotBlank() } ?: enrichment?.email,
                                 simRegion = null,
@@ -1339,6 +1300,104 @@ fun SocialPreviewRow(
                 Icon(Icons.Default.ContentCopy, contentDescription = "Copy ${profile.platform} link", tint = contentSecondary(0.55f), modifier = Modifier.size(18.dp))
             }
         }
+    }
+}
+
+/** Identity-grade photo sources (caller/owner pictures). Everything else is a social avatar. */
+fun isIdentityPhotoProvider(provider: String?): Boolean {
+    val p = provider?.trim()?.lowercase().orEmpty()
+    if (p.isBlank()) return false
+    if (p.startsWith("user:")) return true
+    return p.contains("truecaller") || p.contains("eyecon") || p.contains("gravatar") ||
+        p.contains("github") || p.contains("gitlab") || p.contains("unavatar") ||
+        p.contains("email") || p.contains("database") || p.contains("premium") ||
+        p.contains("apify") || p.contains("shared registry") || p.contains("verified") ||
+        p.contains("manual") || p.contains("accountenumerator") || p.contains("phonebridge")
+}
+
+@Composable
+fun PhotoPickGrid(
+    candidates: List<com.infocaller.app.domain.model.PhotoCandidate>,
+    primaryPhotoUrl: String?,
+    onPick: (url: String, provider: String) -> Unit,
+) {
+    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            "Tap a photo to set it as the profile picture",
+            style = MaterialTheme.typography.labelSmall,
+            color = contentSecondary(0.6f),
+        )
+        candidates.chunked(3).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                row.forEach { candidate ->
+                    val isPrimary = candidate.url == primaryPhotoUrl
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(14.dp))
+                            .border(
+                                width = if (isPrimary) 3.dp else 1.dp,
+                                color = if (isPrimary) Primary else contentSecondary(0.25f),
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .clickable { if (!isPrimary) onPick(candidate.url, candidate.provider) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = candidate.url,
+                            contentDescription = "${candidate.provider} photo",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                            error = rememberVectorPainter(Icons.Default.Person),
+                            placeholder = rememberVectorPainter(Icons.Default.Person)
+                        )
+                        if (isPrimary) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .padding(6.dp)
+                                    .background(Primary, RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    "PRIMARY",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(6.dp)
+                                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    candidate.provider.take(14),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
+                }
+                repeat(3 - row.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+        Text(
+            "Other photos (${(candidates.size - 1).coerceAtLeast(0)}) stay here — switch anytime",
+            style = MaterialTheme.typography.labelSmall,
+            color = contentSecondary(0.5f),
+        )
     }
 }
 

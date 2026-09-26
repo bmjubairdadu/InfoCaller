@@ -408,8 +408,7 @@ async function fetchNidBytes(url) {
     if (GITHUB_TOKENS.length === 0) throw new Error('GITHUB_TOKEN is not set, so the private database cannot be read');
     let meta;
     try {
-        const metaRes = await githubUrlGet(url, { 'Accept': 'application/vnd.github.v3+json' }, 30000);
-        meta = metaRes.data;
+        meta = await githubUrlGet(url, { 'Accept': 'application/vnd.github.v3+json' }, 30000);
     } catch (e) {
         const code = e.response ? e.response.status : 0;
         const detail = e.response && e.response.data && e.response.data.message

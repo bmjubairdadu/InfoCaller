@@ -73,6 +73,9 @@ object PhotoPolicy {
             if (p.isBlank()) return false
             if (p.startsWith("user:")) return true
             if (p.contains("truecaller") || p.contains("eyecon")) return true
+            // Paid identity-grade intel (Apify backend) is as trustworthy as
+            // Truecaller/Eyecon — its photo may become the primary picture.
+            if (p.contains("premium") || p.contains("apify")) return true
             if (identifierType == IdentifierType.EMAIL) {
                 if (p.contains("gravatar")) return true
                 if (p.contains("github")) return true
