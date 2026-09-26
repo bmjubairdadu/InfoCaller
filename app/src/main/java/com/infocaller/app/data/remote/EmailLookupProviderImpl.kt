@@ -2,6 +2,7 @@ package com.infocaller.app.data.remote
 
 import com.infocaller.app.domain.engine.*
 import com.infocaller.app.domain.model.SocialProfile
+import com.infocaller.app.domain.model.SocialLookupStatus
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.infocaller.app.util.await
@@ -40,6 +41,8 @@ class EmailLookupProviderImpl(
 
     private suspend fun fetchGravatar(email: String): PartialResult? {
         try {
+            val v3 = fetchGravatarV3(email)
+            if (v3 != null) return v3
             val hash = md5(email.trim().lowercase())
             val result = fetchGravatarJson(email, hash)
             if (result != null) return result
@@ -58,6 +61,68 @@ class EmailLookupProviderImpl(
         } catch (_: Exception) {
         }
         return null
+    }
+
+    /**
+     * Modern Gravatar v3 profiles API (SHA-256 hashed). Covers accounts that only
+     * resolve through the new API (legacy md5 .json endpoint misses newer profiles),
+     * and also returns verified external accounts which the legacy endpoint omits.
+     */
+    private suspend fun fetchGravatarV3(email: String): PartialResult? {
+        return try {
+            val sha = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(email.trim().lowercase().toByteArray())
+                .joinToString("") { "%02x".format(it) }
+            val url = "https://api.gravatar.com/v3/profiles/$sha"
+            val request = Request.Builder().url(url)
+                .header("Accept", "application/json")
+                .build()
+            httpClient.newCall(request).await().use { response ->
+                if (!response.isSuccessful) return@use null
+                val body = try { response.peekBody(50_000L).string() } catch (_: Exception) { return@use null } catch (_: Error) { return@use null }
+                if (body.length > 50_000) return@use null
+                val json = try { gson.fromJson(body, JsonObject::class.java) } catch (_: Exception) { null } ?: return@use null
+                val name = json.get("display_name")?.takeIf { !it.isJsonNull }?.asString?.trim()?.takeIf { it.length in 2..60 }
+                val rawAvatar = json.get("avatar_url")?.takeIf { !it.isJsonNull }?.asString
+                val image = try {
+                    rawAvatar?.takeIf { it.startsWith("http") && com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(it) }
+                } catch (_: Exception) { null } catch (_: Error) { null }
+                val about = json.get("description")?.takeIf { !it.isJsonNull }?.asString?.trim()?.takeIf { it.isNotBlank() }?.take(350)
+                val city = json.get("location")?.takeIf { !it.isJsonNull }?.asString?.trim()?.takeIf { it.isNotBlank() }?.take(80)
+                val verified = try {
+                    json.getAsJsonArray("verified_accounts")?.mapNotNull { a ->
+                        try {
+                            val o = a.asJsonObject
+                            val u = o.get("url")?.takeIf { !it.isJsonNull }?.asString ?: return@mapNotNull null
+                            val label = (o.get("label")?.takeIf { !it.isJsonNull }?.asString ?: "Verified")
+                            if (u.startsWith("http") && u.length > 12) {
+                                SocialProfile(label, "", u, SocialLookupStatus.PUBLIC_MATCH)
+                            } else null
+                        } catch (_: Exception) { null } catch (_: Error) { null }
+                    }.orEmpty()
+                } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+                if (name == null && image == null && about == null && verified.isEmpty()) return@use null
+                val profileUrl = "https://gravatar.com/$sha"
+                val socials = if (name != null || image != null || about != null) {
+                    verified + SocialProfile("Gravatar", "", profileUrl, SocialLookupStatus.PUBLIC_MATCH, name)
+                } else verified
+                PartialResult(
+                    identifierType = IdentifierType.EMAIL,
+                    name = name,
+                    imageUrl = image,
+                    photoCandidates = image?.let {
+                        listOf(com.infocaller.app.domain.model.PhotoCandidate(provider = "Gravatar", url = it, sourcePriority = 63))
+                    }.orEmpty(),
+                    about = about,
+                    city = city,
+                    socialProfiles = socials.distinctBy { it.platform.lowercase() },
+                    confidence = if (name != null) 0.9f else 0.75f,
+                    source = "Gravatar",
+                    providerId = id,
+                    providerVersion = version
+                )
+            }
+        } catch (_: Exception) { null } catch (_: Error) { null }
     }
 
     private suspend fun fetchGravatarJson(email: String, hash: String): PartialResult? {

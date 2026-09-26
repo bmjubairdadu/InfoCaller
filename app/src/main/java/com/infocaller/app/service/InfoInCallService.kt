@@ -45,15 +45,35 @@ class InfoInCallService : InCallService() {
     override fun onCallAdded(call: Call) {
         super.onCallAdded(call)
 
-        CallManager.updateCall(call)
-        CallManager.setInCallService(this)
-
         @Suppress("DEPRECATION")
         val state = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             call.details?.state ?: Call.STATE_DISCONNECTED
         } else {
             call.state
         }
+
+        // Fallback for call-based Truecaller verification when the screening service didn't reject
+        // the call first: capture the OTP tail, reject the call and don't surface any UI.
+        if (state == Call.STATE_RINGING && com.infocaller.app.util.VerificationState.hasActiveCallVerification(this)) {
+            try {
+                val num = call.details?.handle?.schemeSpecificPart
+                if (!num.isNullOrBlank()) {
+                    val clean = num.substringBefore(';').substringBefore('?')
+                    val allDigits = clean.filter { it.isDigit() }
+                    val tail = if (allDigits.length >= 6) allDigits.takeLast(6) else allDigits
+                    if (tail.isNotBlank()) {
+                        com.infocaller.app.util.OtpManager.onMissedCallTailSync(tail, clean, isIdle = false)
+                    }
+                }
+            } catch (_: Exception) { }
+            try { call.reject(false, null) } catch (_: Exception) {
+                try { call.disconnect() } catch (_: Exception) { }
+            }
+            return
+        }
+
+        CallManager.updateCall(call)
+        CallManager.setInCallService(this)
 
         if (state == Call.STATE_RINGING) {
             showIncomingCallNotification(call)
@@ -155,7 +175,9 @@ class InfoInCallService : InCallService() {
         val location = com.infocaller.app.util.LocationUtils.formatCallerLocation(enrichment?.city, enrichment?.region, enrichment?.country)
         val subText = if (enrichment == null && displayName == number) "Identifying..." else location
 
-        val isScreenOn = (getSystemService(Context.POWER_SERVICE) as android.os.PowerManager).isInteractive
+        val isScreenOn = try {
+            (getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager)?.isInteractive ?: true
+        } catch (_: Exception) { true } catch (_: Error) { true }
         val notification = androidx.core.app.NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.ic_menu_call)
             .setContentTitle(displayName)

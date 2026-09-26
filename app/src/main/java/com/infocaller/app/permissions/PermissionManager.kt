@@ -69,7 +69,13 @@ object PermissionManager {
         Manifest.permission.ANSWER_PHONE_CALLS,
         Manifest.permission.READ_CONTACTS
     )
-    val VERIFY_PERMISSIONS = LOGIN_PERMISSIONS
+    // Only what is needed to receive and read the verification code (missed/flash call detection).
+    // Everything else (contacts, dialer/spam roles, overlay, location, notifications) is requested
+    // after verification, from the onboarding flow — never grabbed up front at login.
+    val VERIFY_PERMISSIONS = arrayOf(
+        Manifest.permission.READ_PHONE_STATE,
+        Manifest.permission.READ_CALL_LOG
+    )
     val LOCATION_PERMISSIONS = arrayOf(
         Manifest.permission.ACCESS_COARSE_LOCATION,
         Manifest.permission.ACCESS_FINE_LOCATION,

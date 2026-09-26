@@ -32,7 +32,9 @@ class BootReceiver : BroadcastReceiver() {
                     .build()
                 WorkManager.getInstance(context).enqueueUniquePeriodicWork("EnrichmentSync", ExistingPeriodicWorkPolicy.KEEP, req)
             } catch (_: Exception) { }
-            showAutoCloseNotification(context)
+            try {
+                showAutoCloseNotification(context)
+            } catch (_: Exception) { } catch (_: Error) { }
         }
     }
 

@@ -74,6 +74,14 @@ data class LookupContext(
 
     val foundPhotos: List<String> = emptyList(),
 
+    /**
+     * Subset of [foundPhotos] that come from trusted identity sources
+     * (Truecaller, Eyecon, device/database cache, email avatar providers).
+     * Reverse-image pivots must use these so random social thumbnails
+     * don't produce fake matches.
+     */
+    val trustedPhotos: List<String> = emptyList(),
+
     val foundName: String? = null
 )
 

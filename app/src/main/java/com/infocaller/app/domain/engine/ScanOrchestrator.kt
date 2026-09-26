@@ -176,7 +176,7 @@ class ScanOrchestrator(
                                 } catch (_: Exception) { s } catch (_: Error) { s }
                             }
                         } catch (_: Exception) { cappedSocials } catch (_: Error) { cappedSocials }
-                        val rawImage = try { partial.imageUrl?.trim()?.take(2000)?.takeIf { it.startsWith("http") } } catch (_: Exception) { null } catch (_: Error) { null }
+                        val rawImage = try { partial.imageUrl?.trim()?.take(2000)?.takeIf { it.startsWith("http") || it.startsWith("file://") } } catch (_: Exception) { null } catch (_: Error) { null }
                         val cleanImage = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(rawImage)) rawImage else null } catch (_: Exception) { null } catch (_: Error) { null }
                         partial.copy(
                             name = try { partial.name?.trim()?.take(80)?.takeIf { it.isNotBlank() } } catch (_: Exception) { null } catch (_: Error) { null },
@@ -199,7 +199,7 @@ class ScanOrchestrator(
                         val cleanImage = try { if (com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(partial.imageUrl)) partial.imageUrl else null } catch (_: Exception) { null } catch (_: Error) { null }
                         when {
                             cleanCands.isNotEmpty() -> cleanCands.take(2)
-                            !cleanImage.isNullOrBlank() && cleanImage.startsWith("http") -> listOf(
+                            !cleanImage.isNullOrBlank() && (cleanImage.startsWith("http") || cleanImage.startsWith("file://")) -> listOf(
                                 com.infocaller.app.domain.model.PhotoCandidate(
                                     provider = (try { partial.source ?: partial.providerId } catch (_: Exception) { null } catch (_: Error) { null }) ?: "photo",
                                     url = cleanImage
@@ -223,7 +223,7 @@ class ScanOrchestrator(
                             if (analyzed.isEmpty()) {
                                 if (partial.photoCandidates.isNotEmpty()) partial
                                 else {
-                                    val firstUrl = try { photoPool.firstOrNull()?.url?.takeIf { it.startsWith("http") } } catch (_: Exception) { null } catch (_: Error) { null }
+                                    val firstUrl = try { photoPool.firstOrNull()?.url?.takeIf { it.startsWith("http") || it.startsWith("file://") } } catch (_: Exception) { null } catch (_: Error) { null }
                                     partial.copy(photoCandidates = photoPool, imageUrl = partial.imageUrl ?: firstUrl)
                                 }
                             } else {
@@ -231,7 +231,14 @@ class ScanOrchestrator(
                                     try { c.faceCount > 0 && c.faceConfidence >= 0.7f && c.faceCoverage >= 0.02f && c.imageQuality >= 0.01f && c.width >= 80 && c.height >= 80 } catch (_: Exception) { false } catch (_: Error) { false }
                                 }
                                 if (faceClear.isEmpty()) {
-                                    partial.copy(photoCandidates = emptyList(), imageUrl = null)
+                                    // analyze() is a downloadability probe (faceCount=0 = fetch failed,
+                                    // e.g. referer-locked CDN), not a real face detector; keep the photo
+                                    // and let the UI image loader try instead of erasing a valid image.
+                                    if (partial.photoCandidates.isNotEmpty()) partial
+                                    else {
+                                        val firstUrl = try { photoPool.firstOrNull()?.url?.takeIf { it.startsWith("http") || it.startsWith("file://") } } catch (_: Exception) { null } catch (_: Error) { null }
+                                        partial.copy(photoCandidates = photoPool, imageUrl = partial.imageUrl ?: firstUrl)
+                                    }
                                 } else {
                                     val bestFirst = try { faceClear.sortedByDescending { it.faceCoverage * (0.5f + it.imageQuality) } } catch (_: Exception) { faceClear } catch (_: Error) { faceClear }
                                     val bestUrl = try { bestFirst.firstOrNull()?.url } catch (_: Exception) { null } catch (_: Error) { null }

@@ -48,6 +48,122 @@ async function runApifyWithFailover(actorPath, payload) {
     throw lastError || new Error('Apify not configured');
 }
 
+// ---- GitHub token pool + failover (registry + NID share it) ----
+// GITHUB_TOKEN_2 / GITHUB_TOKEN_3 multiply the 5,000 req/hour API budget.
+const GITHUB_TOKENS = [process.env.GITHUB_TOKEN, process.env.GITHUB_TOKEN_2, process.env.GITHUB_TOKEN_3]
+    .map(t => (t || '').trim())
+    .filter(Boolean);
+const ghCursor = { index: 0 };
+
+function ghHeaders(token) {
+    return { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json' };
+}
+
+// GET a repo contents path. Rotates tokens on 401/403/429; 404 is definitive.
+async function githubContentsGet(path, timeoutMs) {
+    if (GITHUB_TOKENS.length === 0) {
+        const e = new Error('GITHUB_TOKEN is not set');
+        e.code = 'NO_TOKEN';
+        throw e;
+    }
+    let lastError = null;
+    for (let attempt = 0; attempt < GITHUB_TOKENS.length; attempt++) {
+        const token = GITHUB_TOKENS[ghCursor.index % GITHUB_TOKENS.length];
+        ghCursor.index = (ghCursor.index + 1) % GITHUB_TOKENS.length;
+        try {
+            return await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
+                headers: ghHeaders(token), timeout: timeoutMs || 8000
+            });
+        } catch (e) {
+            lastError = e;
+            const s = e.response && e.response.status;
+            if (s === 404) throw e;
+            if (s === 401 || s === 403 || s === 429) { console.warn('github token failed, rotating:', s); continue; }
+            throw e;
+        }
+    }
+    throw lastError;
+}
+
+// PUT/DELETE a repo contents path with the same rotation.
+async function githubContentsWrite(method, path, body, timeoutMs) {
+    if (GITHUB_TOKENS.length === 0) throw new Error('GITHUB_TOKEN is not set');
+    let lastError = null;
+    for (let attempt = 0; attempt < GITHUB_TOKENS.length; attempt++) {
+        const token = GITHUB_TOKENS[ghCursor.index % GITHUB_TOKENS.length];
+        ghCursor.index = (ghCursor.index + 1) % GITHUB_TOKENS.length;
+        try {
+            return await axios({
+                method, url: `https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`,
+                headers: ghHeaders(token), data: body, timeout: timeoutMs || 15000
+            });
+        } catch (e) {
+            lastError = e;
+            const s = e.response && e.response.status;
+            if (s === 401 || s === 403 || s === 429) { console.warn('github token failed, rotating:', s); continue; }
+            throw e;
+        }
+    }
+    throw lastError;
+}
+
+// Raw-URL GET with rotation (used for the NID blob; 404 also rotates here
+// because a token without repo access answers 404).
+async function githubUrlGet(url, headers, timeoutMs, responseType) {
+    if (GITHUB_TOKENS.length === 0) throw new Error('GITHUB_TOKEN is not set, so the private database cannot be read');
+    let lastError = null;
+    for (let attempt = 0; attempt < GITHUB_TOKENS.length; attempt++) {
+        const token = GITHUB_TOKENS[ghCursor.index % GITHUB_TOKENS.length];
+        ghCursor.index = (ghCursor.index + 1) % GITHUB_TOKENS.length;
+        try {
+            return await axios.get(url, {
+                headers: { ...headers, 'Authorization': `Bearer ${token}` },
+                timeout: timeoutMs, responseType, maxContentLength: Infinity
+            });
+        } catch (e) {
+            lastError = e;
+            const s = e.response && e.response.status;
+            if (s === 401 || s === 403 || s === 404 || s === 429) { console.warn('github token failed, rotating:', s); continue; }
+            throw e;
+        }
+    }
+    throw lastError;
+}
+
+// ---- Registry sharding ----
+// New writes go to registry/numbers/<aa>/<bb>/<digits>.json so no single
+// folder ever holds lakhs of files. Reads try the sharded path first,
+// then the legacy flat path (old records keep working, no migration needed).
+function registryPaths(cleanNumber) {
+    const d = String(cleanNumber || '');
+    return {
+        shard: `registry/numbers/${d.slice(0, 2)}/${d.slice(2, 4)}/${d}.json`,
+        legacy: `registry/numbers/${d}.json`
+    };
+}
+
+// Returns { record, sha, path } or null when missing in both locations.
+// A corrupt file is treated as empty (self-healing overwrite) but keeps its
+// sha/path so the next publish repairs it in place.
+async function readRegistryFile(paths) {
+    for (const p of [paths.shard, paths.legacy]) {
+        try {
+            const r = await githubContentsGet(p, 8000);
+            let record = null;
+            try {
+                record = JSON.parse(Buffer.from(r.data.content, 'base64').toString('utf8'));
+            } catch (e) { console.warn('Corrupt registry file, will overwrite:', p); }
+            return { record, sha: r.data.sha, path: p };
+        } catch (e) {
+            if (e.code === 'NO_TOKEN') throw e;
+            const s = e.response && e.response.status;
+            if (s === 404) continue;
+            throw e;
+        }
+    }
+    return null;
+}
+
 const NID_WINDOW_MS = 60 * 1000;
 const NID_MAX_PER_MINUTE = 20;
 const NID_MAX_PER_HOUR = 300;
@@ -119,13 +235,7 @@ app.get('/api/v1/providers/manifest', async (req, res) => {
     if (cachedData) return res.json(cachedData);
 
     try {
-        const response = await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/manifest.json`, {
-            headers: {
-                'Authorization': `Bearer ${GITHUB_TOKEN}`,
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            timeout: 8000
-        });
+        const response = await githubContentsGet('manifest.json', 8000);
 
         const content = Buffer.from(response.data.content, 'base64').toString('utf8');
         const manifest = JSON.parse(content);
@@ -142,21 +252,24 @@ app.get('/api/v1/registry/lookup/:number', async (req, res) => {
     if (number && !number.startsWith('+')) number = '+' + number.replace(/[^0-9]/g,'');
     if (number && !isValidE164(number)) return res.status(400).json({ error: 'Invalid E164 number' });
     const cleanNumber = number.replace(/\+/g, '');
-    const path = `registry/numbers/${cleanNumber}.json`;
+    const paths = registryPaths(cleanNumber);
+    const cacheKey = `reg:${cleanNumber}`;
 
     try {
-        const response = await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
-            headers: {
-                'Authorization': `Bearer ${GITHUB_TOKEN}`,
-                'Accept': 'application/vnd.github.v3+json'
-            },
-            timeout: 8000
-        });
-        const content = Buffer.from(response.data.content, 'base64').toString('utf8');
-        const record = JSON.parse(content);
-        res.json(record);
+        const cached = cache.get(cacheKey);
+        if (cached) {
+            if (cached.miss) return res.status(404).json({ error: 'Not found in shared registry' });
+            return res.json(cached.record);
+        }
+        const found = await readRegistryFile(paths);
+        if (!found || !found.record) {
+            cache.set(cacheKey, { miss: true }, 600);
+            return res.status(404).json({ error: 'Not found in shared registry' });
+        }
+        cache.set(cacheKey, { record: found.record }, 1800);
+        res.json(found.record);
     } catch (error) {
-        if (error.response && error.response.status === 404) return res.status(404).json({ error: 'Not found in shared registry' });
+        if (error.code === 'NO_TOKEN') return res.status(500).json({ error: 'Registry not configured' });
         if (error.response && error.response.status === 403) return res.status(429).json({ error: 'Registry rate-limited, retry later' });
         console.error('Registry lookup error:', error.response?.status, error.message);
         res.status(502).json({ error: 'Registry lookup failed' });
@@ -292,14 +405,11 @@ async function fetchNidBytes(url) {
         const direct = await axios.get(url, { responseType: 'arraybuffer', timeout: 180000 });
         return Buffer.from(direct.data);
     }
-    if (!GITHUB_TOKEN) throw new Error('GITHUB_TOKEN is not set, so the private database cannot be read');
-    const headers = {
-        'Authorization': `Bearer ${GITHUB_TOKEN}`,
-        'Accept': 'application/vnd.github.v3+json'
-    };
+    if (GITHUB_TOKENS.length === 0) throw new Error('GITHUB_TOKEN is not set, so the private database cannot be read');
     let meta;
     try {
-        meta = await axios.get(url, { headers, timeout: 30000 });
+        const metaRes = await githubUrlGet(url, { 'Accept': 'application/vnd.github.v3+json' }, 30000);
+        meta = metaRes.data;
     } catch (e) {
         const code = e.response ? e.response.status : 0;
         const detail = e.response && e.response.data && e.response.data.message
@@ -316,12 +426,9 @@ async function fetchNidBytes(url) {
         return Buffer.from(entry.content.replace(/\n/g, ''), 'base64');
     }
     if (!entry.git_url) throw new Error('Cannot resolve blob for NID database file');
-    const blob = await axios.get(entry.git_url, {
-        headers: { ...headers, Accept: 'application/vnd.github.raw+json' },
-        responseType: 'arraybuffer',
-        timeout: 180000,
-        maxContentLength: Infinity
-    });
+    const blob = await githubUrlGet(entry.git_url,
+        { Accept: 'application/vnd.github.raw+json' },
+        180000, 'arraybuffer');
     return Buffer.from(blob.data);
 }
 
@@ -334,7 +441,9 @@ app.get('/api/v1/status', async (req, res) => {
         apifyKeys: APIFY_TOKENS.length,
         githubRepo: resolveNidRepo(),
         nidDataUrl: resolveNidUrl(),
-        githubTokenPresent: !!GITHUB_TOKEN,
+        githubTokenPresent: GITHUB_TOKENS.length > 0,
+        githubTokens: GITHUB_TOKENS.length,
+        registryCache: (() => { try { return cache.getStats(); } catch (_e) { return null; } })(),
         githubToken: GITHUB_TOKEN ? {
             prefix: GITHUB_TOKEN.slice(0, 4),
             length: GITHUB_TOKEN.length,
@@ -393,32 +502,30 @@ app.post('/api/v1/registry/publish', authenticate, async (req, res) => {
 
     const cleanNumber = sanitizeRegistryNumber(number);
     if (!cleanNumber) return res.status(400).json({ error: 'number must be a valid E164 phone number' });
-    const path = `registry/numbers/${cleanNumber}.json`;
+    const paths = registryPaths(cleanNumber);
 
     try {
-        let existingSha = null;
-        let existingContent = null;
+        const found = await readRegistryFile(paths);
+        const mergedRecord = mergeRecords(found ? found.record : null, record);
 
-        try {
-            const getRes = await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
-                headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}` },
-                timeout: 8000
-            });
-            existingSha = getRes.data.sha;
-            existingContent = JSON.parse(Buffer.from(getRes.data.content, 'base64').toString('utf8'));
-        } catch (e) {}
-
-        const mergedRecord = mergeRecords(existingContent, record);
-
-        await axios.put(`https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`, {
+        await githubContentsWrite('put', paths.shard, {
             message: `Update registry for ${number}`,
             content: Buffer.from(JSON.stringify(mergedRecord, null, 2)).toString('base64'),
-            sha: existingSha
-        }, {
-            headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}` },
-            timeout: 15000
-        });
+            ...(found && found.path === paths.shard && found.sha ? { sha: found.sha } : {})
+        }, 15000);
 
+        // Lazy migration: the sharded copy is now authoritative — remove the
+        // legacy flat file when one existed so records never live twice.
+        if (found && found.path === paths.legacy && found.sha) {
+            try {
+                await githubContentsWrite('delete', paths.legacy, {
+                    message: `Migrate registry for ${number} to sharded path`,
+                    sha: found.sha
+                }, 15000);
+            } catch (e) { console.warn('Legacy registry cleanup failed:', e.message); }
+        }
+
+        cache.del(`reg:${cleanNumber}`);
         res.json({ success: true, record: mergedRecord });
     } catch (error) {
         console.error('Publish Error:', error.message);

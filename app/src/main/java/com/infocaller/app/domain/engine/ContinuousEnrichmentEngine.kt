@@ -142,49 +142,11 @@ class ContinuousEnrichmentEngine(
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private suspend fun persistBackgroundResult(identifier: String, res: com.infocaller.app.domain.model.LookupResult) {
-        if (res.confidence < 0.4f && res.name.isNullOrBlank() && res.imageUrl.isNullOrBlank() &&
-            res.city.isNullOrBlank() && res.about.isNullOrBlank() && res.socialProfiles.isEmpty()
-        ) return
-        try {
-            val svc = enrichmentService ?: return
-            val canWrite = try {
-                com.infocaller.app.permissions.PermissionManager.hasPermissions(
-                    context, com.infocaller.app.permissions.PermissionManager.WRITE_CONTACTS_PERMISSION
-                )
-            } catch (_: Exception) { false }
-            if (!canWrite) {
-                try {
-                    (context as? android.app.Activity)?.let { activity ->
-                        androidx.core.app.ActivityCompat.requestPermissions(
-                            activity,
-                            com.infocaller.app.permissions.PermissionManager.WRITE_CONTACTS_PERMISSION,
-                            1401
-                        )
-                    }
-                } catch (_: Exception) { }
-                return
-            }
-            try {
-                svc.updateExistingContact(
-                    phoneNumber = identifier,
-                    caller = Caller(
-                        phoneNumber = identifier,
-                        displayName = null,
-                        alias = res.name ?: res.alternateName,
-                        photoUrl = res.imageUrl,
-                        organization = res.carrier,
-                        carrier = res.carrier,
-                        country = res.country,
-                        region = res.region,
-                        reportCount = 0,
-                        isVerified = false,
-                        socialMediaLinks = res.socialProfiles.mapNotNull { it.profileUrl }
-                    )
-                )
-            } catch (se: SecurityException) {
-            } catch (_: Exception) { }
-        } catch (_: Exception) { }
+        // DISABLED: background write-back into the device phonebook is turned off.
+        // The result is already cached in the app database and published to the shared
+        // registry in processItem(); the user's contacts are never modified in the background.
     }
 
     suspend fun enqueue(id: String, type: String = IdentifierType.PHONE, priority: Int = QueuePriority.MEDIUM, contactId: Long? = null) {

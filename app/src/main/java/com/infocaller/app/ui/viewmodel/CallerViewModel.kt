@@ -73,7 +73,24 @@ class CallerViewModel(
         deviceDataRepository.getContacts()
     }
         .map { list ->
-            try { list.take(5000).map { it.copy(phoneNumber = PhoneNumberUtils.normalize(it.phoneNumber ?: "")) } } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+            try {
+                val normalized = list.take(5000).map { it.copy(phoneNumber = PhoneNumberUtils.normalize(it.phoneNumber ?: "")) }
+                // Collapse duplicates by normalized digits (one contact shown once).
+                val best = linkedMapOf<String, Contact>()
+                for (c in normalized) {
+                    val digits = try { (c.phoneNumber ?: "").filter { ch -> ch.isDigit() } } catch (_: Exception) { "" } catch (_: Error) { "" }
+                    if (digits.length < 7) continue
+                    val key = digits.takeLast(15)
+                    val cur = best[key]
+                    if (cur == null) { best[key] = c; continue }
+                    val curScore = (if (!com.infocaller.app.util.ContactUtils.isPlaceholderName(cur.displayName)) 2 else 0) +
+                        (if (cur.photoUri != null) 1 else 0)
+                    val newScore = (if (!com.infocaller.app.util.ContactUtils.isPlaceholderName(c.displayName)) 2 else 0) +
+                        (if (c.photoUri != null) 1 else 0)
+                    if (newScore > curScore) best[key] = c
+                }
+                best.values.toList()
+            } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
         }
         .catch { emit(emptyList()) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -384,14 +401,11 @@ class CallerViewModel(
         _scanActive.value = false
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private suspend fun autoSyncToPhonebook(result: LookupResult) {
-        if (result.phoneNumber.isBlank()) return
-        if (!com.infocaller.app.util.IdentifierRouter.routeType(result.phoneNumber)
-            .equals(com.infocaller.app.domain.engine.IdentifierType.PHONE, ignoreCase = true)
-        ) return
-        val caller = mapToCaller(result)
-        if (caller.displayName.isNullOrBlank() && caller.photoUrl.isNullOrBlank()) return
-        contactEnrichmentService.updateExistingContact(result.phoneNumber, caller)
+        // DISABLED: the app no longer writes enriched data back into the device phonebook
+        // automatically. Caller ID is served from the app's own database; the user's
+        // contacts are only changed when they explicitly save, edit, or set a photo.
     }
 
     private fun mapToCaller(res: LookupResult): Caller {
@@ -473,10 +487,35 @@ class CallerViewModel(
         return contactEnrichmentService.saveContactFast(phoneNumber, name, photoUrl)
     }
 
+    /** Explicit user edit → also mirror name/photo/city/carrier into the device phonebook. */
+    suspend fun persistEditToPhonebook(
+        phoneNumber: String,
+        name: String,
+        photoUrl: String?,
+        city: String,
+        carrier: String
+    ): Boolean {
+        return try {
+            contactEnrichmentService.applyUserEditToPhonebook(phoneNumber, name, photoUrl, city, carrier)
+        } catch (_: Exception) { false } catch (_: Error) { false }
+    }
+
     val localContacts: StateFlow<List<LocalContactEntity>> = database.localContactDao().getAllContacts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val enrichedContacts: StateFlow<List<com.infocaller.app.data.local.model.EnrichedContact>> = database.localContactDao().getAllEnrichedContacts()
+        .map { list ->
+            try {
+                val best = linkedMapOf<String, com.infocaller.app.data.local.model.EnrichedContact>()
+                for (e in list) {
+                    val digits = try { e.contact.phoneNumber.filter { ch -> ch.isDigit() } } catch (_: Exception) { "" } catch (_: Error) { "" }
+                    if (digits.length < 7) continue
+                    val key = digits.takeLast(15)
+                    if (!best.containsKey(key)) best[key] = e
+                }
+                best.values.toList()
+            } catch (_: Exception) { list } catch (_: Error) { list }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun triggerThrottledSync(context: Context) {

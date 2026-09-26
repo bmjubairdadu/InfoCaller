@@ -16,28 +16,55 @@ class ReverseImageSearchProviderImpl(private val httpClient: OkHttpClient) : Loo
     override val priority = 38
     override val costClass = CostClass.FREE
 
+    private fun isTrustedSeed(url: String): Boolean {
+        return try {
+            val lower = url.trim().lowercase()
+            if (lower.isBlank()) return false
+            // Only identity-grade photos seed reverse-image search: Truecaller pic,
+            // database pic, email pics (Gravatar/GitHub/GitLab/Unavatar), Eyecon cache.
+            if (lower.startsWith("file://")) return lower.contains("eyecon") || lower.contains("manual")
+            if (!lower.startsWith("http")) return false
+            lower.contains("gravatar.com/avatar") || lower.contains("secure.gravatar.com") ||
+                lower.contains("avatars.githubusercontent.com") || lower.contains("unavatar.io") ||
+                lower.contains("github.com") || lower.contains("gitlab.com") ||
+                lower.contains("eyecon") || lower.contains("truecaller")
+        } catch (_: Exception) { false }
+    }
+
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         try {
-            val autoPhotos = context.foundPhotos.filter { it.startsWith("http") }.distinct().take(3)
+            // Prefer engine-tagged trusted photos (Truecaller / database / email pics);
+            // fall back to filtering raw found photos so random social thumbnails
+            // never seed reverse-image matches.
+            val trustedCtx = try { context.trustedPhotos.filter { it.isNotBlank() }.distinct().take(3) } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+            val autoPhotos = if (trustedCtx.isNotEmpty()) {
+                trustedCtx
+            } else {
+                try { context.foundPhotos.filter { isTrustedSeed(it) }.distinct().take(3) } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+            }
             if (autoPhotos.isNotEmpty()) {
-                val links = autoPhotos.flatMap { photo ->
+                val httpSeeds = autoPhotos.filter { it.startsWith("http") }.take(3)
+                val links = httpSeeds.flatMap { photo ->
                     val enc = URLEncoder.encode(photo, StandardCharsets.UTF_8.toString())
                     listOf(
                         "Google Lens: https://lens.google.com/uploadbyurl?url=$enc",
                         "TinEye: https://tineye.com/search?url=$enc",
                         "Bing Visual: https://www.bing.com/images/searchbyimage/upload?imgurl=$enc"
                     )
+                }.toMutableList()
+                if (links.isEmpty()) {
+                    links.add("Google Lens upload: https://lens.google.com/v3/upload (pick the caller's photo)")
                 }
                 val about = buildString {
-                    append("Reverse-image the caller's found photo (${autoPhotos.size} photo${if (autoPhotos.size > 1) "s" else ""}) to find more accounts. ")
+                    append("Reverse-image the caller's verified photo (${autoPhotos.size} photo${if (autoPhotos.size > 1) "s" else ""}, Truecaller/database/email only) to find more accounts. ")
                     append(links.joinToString(" • "))
                 }
                 return@withContext PartialResult(
-                    imageUrl = autoPhotos.first(),
+                    imageUrl = httpSeeds.firstOrNull() ?: autoPhotos.first(),
                     photoCandidates = autoPhotos.map { PhotoCandidate(provider = "ReverseImage", url = it, sourcePriority = 55) },
                     about = about.take(900),
                     confidence = 0.65f,
-                    source = "Reverse Image Search (Lens/TinEye/Bing — auto photo)",
+                    source = "Reverse Image Search (Lens/TinEye/Bing — verified photo)",
                     providerId = id, providerVersion = version
                 )
             }

@@ -114,8 +114,8 @@ fun DetailsScreen(
         if (isNonPhoneScan) null else contactsList.find { it.phoneNumber == phoneNumber }
     }
     val isContact = contact != null
-    var showAddContactDialog by remember { mutableStateOf(false) }
-    var showEditDialog by remember { mutableStateOf(false) }
+    var showAddContactDialog by remember(displayIdentifier) { mutableStateOf(false) }
+    var showEditDialog by remember(displayIdentifier) { mutableStateOf(false) }
     val scanSteps by viewModel.scanSteps.collectAsState()
     val scanActive by viewModel.scanActive.collectAsState()
     GlassyBackground {
@@ -251,7 +251,7 @@ fun DetailsScreen(
             val hasPartial = caller != null || livePartial != null ||
                 (enr != null && (!enr.publicName.isNullOrBlank() || !enr.profileImageUrl.isNullOrBlank()))
             if (displayIdentifier.isBlank() && caller == null) {
-                var timedOut by remember { mutableStateOf(false) }
+                var timedOut by remember(displayIdentifier) { mutableStateOf(false) }
                 LaunchedEffect(Unit) {
                     kotlinx.coroutines.delay(20000)
                     timedOut = true
@@ -561,13 +561,24 @@ fun DetailsScreen(
                     run {
                         val tcPhoto = allPhotos.firstOrNull { it.provider.equals("Truecaller", ignoreCase = true) }
                         val eyePhoto = allPhotos.firstOrNull { it.provider.equals("Eyecon", ignoreCase = true) }
+                        val fbPhoto = allPhotos.firstOrNull { it.provider.equals("Facebook", ignoreCase = true) }
                         val tcName = live?.alternateNames?.entries?.firstOrNull { e -> e.value.any { s -> s.contains("truecaller", ignoreCase = true) } }?.key
                             ?: live?.name?.takeIf { live?.nameSource?.contains("truecaller", ignoreCase = true) == true }
                         val eyeName = live?.alternateNames?.entries?.firstOrNull { e -> e.value.any { s -> s.contains("eyecon", ignoreCase = true) } }?.key
                             ?: live?.name?.takeIf { live?.nameSource?.contains("eyecon", ignoreCase = true) == true }
+                        val fbName = try {
+                            live?.socialProfiles?.firstOrNull { it.platform.equals("Facebook", true) }?.displayName
+                                ?.takeIf { it.isNotBlank() && !it.equals("Facebook", true) }
+                        } catch (_: Exception) { null } catch (_: Error) { null }
+                        val dbName = enrichment?.publicName?.takeIf { it.isNotBlank() }
+                        val dbPhoto = enrichment?.profileImageUrl?.takeIf { com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(it) }
+                        val dbSource = enrichment?.publicNameSource?.takeIf { it.isNotBlank() }
+                            ?: enrichment?.source?.takeIf { it.isNotBlank() } ?: "My database"
                         val showTc = tcName != null || tcPhoto != null
                         val showEye = eyeName != null || eyePhoto != null
-                        if (showTc || showEye) {
+                        val showFb = fbName != null || fbPhoto != null
+                        val showDb = dbName != null || dbPhoto != null
+                        if (showTc || showEye || showFb || showDb) {
                             DetailSection("Caller ID by source") {
                                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     if (showTc) SourceIdRow(
@@ -608,6 +619,50 @@ fun DetailsScreen(
                                                 lookupKey.ifBlank { displayIdentifier },
                                                 url,
                                                 eyePhoto.provider,
+                                                displayName
+                                            ) { ok ->
+                                                scope.launch { snackbarHostState.showSnackbar(if (ok) "Saved to contacts" else "Could not save") }
+                                            }
+                                        }
+                                    )
+                                    if (showDb) SourceIdRow(
+                                        title = "My database ($dbSource)",
+                                        name = dbName,
+                                        photoUrl = dbPhoto,
+                                        photoLabel = if (dbPhoto != null) "Database photo" else "No database photo",
+                                        saveEnabled = dbPhoto != null,
+                                        onSave = {
+                                            val url = dbPhoto ?: return@SourceIdRow
+                                            if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(context, arrayOf(android.Manifest.permission.WRITE_CONTACTS))) {
+                                                scope.launch { snackbarHostState.showSnackbar("Contacts permission needed to save") }
+                                                return@SourceIdRow
+                                            }
+                                            viewModel.setPrimaryPhotoAndSave(
+                                                lookupKey.ifBlank { displayIdentifier },
+                                                url,
+                                                "Database",
+                                                displayName
+                                            ) { ok ->
+                                                scope.launch { snackbarHostState.showSnackbar(if (ok) "Saved to contacts" else "Could not save") }
+                                            }
+                                        }
+                                    )
+                                    if (showFb) SourceIdRow(
+                                        title = "Facebook",
+                                        name = fbName,
+                                        photoUrl = fbPhoto?.url,
+                                        photoLabel = if (fbPhoto != null) "Facebook photo" else "No Facebook photo",
+                                        saveEnabled = fbPhoto != null,
+                                        onSave = {
+                                            val url = fbPhoto?.url ?: return@SourceIdRow
+                                            if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(context, arrayOf(android.Manifest.permission.WRITE_CONTACTS))) {
+                                                scope.launch { snackbarHostState.showSnackbar("Contacts permission needed to save") }
+                                                return@SourceIdRow
+                                            }
+                                            viewModel.setPrimaryPhotoAndSave(
+                                                lookupKey.ifBlank { displayIdentifier },
+                                                url,
+                                                fbPhoto.provider,
                                                 displayName
                                             ) { ok ->
                                                 scope.launch { snackbarHostState.showSnackbar(if (ok) "Saved to contacts" else "Could not save") }
@@ -1006,16 +1061,24 @@ fun DetailsScreen(
                 onSave = { name, city, carrier, photo ->
                     showEditDialog = false
                     scope.launch {
+                        val key = displayIdentifier.ifBlank { phoneNumber }
                         val ok = try {
-                            com.infocaller.app.data.repository.ManualCorrections.save(context, displayIdentifier.ifBlank { phoneNumber }, name, city, carrier, photo)
+                            com.infocaller.app.data.repository.ManualCorrections.save(context, key, name, city, carrier, photo)
                         } catch (_: Exception) { false } catch (_: Error) { false }
                         val applied = try {
                             (app.repository as? com.infocaller.app.data.repository.CallerRepositoryImpl)
-                                ?.applyManualCorrection(displayIdentifier.ifBlank { phoneNumber }) ?: false
+                                ?.applyManualCorrection(key) ?: false
+                        } catch (_: Exception) { false } catch (_: Error) { false }
+                        // Explicit user edit → also mirror into the device phonebook automatically.
+                        val phonebookOk = try {
+                            viewModel.persistEditToPhonebook(key, name, photo, city, carrier)
                         } catch (_: Exception) { false } catch (_: Error) { false }
                         if (ok && applied) {
-                            snackbarHostState.showSnackbar("Saved and shared with other users")
-                            try { viewModel.searchNumber(displayIdentifier.ifBlank { phoneNumber }) } catch (_: Exception) { }
+                            val msg = if (phonebookOk) "Saved, shared and added to phonebook"
+                            else "Saved and shared with other users"
+                            snackbarHostState.showSnackbar(msg)
+                            try { viewModel.searchNumber(key) } catch (_: Exception) { }
+                            try { viewModel.refreshDeviceData() } catch (_: Exception) { }
                         } else {
                             snackbarHostState.showSnackbar("Could not save")
                         }

@@ -58,11 +58,15 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
         } catch (_: Exception) { } catch (_: Error) { }
 
         if (name == null) {
-            for (path in listOf("bd/${digits.takeLast(10)}", "search/${digits.takeLast(10)}")) {
+            val fullDigits = try { digits.take(15) } catch (_: Exception) { digits } catch (_: Error) { digits }
+            val cc = try {
+                com.infocaller.app.util.PhoneNumberUtils.getCountryCode(e164)?.lowercase()?.take(2) ?: "bd"
+            } catch (_: Exception) { "bd" } catch (_: Error) { "bd" }
+            for (path in listOf("$cc/$fullDigits", "$cc/${digits.takeLast(10)}")) {
                 try {
                     coroutineContext.ensureActive()
                     val title = com.infocaller.app.util.SafeWebFetch.fetchTitle(
-                        httpClient, "https://www.truecaller.com/$path", ua(), 4500L
+                        httpClient, "https://www.truecaller.com/search/$path", ua(), 4500L
                     )
                     val cand = com.infocaller.app.util.SafeWebFetch.truecallerTitleToName(title)
                     if (cand != null) { name = cand.take(50); break }
@@ -116,10 +120,28 @@ class SocialAccountEnumeratorProviderImpl(private val httpClient: OkHttpClient) 
         val realSocials = socials.filter {
             !it.platform.equals("Sync.ME", true) && !it.platform.equals("Syncme", true)
         }
+        // Verified social avatars (Facebook etc.) found via the name pivot become
+        // photo candidates so the number lookup can show + set them as profile photo.
+        val avatarPhotos = mutableListOf<PhotoCandidate>()
+        try {
+            for (s in realSocials) {
+                val av = s.avatarUrl?.trim().orEmpty()
+                if (av.isBlank() || !av.startsWith("http")) continue
+                val usable = try { com.infocaller.app.util.PhotoPolicy.isUsablePhotoUrl(av) } catch (_: Exception) { false } catch (_: Error) { false }
+                if (!usable) continue
+                if (avatarPhotos.any { it.url == av }) continue
+                avatarPhotos.add(PhotoCandidate(provider = s.platform.ifBlank { "Facebook" }, url = av, sourcePriority = 58))
+                if (avatarPhotos.size >= 3) break
+            }
+        } catch (_: Exception) { } catch (_: Error) { }
+        if (photo == null && avatarPhotos.isNotEmpty()) photo = avatarPhotos.first().url
+        val allPhotos = avatarPhotos + (photo?.takeIf { p -> avatarPhotos.none { it.url == p } }?.let {
+            listOf(PhotoCandidate(provider = "AccountEnumerator", url = it, sourcePriority = 57))
+        }.orEmpty())
         if (name == null && photo == null && realSocials.isEmpty()) return null
         return PartialResult(
             name = name, about = about, imageUrl = photo,
-            photoCandidates = photo?.let { listOf(PhotoCandidate(provider = "AccountEnumerator", url = it, sourcePriority = 57)) } ?: emptyList(),
+            photoCandidates = allPhotos,
             socialProfiles = realSocials.distinctBy { it.platform.lowercase() + "|" + (it.username?.lowercase().orEmpty()) },
             confidence = when {
                 name != null && realSocials.size >= 2 -> 0.78f

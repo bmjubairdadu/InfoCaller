@@ -93,7 +93,9 @@ class ScanningService : Service() {
                 setShowBadge(false)
                 enableLights(false); enableVibration(false); setSound(null,null)
             }
-            getSystemService(Context.NOTIFICATION_SERVICE).let { it as NotificationManager }.createNotificationChannel(channel)
+            try {
+                (getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)?.createNotificationChannel(channel)
+            } catch (_: Exception) { } catch (_: Error) { }
         }
     }
     private fun createNotification(): Notification {

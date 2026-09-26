@@ -132,10 +132,11 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
 
             if (foundName.isNullOrBlank()) return@withContext null
 
+            // The /app/pic endpoint requires the e-auth headers; a plain GET (as Coil does)
+            // gets 401. Download it here with auth and hand the UI a local file:// URL.
+            val picUrl = fetchEyeconPhotoCached(cleanNumber)
+
             val photoCandidates = mutableListOf<com.infocaller.app.domain.model.PhotoCandidate>()
-            val picUrl = try {
-                "https://api.eyecon-app.com/app/pic?cli=$cleanNumber&size=big&type=1"
-            } catch (_: Exception) { null } catch (_: Error) { null }
             if (picUrl != null) {
                 photoCandidates.add(com.infocaller.app.domain.model.PhotoCandidate(provider = "Eyecon", url = picUrl, sourcePriority = 80, timestamp = System.currentTimeMillis()))
             }
@@ -150,6 +151,40 @@ class EyeconProviderImpl(private val context: Context) : LookupProvider {
                 providerVersion = version
             )
         } catch (e: Exception) { null }
+    }
+
+    /**
+     * Downloads the Eyecon profile photo with the required e-auth headers and stores it
+     * in the app cache. Returns a file:// URL the UI image loader can render directly,
+     * or null when no photo exists (HTTP 404) or auth fails.
+     */
+    private suspend fun fetchEyeconPhotoCached(cleanNumber: String): String? {
+        return try {
+            val cacheDir = try { context.cacheDir.resolve("eyecon_photos").apply { if (!exists()) mkdirs() } } catch (_: Exception) { null } catch (_: Error) { null }
+                ?: return null
+            val outFile = cacheDir.resolve("eyecon_$cleanNumber.jpg")
+            if (outFile.exists() && outFile.length() > 1000) {
+                return try { outFile.toURI().toString() } catch (_: Exception) { null } catch (_: Error) { null }
+            }
+            val url = "https://api.eyecon-app.com/app/pic?cli=$cleanNumber&size=big&type=1"
+            val req = authStore.attachWith(Request.Builder().url(url), authStore.cid())
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+                .build()
+            withTimeoutOrNull(8000L) {
+                client.newCall(req).await().use { resp ->
+                    if (!resp.isSuccessful) return@use null
+                    val ct = try { resp.header("Content-Type").orEmpty() } catch (_: Exception) { "" } catch (_: Error) { "" }
+                    if (!ct.startsWith("image")) return@use null
+                    val bytes = try { resp.body?.bytes() } catch (_: Exception) { null } catch (_: Error) { null }
+                        ?: return@use null
+                    if (bytes.size < 1000) return@use null
+                    try {
+                        outFile.outputStream().use { it.write(bytes) }
+                        outFile.toURI().toString()
+                    } catch (_: Exception) { null } catch (_: Error) { null }
+                }
+            }
+        } catch (_: Exception) { null } catch (_: Error) { null }
     }
 
     private fun parseEyeconName(nameBody: String): String? {

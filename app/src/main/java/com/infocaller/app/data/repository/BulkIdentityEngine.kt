@@ -111,9 +111,6 @@ object BulkIdentityEngine {
             }
         }
 
-        val service = ContactEnrichmentService(
-            application, application.lookupEngine, application.repository, application.database
-        )
         var enriched = 0
 
         suspend fun saveNumber(n: String): Boolean {
@@ -125,7 +122,7 @@ object BulkIdentityEngine {
                 val hasPhoto = !merged.imageUrl.isNullOrBlank() || merged.photoCandidates.isNotEmpty()
                 if (!hasName && !hasPhoto) return false
                 try { application.repository.saveLookupResult(merged) } catch (_: Exception) { }
-                try { service.mirrorLookupResult(n, merged) } catch (_: Exception) { }
+                // DISABLED: no write-back into the device phonebook. Enrich the app's own DB only.
                 true
             } catch (e: Exception) {
                 Log.w("BulkIdentity", "save failed for $n", e)

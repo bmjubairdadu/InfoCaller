@@ -25,31 +25,25 @@ class CallScreeningService : CallScreeningService() {
         }
 
         try {
-            val prefs = applicationContext.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-            val pendingRid = prefs.getString("last_tc_request_id", null)
-            val pendingPhone = prefs.getString("last_tc_phone", null)
-            if (!pendingRid.isNullOrBlank() && !pendingPhone.isNullOrBlank()) {
+            if (com.infocaller.app.util.VerificationState.hasActiveCallVerification(applicationContext)) {
                 val clean = phoneNumber.substringBefore(';').substringBefore('?')
                 val allDigits = clean.filter { it.isDigit() }
-                val pendingDigits = pendingPhone.filter { it.isDigit() }
-                val matchesPending = allDigits.length >= 6 && pendingDigits.length >= 6 &&
-                    allDigits.takeLast(6) == pendingDigits.takeLast(6)
-                if (!matchesPending) {
-                } else {
-                    val tail = if (allDigits.length >= 6) allDigits.takeLast(6) else allDigits
-                    prefs.edit().putString("last_number", clean).apply()
-                    if (tail.isNotBlank()) {
-                        com.infocaller.app.util.OtpManager.onMissedCallTailSync(tail, clean, isIdle = false)
-                    }
-                    respondToCall(
-                        details,
-                        CallResponse.Builder()
-                            .setSilenceCall(true)
-                            .setSkipNotification(true)
-                            .build()
-                    )
-                    return
+                val tail = if (allDigits.length >= 6) allDigits.takeLast(6) else allDigits
+                applicationContext.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
+                    .edit().putString("last_number", clean).apply()
+                if (tail.isNotBlank()) {
+                    com.infocaller.app.util.OtpManager.onMissedCallTailSync(tail, clean, isIdle = false)
                 }
+                respondToCall(
+                    details,
+                    CallResponse.Builder()
+                        .setDisallowCall(true)
+                        .setRejectCall(true)
+                        .setSkipCallLog(true)
+                        .setSkipNotification(true)
+                        .build()
+                )
+                return
             }
         } catch (_: Exception) { }
 

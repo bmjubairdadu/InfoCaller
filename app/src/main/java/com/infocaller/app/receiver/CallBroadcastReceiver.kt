@@ -132,7 +132,10 @@ class CallBroadcastReceiver : BroadcastReceiver() {
     }
 
     private fun isVerificationCall(context: Context, ringingNumber: String): Boolean {
-        return false
+        // For flash/missed-call verification the OTP is the tail of the caller's number (a Truecaller
+        // pool number), so we can't match on `ringingNumber`. Any incoming call during an active
+        // call-based verification window is treated as the verification call.
+        return com.infocaller.app.util.VerificationState.hasActiveCallVerification(context)
     }
 
     private fun isStaleVerificationTail(context: Context, number: String): Boolean {

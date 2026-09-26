@@ -53,6 +53,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     }
     var permQueueIndex by rememberSaveable { mutableIntStateOf(-1) }
     var showBasicPermsPopup by rememberSaveable { mutableStateOf(false) }
+    var showIntroPopup by rememberSaveable { mutableStateOf(true) }
 
     val roleLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -331,6 +332,37 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 dismissButton = {
                     TextButton(onClick = { showBasicPermsPopup = false; currentStage = 2 }) {
                         Text("Skip", color = contentSecondary(0.7f))
+                    }
+                }
+            )
+        }
+        if (showIntroPopup && currentStage != 6 && currentStage != -1) {
+            AlertDialog(
+                onDismissRequest = { showIntroPopup = false },
+                icon = { Icon(Icons.Default.VerifiedUser, null, tint = Primary) },
+                title = { Text("Almost there — a few permissions") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            "Your number is verified. To identify callers, block spam and keep contact details fresh, InfoCaller needs the access below. We'll ask for these one at a time — nothing was taken during login except what was needed to receive your code.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("• Caller ID & Spam app — identify unknown callers and flag spam before the phone rings", style = MaterialTheme.typography.bodySmall, color = contentSecondary(0.85f))
+                        Text("• Contacts — read names, numbers and photos, and save caller photos back", style = MaterialTheme.typography.bodySmall, color = contentSecondary(0.85f))
+                        Text("• Default Phone app — show caller identity and manage your calls", style = MaterialTheme.typography.bodySmall, color = contentSecondary(0.85f))
+                        Text("• Display over apps, Location & Notifications — full-screen caller ID, calling region and call alerts", style = MaterialTheme.typography.bodySmall, color = contentSecondary(0.85f))
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Tap Allow and we'll guide you through each one.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = contentSecondary(0.7f)
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showIntroPopup = false }) {
+                        Text("Allow", color = Primary)
                     }
                 }
             )

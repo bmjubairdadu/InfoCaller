@@ -92,7 +92,9 @@ object ContactUtils {
                 val intent = Intent(Intent.ACTION_EDIT).apply {
                     data = contactUri
                 }
-                context.startActivity(intent)
+                try {
+                    context.startActivity(intent)
+                } catch (_: Exception) { } catch (_: Error) { }
             }
         }
     }

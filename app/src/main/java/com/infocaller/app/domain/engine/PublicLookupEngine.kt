@@ -29,6 +29,68 @@ class PublicLookupEngine(
             Capability.PROFILE_PHOTO, Capability.PUBLIC_SEARCH,
             Capability.SERVICE_PRESENCE, Capability.ABOUT
         )
+
+        /**
+         * Identity sources whose photos are trustworthy seeds for reverse-image
+         * search (Truecaller pic, database pic, email pics). Everything else
+         * (random social thumbnails, logos) is excluded to avoid fake matches.
+         */
+        private val TRUSTED_REVERSE_PROVIDER_IDS = setOf(
+            "truecaller_authorized",
+            "eyecon_authorized",
+            "email_lookup",
+            "email_avatar_bridge",
+            "email_deep_social",
+            "email_social_bridge",
+            "bd_nid_database",
+            "apify_backend_photo",
+            "multi_avatar_harvester",
+            "social_account_enumerator",
+        )
+    }
+
+    private fun isTrustedReversePhoto(url: String, providerLabel: String?): Boolean {
+        return try {
+            val u = url.trim()
+            if (u.isBlank()) return false
+            val p = providerLabel?.trim()?.lowercase().orEmpty()
+            if (p.contains("truecaller") || p.contains("eyecon") || p.contains("gravatar") ||
+                p.contains("github") || p.contains("gitlab") || p.contains("unavatar") ||
+                p.contains("email") || p.contains("database") || p.contains("user")
+            ) return true
+            val lower = u.lowercase()
+            if (lower.startsWith("file://") && lower.contains("eyecon")) return true
+            if (lower.contains("gravatar.com/avatar") || lower.contains("secure.gravatar.com") ||
+                lower.contains("avatars.githubusercontent.com") || lower.contains("unavatar.io")
+            ) return true
+            false
+        } catch (_: Exception) { false } catch (_: Error) { false }
+    }
+
+    private fun trustedReversePhotos(results: List<PartialResult>): List<String> {
+        return try {
+            val out = linkedSetOf<String>()
+            for (r in results) {
+                val pid = try { r.providerId } catch (_: Exception) { null } catch (_: Error) { null }
+                val src = try { r.source } catch (_: Exception) { null } catch (_: Error) { null }
+                val trustedResult = (pid != null && TRUSTED_REVERSE_PROVIDER_IDS.contains(pid)) ||
+                    isTrustedReversePhoto("", src) || isTrustedReversePhoto("", pid)
+                for (c in try { r.photoCandidates } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }) {
+                    val u = try { c.url.trim() } catch (_: Exception) { "" } catch (_: Error) { "" }
+                    if (u.isBlank()) continue
+                    if (!(u.startsWith("http") || u.startsWith("file://"))) continue
+                    val prov = try { c.provider } catch (_: Exception) { null } catch (_: Error) { null }
+                    if (trustedResult || isTrustedReversePhoto(u, prov)) out.add(u)
+                    if (out.size >= 3) return out.toList()
+                }
+                val img = try { r.imageUrl?.trim() } catch (_: Exception) { null } catch (_: Error) { null }
+                if (!img.isNullOrBlank() && (img.startsWith("http") || img.startsWith("file://"))) {
+                    if (trustedResult || isTrustedReversePhoto(img, src)) out.add(img)
+                    if (out.size >= 3) return out.toList()
+                }
+            }
+            out.toList()
+        } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
     }
     override suspend fun performLookup(
         identifier: String,
@@ -94,7 +156,7 @@ class PublicLookupEngine(
             executionPlan.addAll(socialWave)
             val waveIds = (primaryIds + socialWaveIds).toSet()
             val incompatibleForPhone = setOf(
-                "email_lookup", "holehe_email", "xposedornot_breach",
+                "email_lookup", "email_avatar_bridge", "holehe_email", "xposedornot_breach",
                 "email_social_bridge", "email_deep_social", "disify_email_validation",
                 "sherlock_osint", "whatsmyname",
                 "facebook_profile", "tiktok_profile", "instagram_deep",
@@ -110,7 +172,7 @@ class PublicLookupEngine(
         } else {
             val typeFirstIds: Set<String> = when (type) {
                 IdentifierType.EMAIL -> setOf(
-                    "email_lookup", "holehe_email", "xposedornot_breach",
+                    "email_lookup", "email_avatar_bridge", "holehe_email", "xposedornot_breach",
                     "email_social_bridge", "email_deep_social", "github_osint",
                     "social_account_enumerator",
                     "grepapp_code_search", "sherlock_osint", "disify_email_validation",
@@ -184,10 +246,11 @@ class PublicLookupEngine(
                             listOfNotNull(r.imageUrl) + r.photoCandidates.map { it.url } +
                                 r.socialProfiles.mapNotNull { it.avatarUrl }
                         }
-                        .filter { it.startsWith("http") }.distinct().take(3)
+                        .filter { it.startsWith("http") || it.startsWith("file://") }.distinct().take(3)
                 } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+                val trustedCtx = try { trustedReversePhotos(finalResults) } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
                 val nameCtx = try { finalResults.firstNotNullOfOrNull { it.name?.takeIf { n -> n.isNotBlank() } }?.take(80) } catch (_: Exception) { null } catch (_: Error) { null }
-                val ctx = LookupContext(foundPhotos = photoCtx, foundName = nameCtx)
+                val ctx = LookupContext(foundPhotos = photoCtx, trustedPhotos = trustedCtx, foundName = nameCtx)
                 val result = try {
                     withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
                         try { provider.lookup(normalized, type = type, context = ctx) } catch (_: Exception) { null } catch (_: Error) { null }
@@ -200,7 +263,7 @@ class PublicLookupEngine(
                     val finalRes = try {
                         val capped = result.copy(
                             name = result.name?.trim()?.take(80)?.takeIf { it.isNotBlank() },
-                            imageUrl = result.imageUrl?.trim()?.take(2000)?.takeIf { it.startsWith("http") },
+                            imageUrl = result.imageUrl?.trim()?.take(2000)?.takeIf { it.startsWith("http") || it.startsWith("file://") },
                             photoCandidates = result.photoCandidates.take(6),
                             socialProfiles = result.socialProfiles.take(12),
                             about = result.about?.take(500),
@@ -278,7 +341,7 @@ class PublicLookupEngine(
                     listOfNotNull(r.imageUrl) + r.photoCandidates.map { it.url } +
                         r.socialProfiles.mapNotNull { it.avatarUrl }
                 }
-                .filter { it.startsWith("http") }.distinct().take(3)
+                .filter { it.startsWith("http") || it.startsWith("file://") }.distinct().take(3)
         } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
         if (photos.isEmpty()) return
         val pivotDone = try {
@@ -290,7 +353,8 @@ class PublicLookupEngine(
         } catch (_: Exception) { true } catch (_: Error) { true }
         if (pivotDone) return
         val nameCtx = try { finalResults.firstNotNullOfOrNull { it.name?.takeIf { n -> n.isNotBlank() } }?.take(80) } catch (_: Exception) { null } catch (_: Error) { null }
-        val ctx = LookupContext(foundPhotos = photos, foundName = nameCtx)
+        val trustedCtx = try { trustedReversePhotos(finalResults) } catch (_: Exception) { emptyList() } catch (_: Error) { emptyList() }
+        val ctx = LookupContext(foundPhotos = photos, trustedPhotos = trustedCtx, foundName = nameCtx)
         val pivots = try {
             providerManager.getAllProviders().filter {
                 (it.id == "face_matched_reverse_search" || it.id == "reverse_image_search" || it.id == "pimeyes_photo_pivot") &&
@@ -314,7 +378,7 @@ class PublicLookupEngine(
                     val finalRes = try {
                         res.copy(
                             name = res.name?.take(80),
-                            imageUrl = res.imageUrl?.take(2000)?.takeIf { it.startsWith("http") },
+                            imageUrl = res.imageUrl?.take(2000)?.takeIf { it.startsWith("http") || it.startsWith("file://") },
                             photoCandidates = res.photoCandidates.take(6),
                             socialProfiles = res.socialProfiles.take(12),
                             about = res.about?.take(500),

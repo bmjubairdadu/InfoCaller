@@ -31,12 +31,15 @@ class CallerIdDeepOsintProvider(
         var webName: String? = null
         try {
             coroutineContext.ensureActive()
-            val tail = try { digits.takeLast(10).let { t -> if (digits.startsWith("880")) digits.substring(3).takeLast(10) else t } } catch (_: Exception) { digits.takeLast(10) } catch (_: Error) { digits.takeLast(10) }
-            for (path in listOf("bd/$tail", "search/$tail")) {
+            val fullDigits = try { digits.take(15) } catch (_: Exception) { digits } catch (_: Error) { digits }
+            val cc = try {
+                com.infocaller.app.util.PhoneNumberUtils.getCountryCode(e164)?.lowercase()?.take(2) ?: "bd"
+            } catch (_: Exception) { "bd" } catch (_: Error) { "bd" }
+            for (path in listOf("$cc/$fullDigits", "$cc/${digits.takeLast(10)}")) {
                 try {
                     coroutineContext.ensureActive()
                     val title = com.infocaller.app.util.SafeWebFetch.fetchTitle(
-                        httpClient, "https://www.truecaller.com/$path",
+                        httpClient, "https://www.truecaller.com/search/$path",
                         "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36", 4500L
                     )
                     val cand = com.infocaller.app.util.SafeWebFetch.truecallerTitleToName(title)

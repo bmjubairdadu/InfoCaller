@@ -145,6 +145,175 @@ class ContactEnrichmentService(
         return ContentUris.parseId(insertedUri)
     }
 
+    /**
+     * Explicit user edit (from the Edit dialog): update the device phonebook contact
+     * with the new name/photo, or create it when missing, and store city/carrier
+     * in the contact note. Only called from explicit user action — never from
+     * background scans.
+     */
+    suspend fun applyUserEditToPhonebook(
+        phoneNumber: String,
+        name: String?,
+        photoUrl: String?,
+        city: String?,
+        carrier: String?
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (!com.infocaller.app.permissions.PermissionManager.hasPermissions(
+                    context, arrayOf(android.Manifest.permission.WRITE_CONTACTS)
+                )
+            ) return@withContext false
+            val normalized = PhoneNumberUtils.normalize(phoneNumber)
+            if (normalized.isBlank()) return@withContext false
+            val cleanName = name?.trim()?.take(60)?.takeIf { it.isNotBlank() }
+            val cleanPhoto = photoUrl?.trim()?.takeIf { it.isNotBlank() && it.length <= 2000 }
+            val cleanCity = city?.trim()?.take(160)?.takeIf { it.isNotBlank() }
+            val cleanCarrier = carrier?.trim()?.take(60)?.takeIf { it.isNotBlank() }
+            if (cleanName == null && cleanPhoto == null && cleanCity == null && cleanCarrier == null) {
+                return@withContext false
+            }
+
+            val lookupUri = Uri.withAppendedPath(
+                ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(normalized)
+            )
+            var aggregateId = -1L
+            try {
+                context.contentResolver.query(
+                    lookupUri, arrayOf(ContactsContract.PhoneLookup._ID), null, null, null
+                )?.use { c -> if (c.moveToFirst()) aggregateId = c.getLong(0) }
+            } catch (_: Exception) { }
+
+            val rawContactId: Long = if (aggregateId == -1L) {
+                if (cleanName == null) return@withContext false
+                val caller = Caller(
+                    phoneNumber = normalized,
+                    displayName = cleanName,
+                    alias = null,
+                    photoUrl = null,
+                    organization = cleanCarrier,
+                    country = null,
+                    region = cleanCity,
+                    carrier = cleanCarrier,
+                    email = null
+                )
+                val created = try { saveToContacts(caller, null, null) } catch (_: Exception) { -1L }
+                if (created == -1L) return@withContext false
+                created
+            } else {
+                val raw = try { resolveWritableRawContactId(aggregateId) } catch (_: Exception) { -1L }
+                if (raw == -1L) return@withContext false
+                if (cleanName != null) {
+                    try {
+                        val sel = "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?"
+                        val args = arrayOf(
+                            raw.toString(),
+                            ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE
+                        )
+                        val op = if (hasDataRow(raw, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)) {
+                            ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
+                                .withSelection(sel, args)
+                                .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, cleanName)
+                                .build()
+                        } else {
+                            ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                                .withValue(ContactsContract.Data.RAW_CONTACT_ID, raw)
+                                .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                                .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, cleanName)
+                                .build()
+                        }
+                        context.contentResolver.applyBatch(ContactsContract.AUTHORITY, arrayListOf(op))
+                    } catch (_: Exception) { }
+                }
+                raw
+            }
+
+            if (cleanPhoto != null) {
+                try {
+                    val bitmap = downloadBitmap(cleanPhoto)
+                    if (bitmap != null) {
+                        val scaled = try { scaleDown(bitmap, 720) } catch (_: Exception) { bitmap } catch (_: Error) { bitmap }
+                        val stream = ByteArrayOutputStream()
+                        try { scaled.compress(Bitmap.CompressFormat.JPEG, 90, stream) } catch (_: Exception) { }
+                        val bytes = stream.toByteArray()
+                        if (bytes.size >= 200) {
+                            val ops = ArrayList<ContentProviderOperation>()
+                            ops.add(
+                                ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
+                                    .withSelection(
+                                        "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                                        arrayOf(rawContactId.toString(), ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                                    )
+                                    .build()
+                            )
+                            ops.add(
+                                ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                                    .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
+                                    .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE)
+                                    .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, bytes)
+                                    .build()
+                            )
+                            context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
+                        }
+                    }
+                } catch (_: Exception) { } catch (_: Error) { }
+            }
+
+            if (cleanCity != null || cleanCarrier != null) {
+                try {
+                    val header = "— InfoCaller —"
+                    val detail = listOfNotNull(
+                        cleanCity?.let { "Location: $it" },
+                        cleanCarrier?.let { "Carrier: $it" }
+                    ).joinToString("\n")
+                    val newSection = "$header\n$detail"
+                    val noteUri = ContactsContract.Data.CONTENT_URI
+                    val sel = "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?"
+                    val selArgs = arrayOf(rawContactId.toString(), ContactsContract.CommonDataKinds.Note.CONTENT_ITEM_TYPE)
+                    var existing: String? = null
+                    try {
+                        context.contentResolver.query(noteUri, arrayOf(ContactsContract.Data.DATA1), sel, selArgs, null)?.use { c ->
+                            if (c.moveToFirst()) existing = c.getString(0)
+                        }
+                    } catch (_: Exception) { }
+                    val merged = when {
+                        existing.isNullOrBlank() -> newSection
+                        existing!!.contains(header) -> {
+                            val before = existing!!.substringBefore(header).trimEnd()
+                            val after = existing!!.substringAfter(header, "").let { tail ->
+                                val cut = tail.indexOf("\n\n")
+                                if (cut >= 0) tail.substring(cut).trimStart() else ""
+                            }
+                            listOfNotNull(before.takeIf { it.isNotBlank() }, newSection, after.takeIf { it.isNotBlank() })
+                                .joinToString("\n\n")
+                        }
+                        else -> "${existing!!.trimEnd()}\n\n$newSection"
+                    }
+                    val already = try {
+                        context.contentResolver.query(noteUri, arrayOf(ContactsContract.Data._ID), sel, selArgs, null)?.use { it.moveToFirst() } ?: false
+                    } catch (_: Exception) { false }
+                    val op = if (already) {
+                        ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
+                            .withSelection(sel, selArgs)
+                            .withValue(ContactsContract.Data.DATA1, merged.take(4000))
+                            .build()
+                    } else {
+                        ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                            .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawContactId)
+                            .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Note.CONTENT_ITEM_TYPE)
+                            .withValue(ContactsContract.Data.DATA1, merged.take(4000))
+                            .build()
+                    }
+                    context.contentResolver.applyBatch(ContactsContract.AUTHORITY, arrayListOf(op))
+                } catch (_: Exception) { }
+            }
+            true
+        } catch (_: Exception) {
+            false
+        } catch (_: Error) {
+            false
+        }
+    }
+
     suspend fun updateExistingContact(phoneNumber: String, caller: Caller): Boolean = withContext(Dispatchers.IO) {
         try {
             val normalized = PhoneNumberUtils.normalize(phoneNumber)

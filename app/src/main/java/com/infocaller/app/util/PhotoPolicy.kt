@@ -27,7 +27,10 @@ object PhotoPolicy {
     fun isLogoUrl(url: String?): Boolean {
         return try {
             val u = url?.trim().orEmpty()
-            if (u.isBlank() || !u.startsWith("http")) return true
+            if (u.isBlank()) return true
+            // Local cached photos (e.g. Eyecon photos downloaded with auth) are always valid.
+            if (u.startsWith("file://")) return false
+            if (!u.startsWith("http")) return true
             if (u.length < 20 || u.length > 2000) return true
             val lower = u.lowercase()
             if (lower.contains("sync.me")) return true
@@ -59,6 +62,7 @@ object PhotoPolicy {
         return try {
             if (isLogoUrl(url)) return false
             val u = url!!.trim()
+            if (u.startsWith("file://")) return u.length > 7
             u.startsWith("http") && u.length >= 20
         } catch (_: Exception) { false } catch (_: Error) { false }
     }
@@ -73,6 +77,7 @@ object PhotoPolicy {
                 if (p.contains("gravatar")) return true
                 if (p.contains("github")) return true
                 if (p.contains("gitlab")) return true
+                if (p.contains("unavatar")) return true
                 if (p.contains("email")) return true
             }
             false

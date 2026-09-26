@@ -9,25 +9,31 @@ import com.infocaller.app.util.SmsOtpParser
 
 class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
-            val pendingVerification = hasPendingVerification(context)
-            val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-            for (message in messages) {
-                val body = message.displayMessageBody
-                val sender = message.displayOriginatingAddress ?: ""
-                if (pendingVerification) {
-                    val otp = SmsOtpParser.extractOtp(body)
-                    if (otp != null) {
-                        OtpManager.onOtpReceivedSync(otp)
-                    }
-                } else if (isVerificationSender(sender, body)) {
-                    val otp = SmsOtpParser.extractOtp(body)
-                    if (otp != null) {
-                        OtpManager.onOtpReceivedSync(otp)
-                    }
+        try {
+            if (intent.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
+                val pendingVerification = hasPendingVerification(context)
+                val messages = try {
+                    Telephony.Sms.Intents.getMessagesFromIntent(intent)
+                } catch (_: Exception) { null } catch (_: Error) { null } ?: return
+                for (message in messages) {
+                    try {
+                        val body = try { message.displayMessageBody } catch (_: Exception) { null } catch (_: Error) { null }
+                        val sender = try { message.displayOriginatingAddress } catch (_: Exception) { null } catch (_: Error) { null } ?: ""
+                        if (pendingVerification) {
+                            val otp = SmsOtpParser.extractOtp(body)
+                            if (otp != null) {
+                                OtpManager.onOtpReceivedSync(otp)
+                            }
+                        } else if (isVerificationSender(sender, body ?: "")) {
+                            val otp = SmsOtpParser.extractOtp(body)
+                            if (otp != null) {
+                                OtpManager.onOtpReceivedSync(otp)
+                            }
+                        }
+                    } catch (_: Exception) { continue } catch (_: Error) { continue }
                 }
             }
-        }
+        } catch (_: Exception) { } catch (_: Error) { }
     }
 
     private fun hasPendingVerification(context: Context): Boolean {

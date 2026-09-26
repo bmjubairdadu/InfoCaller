@@ -29,12 +29,15 @@ class PhoneSocialBridgeProviderImpl(private val httpClient: OkHttpClient) : Look
             } catch (_: Exception) { "+$digits" } catch (_: Error) { "+$digits" }
             var name: String? = null
             try {
-                val tail = digits.takeLast(10)
-                for (path in listOf("bd/$tail", "search/$tail")) {
+                val fullDigits = try { digits.take(15) } catch (_: Exception) { digits } catch (_: Error) { digits }
+                val cc = try {
+                    com.infocaller.app.util.PhoneNumberUtils.getCountryCode(e164)?.lowercase()?.take(2) ?: "bd"
+                } catch (_: Exception) { "bd" } catch (_: Error) { "bd" }
+                for (path in listOf("$cc/$fullDigits", "$cc/${digits.takeLast(10)}")) {
                     try {
                         coroutineContext.ensureActive()
                         val title = com.infocaller.app.util.SafeWebFetch.fetchTitle(
-                            httpClient, "https://www.truecaller.com/$path", ua(), 4500L
+                            httpClient, "https://www.truecaller.com/search/$path", ua(), 4500L
                         )
                         val cand = com.infocaller.app.util.SafeWebFetch.truecallerTitleToName(title)
                         if (cand != null) { name = cand.take(50); break }

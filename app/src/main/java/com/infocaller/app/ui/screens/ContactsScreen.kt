@@ -10,7 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -125,14 +125,32 @@ fun ContactsScreen(
     }
 
     val filteredContacts = remember(enrichedContacts, searchQuery) {
-        if (searchQuery.isEmpty()) {
+        fun contactScore(e: com.infocaller.app.data.local.model.EnrichedContact): Int {
+            var s = 0
+            try { if (!ContactUtils.isPlaceholderName(e.contact.displayName)) s += 2 } catch (_: Exception) { }
+            try { if (e.contact.photoUri != null || e.enrichment?.profileImageUrl != null) s += 1 } catch (_: Exception) { }
+            return s
+        }
+        val q = searchQuery.trim()
+        val base = if (q.isEmpty()) {
             enrichedContacts
         } else {
             enrichedContacts.filter {
-                it.contact.displayName.contains(searchQuery, ignoreCase = true) ||
-                it.contact.phoneNumber.contains(searchQuery)
+                it.contact.displayName.contains(q, ignoreCase = true) ||
+                it.contact.phoneNumber.contains(q)
             }
         }
+        // Drop blank numbers and collapse duplicates by normalized digits so one
+        // contact is never shown twice; keep the entry with the best name/photo.
+        val best = linkedMapOf<String, com.infocaller.app.data.local.model.EnrichedContact>()
+        for (e in base) {
+            val digits = try { e.contact.phoneNumber.filter { c -> c.isDigit() } } catch (_: Exception) { "" } catch (_: Error) { "" }
+            if (digits.length < 7) continue
+            val key = digits.takeLast(15)
+            val cur = best[key]
+            if (cur == null || contactScore(e) > contactScore(cur)) best[key] = e
+        }
+        best.values.toList()
     }
 
     GlassyBackground {
@@ -271,17 +289,14 @@ fun ContactsScreen(
                             }
                         }
                     }
-                    itemsIndexed(filteredContacts, key = { _, it -> it.contact.id }) { index, enriched ->
+                    items(
+                        filteredContacts,
+                        key = { it.contact.phoneNumber },
+                        contentType = { "contact" }
+                    ) { enriched ->
                         var showMenu by remember { mutableStateOf(false) }
                         val contact = enriched.contact
 
-                        val itemVisible = remember { mutableStateOf(false) }
-                        LaunchedEffect(Unit) { itemVisible.value = true }
-
-                        AnimatedVisibility(
-                            visible = itemVisible.value,
-                            enter = fadeIn(tween(300)) + slideInVertically(tween(300)) { it / 4 }
-                        ) {
                             Box {
                                 ContactItem(
                                     enriched = enriched,
@@ -335,12 +350,14 @@ fun ContactsScreen(
                                     DropdownMenuItem(
                                         text = { Text("Share") },
                                         onClick = {
-                                            val sendIntent: android.content.Intent = android.content.Intent().apply {
-                                                action = android.content.Intent.ACTION_SEND
-                                                putExtra(android.content.Intent.EXTRA_TEXT, "Contact: ${contact.displayName}\nPhone: ${contact.phoneNumber}")
-                                                type = "text/plain"
-                                            }
-                                            context.startActivity(android.content.Intent.createChooser(sendIntent, null))
+                                            try {
+                                                val sendIntent: android.content.Intent = android.content.Intent().apply {
+                                                    action = android.content.Intent.ACTION_SEND
+                                                    putExtra(android.content.Intent.EXTRA_TEXT, "Contact: ${contact.displayName}\nPhone: ${contact.phoneNumber}")
+                                                    type = "text/plain"
+                                                }
+                                                context.startActivity(android.content.Intent.createChooser(sendIntent, null))
+                                            } catch (_: Exception) { } catch (_: Error) { }
                                             showMenu = false
                                         },
                                         leadingIcon = { Icon(Icons.Default.Share, null) }
@@ -356,7 +373,6 @@ fun ContactsScreen(
                                     )
                                 }
                             }
-                        }
                     }
                 }
             }

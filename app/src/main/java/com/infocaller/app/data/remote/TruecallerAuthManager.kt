@@ -70,6 +70,8 @@ class TruecallerAuthManager(
         editor.remove("last_tc_method")
         editor.remove("last_tc_phone")
         editor.remove("last_tc_host")
+        editor.remove("last_tc_request_at")
+        editor.remove("last_tc_token_ttl")
         val seedPhone = phone?.filter { it.isDigit() }
         if (!seedPhone.isNullOrBlank()) {
             val phoneKey = seedPhone.takeLast(11)
@@ -167,6 +169,8 @@ class TruecallerAuthManager(
                         .putString("last_tc_phone", PhoneNumberUtils.normalize(phone))
                         .putString("last_tc_method", method)
                         .putString("last_tc_host", host)
+                        .putLong("last_tc_request_at", System.currentTimeMillis())
+                        .putInt("last_tc_token_ttl", ttl)
                         .putInt(sequenceKey, seqNo)
                         .apply()
                     return@withContext OtpRequestResult(rid, method, ttl, status, msg)

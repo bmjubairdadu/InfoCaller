@@ -11,12 +11,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.core.content.edit
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContactPhone
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -51,6 +56,22 @@ fun MainScreen(
 
     val updateState by com.infocaller.app.util.AppUpdateManager.state.collectAsState()
     var updateDismissed by remember { mutableStateOf(false) }
+
+    // Default caller-ID / spam-app roles can be lost (app upgraded in place, user skipped onboarding,
+    // another dialer took over). Surface a persistent banner + on-demand system prompt on the main
+    // screen so the role popups are always reachable, not only during first-run onboarding.
+    var roleBannerDismissed by remember { mutableStateOf(false) }
+    var roleCheckKey by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { roleCheckKey++ }
+    val needsDialerRole = remember(roleCheckKey) {
+        !com.infocaller.app.permissions.PermissionManager.isDefaultDialer(context)
+    }
+    val needsSpamRole = remember(roleCheckKey) {
+        !com.infocaller.app.permissions.PermissionManager.isCallScreeningRoleHeld(context)
+    }
+    val roleLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { roleCheckKey++ }
 
     LaunchedEffect(Unit) {
         val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
@@ -95,11 +116,18 @@ fun MainScreen(
     }
 
     val recentCalls by viewModel.recentCalls.collectAsState()
+    // Enqueue each recent number only once per session — recentCalls re-emits on
+    // every tick/data change and blind re-enqueue spams the enrichment queue.
+    val enqueuedRecent = remember { mutableSetOf<String>() }
     LaunchedEffect(recentCalls) {
         if (recentCalls.isNotEmpty()) {
             val app = context.applicationContext as com.infocaller.app.InfoCallerApplication
             recentCalls.take(5).forEach { entry ->
-                app.enrichmentEngine.enqueue(entry.number, priority = com.infocaller.app.data.local.entity.QueuePriority.MEDIUM)
+                try {
+                    if (enqueuedRecent.add(entry.number)) {
+                        app.enrichmentEngine.enqueue(entry.number, priority = com.infocaller.app.data.local.entity.QueuePriority.MEDIUM)
+                    }
+                } catch (_: Exception) { } catch (_: Error) { }
             }
         }
     }
@@ -272,6 +300,70 @@ fun MainScreen(
                             }
                         ) { Text("Open", color = Primary) }
                         IconButton(onClick = { updateDismissed = true }, modifier = Modifier.size(32.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = navContent.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
+
+            if ((needsDialerRole || needsSpamRole) && !roleBannerDismissed) {
+                val updateShown = update != null && !updateDismissed
+                Card(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = innerPadding.calculateTopPadding() + 8.dp + if (updateShown) 84.dp else 0.dp)
+                        .padding(horizontal = 24.dp)
+                        .fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = navBarContainer.copy(alpha = 0.97f)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Default.Shield,
+                            contentDescription = null,
+                            tint = Primary,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Set InfoCaller as default",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = navContent,
+                            )
+                            Text(
+                                if (needsDialerRole && needsSpamRole)
+                                    "Caller ID & spam app and default Phone app are off — tap to turn on"
+                                else if (needsDialerRole)
+                                    "Default Phone app is off — tap to turn on caller ID"
+                                else
+                                    "Caller ID & spam app is off — tap to turn on spam detection",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = navContent.copy(alpha = 0.6f),
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                try {
+                                    val intent = if (needsDialerRole) {
+                                        com.infocaller.app.permissions.PermissionManager.createDefaultDialerIntent(context)
+                                    } else {
+                                        com.infocaller.app.permissions.PermissionManager.createCallScreeningRoleIntent(context)
+                                    }
+                                    if (intent != null) roleLauncher.launch(intent)
+                                    else com.infocaller.app.permissions.PermissionManager.openAppSettings(context)
+                                } catch (_: Exception) {
+                                    try {
+                                        com.infocaller.app.permissions.PermissionManager.openAppSettings(context)
+                                    } catch (_: Exception) { }
+                                }
+                            }
+                        ) { Text("Set up", color = Primary) }
+                        IconButton(onClick = { roleBannerDismissed = true }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = navContent.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
                         }
                     }

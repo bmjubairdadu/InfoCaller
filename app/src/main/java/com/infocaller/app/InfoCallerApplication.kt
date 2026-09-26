@@ -67,6 +67,7 @@ class InfoCallerApplication : Application() {
             DisposablePhoneProviderImpl(),
             NidDatabaseProvider(commonHttpClient),
             EmailLookupProviderImpl(commonHttpClient, sharedGson),
+            EmailAvatarBridgeProviderImpl(commonHttpClient),
             HoleheEmailProviderImpl(commonHttpClient),
             WhatsMyNameProviderImpl(commonHttpClient, sharedGson),
             GitHubSearchProviderImpl(commonHttpClient),

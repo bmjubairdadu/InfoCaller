@@ -70,14 +70,18 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
             coroutineContext.ensureActive()
             val digits = try { identifier.filter { it.isDigit() } } catch (_: Exception) { "" } catch (_: Error) { "" }
             if (digits.length < 7 || digits.length > 15) return null
-            val tail = try { digits.takeLast(10) } catch (_: Exception) { return null } catch (_: Error) { return null }
-            if (tail.length < 7) return null
             var name: String? = null
-            for (path in listOf("bd/$tail", "search/$tail")) {
+            // Working URL shape: /search/<cc>/<full number> (the old /bd/<digits> and
+            // /search/<digits> shapes return 404 and the page title is generic anyway).
+            val fullDigits = try { digits.take(15) } catch (_: Exception) { digits } catch (_: Error) { digits }
+            val cc = try {
+                com.infocaller.app.util.PhoneNumberUtils.getCountryCode(identifier)?.lowercase()?.take(2) ?: "bd"
+            } catch (_: Exception) { "bd" } catch (_: Error) { "bd" }
+            for (path in listOf("$cc/$fullDigits", "$cc/${digits.takeLast(10)}")) {
                 try {
                     coroutineContext.ensureActive()
                     val title = com.infocaller.app.util.SafeWebFetch.fetchTitle(
-                        httpClient, "https://www.truecaller.com/$path",
+                        httpClient, "https://www.truecaller.com/search/$path",
                         "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
                         4500L
                     )
@@ -86,7 +90,7 @@ class TruecallerProviderImpl(private val context: Context) : LookupProvider {
                 } catch (_: Exception) { continue } catch (_: Error) { continue }
             }
             if (name.isNullOrBlank()) {
-                lastFailureReason = lastFailureReason ?: "no Truecaller record"
+                lastFailureReason = "no Truecaller record"
                 return null
             }
             lastFailureReason = null

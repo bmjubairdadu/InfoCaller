@@ -10,7 +10,7 @@ object ManualCorrections {
 
     private const val PREFS = "manual_corrections"
     private const val MAX_NAME = 60
-    private const val MAX_CITY = 60
+    private const val MAX_CITY = 160
     private const val MAX_CARRIER = 60
 
     private fun clean(raw: String?, max: Int): String? {
@@ -20,6 +20,10 @@ object ManualCorrections {
 
     fun isValidUrl(raw: String?): String? {
         val v = raw?.trim() ?: return null
+        if (v.startsWith("file://")) {
+            if (v.length > 2000 || v.length < 8) return null
+            return v
+        }
         if (!v.startsWith("http://") && !v.startsWith("https://")) return null
         if (v.length > 2000) return null
         return v
@@ -37,7 +41,12 @@ object ManualCorrections {
             val normalized = PhoneNumberUtils.normalize(number)
             if (normalized.isBlank()) return false
             val cleanName = clean(name, MAX_NAME)
-            val cleanCity = clean(city, MAX_CITY)
+            // Expand short areas ("Dhaka, Uttora") into full location details
+            // (postcode, thana, city corporation) before saving.
+            val cleanCity = try {
+                val c = clean(city, 120)
+                com.infocaller.app.util.BdLocationExpander.expand(c ?: city?.trim())?.take(MAX_CITY) ?: c
+            } catch (_: Exception) { clean(city, MAX_CITY) } catch (_: Error) { clean(city, MAX_CITY) }
             val cleanCarrier = clean(carrier, MAX_CARRIER)
             val cleanPhoto = isValidUrl(photoUrl)
 

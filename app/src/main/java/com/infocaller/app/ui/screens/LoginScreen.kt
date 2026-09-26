@@ -52,16 +52,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
-private fun maybeAskForOverlayPermission(context: android.content.Context) {
-    try {
-        if (PermissionManager.canDrawOverlays(context)) return
-        val prefs = context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE)
-        if (prefs.getBoolean("overlay_asked", false)) return
-        prefs.edit().putBoolean("overlay_asked", true).apply()
-        PermissionManager.openOverlaySettings(context)
-    } catch (_: Exception) { } catch (_: Error) { }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
@@ -94,6 +84,7 @@ fun LoginScreen(
     var verifyError by remember { mutableStateOf<String?>(null) }
     var verifyErrorPopup by remember { mutableStateOf<String?>(null) }
     var autoConsumedCodes by remember { mutableStateOf(setOf<String>()) }
+    var isCallVerification by remember { mutableStateOf(false) }
 
     fun requestOtpNow() {
         tcLoading = true
@@ -129,32 +120,22 @@ fun LoginScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { granted: Map<String, Boolean> ->
         autoFillEnabled = PermissionManager.hasPermissions(context, PermissionManager.VERIFY_PERMISSIONS)
+        verifyError = null
+        verifyErrorPopup = null
+        authError = null
         if (!autoFillEnabled) {
             val allDeniedPermanently = try {
                 val activity = context as? Activity
                 activity != null && !PermissionManager.shouldShowRationale(activity, PermissionManager.VERIFY_PERMISSIONS)
             } catch (_: Exception) { false }
-            authError = if (allDeniedPermanently) {
-                "Permission denied. Enable Phone & Contacts permission from Settings for auto-verify. SMS code will still autofill."
+            val note = if (allDeniedPermanently) {
+                "Phone & call log permission is off, so we can't auto-detect a verification call. An SMS code will still autofill, or type the code manually."
             } else {
-                "Phone & Contacts permission needed for auto-verify. SMS code will still autofill."
+                "Without Phone & call log permission we can't auto-detect a verification call. An SMS code will still autofill, or type the code manually."
             }
-            scope.launch { snackbarHostState.showSnackbar(authError.orEmpty()) }
-            return@rememberLauncherForActivityResult
+            scope.launch { snackbarHostState.showSnackbar(note) }
         }
-        verifyError = null
-        verifyErrorPopup = null
-        authError = null
         requestOtpNow()
-        maybeAskForOverlayPermission(context)
-    }
-
-    var overlayAsked by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        if (!overlayAsked) {
-            overlayAsked = true
-            maybeAskForOverlayPermission(context)
-        }
     }
 
     val smsConsentLauncher = rememberLauncherForActivityResult(
@@ -234,6 +215,7 @@ fun LoginScreen(
     LaunchedEffect(tcAuthResult) {
         if (tcAuthResult == null) {
             autoConsumedCodes = emptySet()
+            isCallVerification = false
             return@LaunchedEffect
         }
         val method = tcAuthResult!!.method.lowercase()
@@ -242,12 +224,9 @@ fun LoginScreen(
             return@LaunchedEffect
         }
         val servedRequestId = tcAuthResult!!.requestId
-        val isCallMethod = false
-        val isSmsMethod = true
-        val serverWantsCall = method.contains("call") || method.contains("flash") || method.contains("miss")
-        if (serverWantsCall) {
-            verifyError = "Missed-call verification isn't available. Please resend for an SMS code."
-        }
+        val isCallMethod = com.infocaller.app.util.VerificationState.isCallMethod(method)
+        val isSmsMethod = !isCallMethod
+        isCallVerification = isCallMethod
 
         suspend fun isCancellationMsg(msg: String?): Boolean {
             if (msg.isNullOrBlank()) return false
@@ -417,14 +396,17 @@ fun LoginScreen(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
-                    text = "Verify your number",
+                    text = if (tcAuthResult == null) "Verify your number" else "Enter verification code",
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.ExtraBold,
                     color = Primary,
                     textAlign = TextAlign.Center
                 )
                 Text(
-                    text = "Enter your mobile number. We'll send a verification code to confirm it's you. Phone and Contacts permission is requested here so you won't be asked again later.",
+                    text = if (tcAuthResult == null)
+                        "Enter your mobile number. We'll send a verification code to confirm it's you. Only the permission needed to receive that code is requested now — everything else comes after you're verified."
+                    else
+                        "Code sent to $tcPhone. Enter it below to continue.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = contentSecondary(0.7f),
                     modifier = Modifier.padding(top = 12.dp, start = 32.dp, end = 32.dp),
@@ -515,7 +497,10 @@ fun LoginScreen(
                                 modifier = Modifier.align(Alignment.Start)
                             )
                             Text(
-                                "We sent a 6-digit code to $tcPhone. Enter it below to continue.",
+                                if (isCallVerification)
+                                    "We're placing a verification call to $tcPhone. It's detected automatically — or enter the last 6 digits of the calling number."
+                                else
+                                    "We sent a 6-digit code to $tcPhone. Enter it below to continue.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = contentSecondary(0.6f),
                                 modifier = Modifier.padding(top = 4.dp).align(Alignment.Start)
@@ -654,15 +639,13 @@ fun LoginScreen(
                                     resendCooldown -= 1
                                 }
                             }
-                            Row(
+                            Column(
                                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 TextButton(onClick = { viewModel.setTcAuthResult(null); tcOtp = ""; verifyError = null; authError = null }) {
-                                    Text("Change number", color = contentSecondary(0.6f))
+                                    Text("Change number", color = contentSecondary(0.6f), fontSize = 13.sp, maxLines = 1)
                                 }
-                                Spacer(modifier = Modifier.width(8.dp))
                                 TextButton(
                                     enabled = resendCooldown == 0 && !tcLoading,
                                     onClick = {
@@ -692,8 +675,10 @@ fun LoginScreen(
                                     }
                                 ) {
                                     Text(
-                                        if (resendCooldown > 0) "Resend code in ${resendCooldown}s" else "Didn't get the code? Resend",
-                                        color = if (resendCooldown > 0) contentSecondary(0.35f) else Primary
+                                        if (resendCooldown > 0) "Resend in ${resendCooldown}s" else "Resend code",
+                                        color = if (resendCooldown > 0) contentSecondary(0.35f) else Primary,
+                                        fontSize = 13.sp,
+                                        maxLines = 1
                                     )
                                 }
                             }
