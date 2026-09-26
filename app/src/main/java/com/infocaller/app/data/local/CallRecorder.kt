@@ -68,8 +68,8 @@ class CallRecorder(private val context: Context) {
         return recorder
     }
 
-    fun startRecording(phoneNumber: String) {
-        if (isRecording) return
+    fun startRecording(phoneNumber: String): Boolean {
+        if (isRecording) return true
 
         try {
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
@@ -116,7 +116,7 @@ class CallRecorder(private val context: Context) {
                     } catch (e: Error) {
                         Log.w("CallRecorder", "Audio enhancement error: ${e.message}")
                     }
-                    return
+                    return true
                 } catch (e: Exception) {
                     lastError = e
                     Log.w("CallRecorder", "Source $label failed: ${e.message}")
@@ -136,6 +136,7 @@ class CallRecorder(private val context: Context) {
             mediaRecorder = null
             currentUri = null
         }
+        return false
     }
 
     fun stopRecording() {

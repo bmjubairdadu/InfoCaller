@@ -164,14 +164,14 @@ private fun DialPadContent(
                             AssistChip(onClick = { contact.phoneNumber?.let { viewModel.updateDialerInput(it) } }, label = { Text(contact.displayName, fontSize = 12.sp) }, colors = AssistChipDefaults.assistChipColors(containerColor = Primary.copy(alpha = 0.1f)), border = AssistChipDefaults.assistChipBorder(enabled = true, borderColor = Primary.copy(alpha = 0.3f)))
                         }
                     }
+                } else if (clipboardNumber != null && textFieldValue.text.isEmpty()) {
+                    AssistChip(onClick = { viewModel.updateDialerInput(clipboardNumber!!) }, label = { Text("Paste: $clipboardNumber", color = Primary, fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Default.ContentPaste, null, tint = Primary, modifier = Modifier.size(14.dp)) }, colors = AssistChipDefaults.assistChipColors(containerColor = Primary.copy(alpha = 0.05f)), border = AssistChipDefaults.assistChipBorder(enabled = true, borderColor = Primary.copy(alpha = 0.5f)))
                 } else if (textFieldValue.text.isEmpty() || textFieldValue.text.startsWith("*")) {
                     androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         items(commonUssdCodes) { ussd ->
                             AssistChip(onClick = { viewModel.updateDialerInput(ussd.url) }, label = { Text(ussd.title, fontSize = 11.sp) }, leadingIcon = { ussd.icon?.let { Icon(it, null, modifier = Modifier.size(14.dp)) } }, colors = AssistChipDefaults.assistChipColors(containerColor = Secondary.copy(alpha = 0.1f)))
                         }
                     }
-                } else if (clipboardNumber != null && textFieldValue.text.isEmpty()) {
-                    AssistChip(onClick = { viewModel.updateDialerInput(clipboardNumber!!) }, label = { Text("Paste: $clipboardNumber", color = Primary, fontSize = 12.sp) }, leadingIcon = { Icon(Icons.Default.ContentPaste, null, tint = Primary, modifier = Modifier.size(14.dp)) }, colors = AssistChipDefaults.assistChipColors(containerColor = Primary.copy(alpha = 0.05f)), border = AssistChipDefaults.assistChipBorder(enabled = true, borderColor = Primary.copy(alpha = 0.5f)))
                 }
             }
         }

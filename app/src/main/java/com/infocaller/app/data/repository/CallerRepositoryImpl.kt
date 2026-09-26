@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class CallerRepositoryImpl(
     private val callerDao: CallerDao,
@@ -140,7 +142,7 @@ class CallerRepositoryImpl(
         val localName = if (isNonPhone) existingCaller?.localName else existingCaller?.localName ?: findLocalNameInSystem(normalized)
 
         val resultToStore = if (isNonPhone && result.phoneNumber != normalized) result.copy(phoneNumber = normalized) else result
-        val merged = mapToEntity(resultToStore, existing)
+        val merged = mapToEntity(resultToStore, existing, normalized)
         enrichmentDao.insertEnrichment(merged)
 
         val incomingPublicName =
@@ -166,10 +168,10 @@ class CallerRepositoryImpl(
         ))
     }
 
-    private fun findLocalNameInSystem(phoneNumber: String): String? {
+    private suspend fun findLocalNameInSystem(phoneNumber: String): String? = withContext(Dispatchers.IO) {
         val uri = android.net.Uri.withAppendedPath(android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI, android.net.Uri.encode(phoneNumber))
         val projection = arrayOf(android.provider.ContactsContract.PhoneLookup.DISPLAY_NAME)
-        return try {
+        try {
             contextResolver.query(uri, projection, null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) cursor.getString(0) else null
             }
@@ -178,7 +180,7 @@ class CallerRepositoryImpl(
         }
     }
 
-    private fun mapToEntity(res: LookupResult, existing: ContactEnrichmentEntity?): ContactEnrichmentEntity {
+    private fun mapToEntity(res: LookupResult, existing: ContactEnrichmentEntity?, normalizedKey: String): ContactEnrichmentEntity {
         val existingHasRealSavedName = !com.infocaller.app.util.ContactUtils.isPlaceholderName(existing?.publicName) && !existing?.publicName.isNullOrBlank()
         val incomingIsValid = !res.name.isNullOrBlank() && !com.infocaller.app.util.ContactUtils.isPlaceholderName(res.name)
         val publicNameToStore = when {
@@ -210,7 +212,7 @@ class CallerRepositoryImpl(
             else -> existing?.profileImageSource
         }
         return ContactEnrichmentEntity(
-            normalizedPhoneNumber = res.phoneNumber,
+            normalizedPhoneNumber = normalizedKey,
             contactId = existing?.contactId,
             publicName = publicNameToStore,
             publicNameSource = if (publicNameToStore == res.name) res.nameSource else existing?.publicNameSource,

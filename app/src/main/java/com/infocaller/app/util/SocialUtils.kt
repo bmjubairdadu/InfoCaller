@@ -47,7 +47,7 @@ object SocialUtils {
         if (json.isNullOrBlank()) return emptyList()
         return try {
             val type = object : TypeToken<List<SocialProfile>>() {}.type
-            gson.fromJson(json, type)
+            gson.fromJson(json, type) ?: emptyList()
         } catch (e: Exception) {
             emptyList()
         }

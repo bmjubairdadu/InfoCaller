@@ -176,12 +176,13 @@ fun NavGraph(
         }
 
         val simSelectionPhone by viewModel.showSimSelection.collectAsState()
-        if (simSelectionPhone != null) {
+        val simPhone = simSelectionPhone
+        if (simPhone != null) {
             com.infocaller.app.ui.dialogs.SimSelectionBottomSheet(
-                phoneNumber = simSelectionPhone!!,
+                phoneNumber = simPhone,
                 onSimSelected = { sim ->
-                    if (com.infocaller.app.util.UssdStore.isUssd(simSelectionPhone!!)) com.infocaller.app.util.UssdStore.run(context, simSelectionPhone!!, sim.phoneAccountHandle)
-                    else com.infocaller.app.util.SimManager.placeCall(context, simSelectionPhone!!, sim.phoneAccountHandle)
+                    if (com.infocaller.app.util.UssdStore.isUssd(simPhone)) com.infocaller.app.util.UssdStore.run(context, simPhone, sim.phoneAccountHandle)
+                    else com.infocaller.app.util.SimManager.placeCall(context, simPhone, sim.phoneAccountHandle)
                     viewModel.dismissSimSelection()
                 },
                 onDismiss = { viewModel.dismissSimSelection() }

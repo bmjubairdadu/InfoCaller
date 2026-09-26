@@ -19,4 +19,7 @@ interface EnrichmentQueueDao {
 
     @Query("UPDATE enrichment_queue SET status = :status, lastAttemptAt = :time WHERE identifier = :id")
     suspend fun updateStatus(id: String, status: String, time: Long)
+
+    @Query("UPDATE enrichment_queue SET status = 'PENDING' WHERE status = 'PROCESSING' AND lastAttemptAt < :threshold")
+    suspend fun resetStaleProcessing(threshold: Long): Int
 }

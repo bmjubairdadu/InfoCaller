@@ -10,7 +10,6 @@ import com.infocaller.app.InfoCallerApplication
 import com.infocaller.app.data.local.entity.LocalContactEntity
 import com.infocaller.app.data.local.entity.QueuePriority
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 class EnrichmentWorker(
@@ -186,7 +185,7 @@ class EnrichmentWorker(
         } catch (_: Exception) { } catch (_: Error) { }
     }
 
-    private fun importSystemContacts(dao: com.infocaller.app.data.local.dao.LocalContactDao) {
+    private suspend fun importSystemContacts(dao: com.infocaller.app.data.local.dao.LocalContactDao) {
         try {
             val resolver = applicationContext.contentResolver
             val currentTime = System.currentTimeMillis()
@@ -242,9 +241,7 @@ class EnrichmentWorker(
                     ))
                 }
 
-                runBlocking {
-                    dao.insertContacts(contacts)
-                }
+                dao.insertContacts(contacts)
             }
         } catch (_: Exception) { }
     }

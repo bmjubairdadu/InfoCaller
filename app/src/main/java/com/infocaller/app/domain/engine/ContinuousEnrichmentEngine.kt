@@ -69,9 +69,11 @@ class ContinuousEnrichmentEngine(
     private var lastProcessMs = 0L
     private val MIN_INTERVAL_MS = 3500L
     private val BURST_DAILY_CAP = 800
+    private val STALE_PROCESSING_MS = 10L * 60 * 1000
 
     suspend fun processNextOneByOne() = withContext(Dispatchers.IO) {
         if (!_isOnline.value) return@withContext
+        try { queueDao.resetStaleProcessing(System.currentTimeMillis() - STALE_PROCESSING_MS) } catch (_: Exception) { }
         val now = System.currentTimeMillis()
         val wait = MIN_INTERVAL_MS - (now - lastProcessMs)
         if (wait > 0) kotlinx.coroutines.delay(wait)

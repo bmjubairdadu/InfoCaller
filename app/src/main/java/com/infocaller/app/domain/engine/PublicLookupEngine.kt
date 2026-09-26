@@ -24,9 +24,6 @@ class PublicLookupEngine(
 
         const val BETWEEN_PROVIDER_DELAY_MS = 150L
 
-        @Volatile
-        private var pivotDepth = 0
-
         private val PIVOT_CAPS = setOf(
             Capability.SOCIAL_MATCH, Capability.PUBLIC_PROFILE,
             Capability.PROFILE_PHOTO, Capability.PUBLIC_SEARCH,
@@ -399,13 +396,19 @@ class PublicLookupEngine(
         try { onProviderStep(provider.id, provider.name, 1, 1, StepStatus.SUCCESS) } catch (_: Exception) { } catch (_: Error) { }
     }
 
+    private class PivotDepthElement(val depth: Int) :
+        kotlin.coroutines.AbstractCoroutineContextElement(PivotDepthElement) {
+        companion object Key : kotlin.coroutines.CoroutineContext.Key<PivotDepthElement>
+    }
+
     private suspend fun performDeepDiscovery(
         result: PartialResult,
         scanned: MutableSet<String>,
         onPartialResult: suspend (PartialResult) -> Unit,
         accumulator: MutableList<PartialResult>
     ) {
-        if (pivotDepth >= 1) return
+        val depth = kotlin.coroutines.coroutineContext[PivotDepthElement]?.depth ?: 0
+        if (depth >= 1) return
         if (scanned.size > MAX_PIVOT_SCANNED) return
         var pivots = 0
         val email = result.email?.trim()?.lowercase()
@@ -415,14 +418,13 @@ class PublicLookupEngine(
             scanned.add(email)
         ) {
             pivots++
-            pivotDepth++
             try {
-                lookupPartials(email, IdentifierType.EMAIL, PIVOT_CAPS) { partial ->
-                    accumulator.add(partial); onPartialResult(partial)
+                withContext(PivotDepthElement(depth + 1)) {
+                    lookupPartials(email, IdentifierType.EMAIL, PIVOT_CAPS) { partial ->
+                        accumulator.add(partial); onPartialResult(partial)
+                    }
                 }
-            } catch (_: Exception) { } finally {
-                pivotDepth--
-            }
+            } catch (_: Exception) { }
         }
         for (profile in result.socialProfiles) {
             if (pivots >= MAX_PIVOTS) break
@@ -437,14 +439,13 @@ class PublicLookupEngine(
             } catch (_: Exception) { }
             if (!scanned.add(username)) continue
             pivots++
-            pivotDepth++
             try {
-                lookupPartials(username, IdentifierType.USERNAME, PIVOT_CAPS) { partial ->
-                    accumulator.add(partial); onPartialResult(partial)
+                withContext(PivotDepthElement(depth + 1)) {
+                    lookupPartials(username, IdentifierType.USERNAME, PIVOT_CAPS) { partial ->
+                        accumulator.add(partial); onPartialResult(partial)
+                    }
                 }
-            } catch (_: Exception) { } finally {
-                pivotDepth--
-            }
+            } catch (_: Exception) { }
         }
     }
 

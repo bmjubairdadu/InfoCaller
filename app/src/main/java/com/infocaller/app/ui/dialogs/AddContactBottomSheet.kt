@@ -92,7 +92,7 @@ fun AddContactBottomSheet(
     }
 
     val normalized = remember(inputNumber) { com.infocaller.app.util.PhoneNumberUtils.normalize(inputNumber) }
-    val enrichment by viewModel.getEnrichment(normalized).collectAsState(initial = null)
+    val enrichment by remember(normalized) { viewModel.getEnrichment(normalized) }.collectAsState(initial = null)
     val localContacts by viewModel.localContacts.collectAsState()
     val existingContact = remember(normalized, localContacts) {
         localContacts.find { com.infocaller.app.util.PhoneNumberUtils.normalize(it.phoneNumber) == normalized }
@@ -159,9 +159,11 @@ fun AddContactBottomSheet(
             }
         }
     }
-    if (saveDeniedNotice) {
-        saveDeniedNotice = false
-        errorMessage = "Contacts write permission denied — tap SAVE again to retry"
+    LaunchedEffect(saveDeniedNotice) {
+        if (saveDeniedNotice) {
+            saveDeniedNotice = false
+            errorMessage = "Contacts write permission denied — tap SAVE again to retry"
+        }
     }
     LaunchedEffect(saveRequested) {
         if (saveRequested) {

@@ -7,6 +7,7 @@ import android.telecom.CallAudioState
 import android.telecom.InCallService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 object CallManager {
     const val ACTION_ANSWER_CALL = "com.infocaller.app.ACTION_ANSWER_CALL"
@@ -32,6 +33,9 @@ object CallManager {
 
     private var inCallService: java.lang.ref.WeakReference<InCallService>? = null
     private var callRecorder: CallRecorder? = null
+    private val recordingScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob()
+    )
 
     fun init(context: Context) {
         if (callRecorder == null) {
@@ -123,13 +127,20 @@ object CallManager {
     }
 
     fun startRecording(@Suppress("UNUSED_PARAMETER") activity: Activity, phoneNumber: String) {
-        callRecorder?.startRecording(phoneNumber)
+        val recorder = callRecorder ?: return
         _isRecording.value = true
+        recordingScope.launch {
+            val ok = try { recorder.startRecording(phoneNumber) } catch (_: Exception) { false }
+            _isRecording.value = ok
+        }
     }
 
     fun stopRecording() {
-        callRecorder?.stopRecording()
         _isRecording.value = false
+        val recorder = callRecorder ?: return
+        recordingScope.launch {
+            try { recorder.stopRecording() } catch (_: Exception) { }
+        }
     }
 
     fun toggleRecording(activity: Activity, phoneNumber: String) {

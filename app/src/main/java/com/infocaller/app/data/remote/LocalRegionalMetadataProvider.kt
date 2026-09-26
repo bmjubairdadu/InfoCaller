@@ -22,7 +22,7 @@ class LocalRegionalMetadataProvider : PhoneMetadataProvider {
         val cleanNumber = identifier.filter { it.isDigit() }
 
         if (cleanNumber.startsWith("880")) {
-            val prefix = cleanNumber.substring(3, 5)
+            val prefix = cleanNumber.drop(3).take(2)
             val operator = when (prefix) {
                 "17", "13" -> "Grameenphone"
                 "18" -> "Robi"

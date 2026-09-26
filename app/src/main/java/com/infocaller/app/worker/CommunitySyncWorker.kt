@@ -34,7 +34,6 @@ class CommunitySyncWorker(
 
             val since = prefs().getLong(KEY_LAST_SYNC, 0L)
             val rows = fetchCommunityRows(baseUrl, anonKey, since)
-            prefs().edit().putLong(KEY_LAST_SYNC, System.currentTimeMillis()).apply()
             if (rows.isEmpty()) {
                 return@withContext Result.success()
             }
@@ -60,20 +59,33 @@ class CommunitySyncWorker(
             for (number in matchedNumbers) {
                 val row = hashToRow[numberToHash[number]] ?: continue
                 val existing = existingByNumber[number]
-                val merged = ContactEnrichmentEntity(
-                    normalizedPhoneNumber = number,
-                    contactId = existing?.contactId,
-                    publicName = row.name ?: existing?.publicName,
-                    about = row.about() ?: existing?.about,
-                    source = "Community (Supabase)",
-                    confidence = "0.75",
-                    lastChecked = now,
-                    expiresAt = expiry
-                )
+                val merged = if (existing != null) {
+                    existing.copy(
+                        publicName = existing.publicName?.takeIf { it.isNotBlank() } ?: row.name,
+                        about = existing.about?.takeIf { it.isNotBlank() } ?: row.about(),
+                        lastChecked = now,
+                        expiresAt = maxOf(existing.expiresAt, expiry)
+                    )
+                } else {
+                    ContactEnrichmentEntity(
+                        normalizedPhoneNumber = number,
+                        publicName = row.name,
+                        about = row.about(),
+                        source = "Community (Supabase)",
+                        confidence = "0.75",
+                        lastChecked = now,
+                        expiresAt = expiry
+                    )
+                }
                 try {
                     dao.insertEnrichment(merged)
                     matched++
                 } catch (_: Exception) { }
+            }
+
+            val maxUpdated = rows.maxOfOrNull { it.updatedAtMs } ?: 0L
+            if (maxUpdated > since) {
+                prefs().edit().putLong(KEY_LAST_SYNC, maxUpdated).apply()
             }
 
             Log.i("CommunitySync", "Pulled=${rows.size} matched=$matched deviceNumbers=${deviceNumbers.size}")
@@ -84,7 +96,7 @@ class CommunitySyncWorker(
         }
     }
 
-    private data class Row(val hash: String, val name: String?, val reportCount: Int)
+    private data class Row(val hash: String, val name: String?, val reportCount: Int, val updatedAtMs: Long)
 
     private fun Row.about(): String? {
         if (!name.isNullOrBlank() && reportCount > 0) return "$name | Community reports: $reportCount"
@@ -119,9 +131,9 @@ class CommunitySyncWorker(
             val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
                 timeZone = java.util.TimeZone.getTimeZone("UTC")
             }.format(java.util.Date(since))
-            "$baseUrl/rest/v1/community_lookups?select=phone_hash,display_name,report_count,updated_at&updated_at=gt.$iso&order=updated_at.desc&limit=$limit"
+            "$baseUrl/rest/v1/community_lookups?select=phone_hash,display_name,report_count,updated_at&updated_at=gt.$iso&order=updated_at.asc&limit=$limit"
         } else {
-            "$baseUrl/rest/v1/community_lookups?select=phone_hash,display_name,report_count,updated_at&order=updated_at.desc&limit=$limit"
+            "$baseUrl/rest/v1/community_lookups?select=phone_hash,display_name,report_count,updated_at&order=updated_at.asc&limit=$limit"
         }
         val req = Request.Builder().url(url)
             .addHeader("apikey", anonKey)
@@ -138,9 +150,23 @@ class CommunitySyncWorker(
             val o = arr.getJSONObject(i)
             val hash = o.optString("phone_hash", "")
             if (hash.length != 64) continue
-            out += Row(hash, o.optString("display_name", "").takeIf { it.isNotBlank() }, o.optInt("report_count", 0))
+            out += Row(
+                hash,
+                o.optString("display_name", "").takeIf { it.isNotBlank() },
+                o.optInt("report_count", 0),
+                parseIsoMs(o.optString("updated_at", ""))
+            )
         }
         return out
+    }
+
+    private fun parseIsoMs(raw: String): Long {
+        if (raw.length < 19) return 0L
+        return try {
+            java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("UTC")
+            }.parse(raw.take(19))?.time ?: 0L
+        } catch (_: Exception) { 0L }
     }
 
     private suspend fun collectDeviceNumbers(): Set<String> = withContext(Dispatchers.IO) {

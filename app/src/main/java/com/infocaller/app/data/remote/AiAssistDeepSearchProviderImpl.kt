@@ -18,14 +18,14 @@ class AiAssistDeepSearchProviderImpl(private val httpClient: OkHttpClient) : Loo
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
         try {
             if (type == IdentifierType.PHONE) return@withContext null
-            val id = identifier.trim()
-            if (id.length < 3) return@withContext null
+            val query = identifier.trim()
+            if (query.length < 3) return@withContext null
             val q = when (type) {
-                IdentifierType.PHONE -> "\"${id.filter { c -> c.isDigit() || c == '+' }}\""
-                IdentifierType.EMAIL -> "\"$id\""
-                IdentifierType.USERNAME -> "\"$id\" (github OR instagram OR tiktok OR facebook)"
-                IdentifierType.FULL_NAME -> "\"$id\" (phone OR email OR facebook OR instagram)"
-                else -> "\"$id\""
+                IdentifierType.PHONE -> "\"${query.filter { c -> c.isDigit() || c == '+' }}\""
+                IdentifierType.EMAIL -> "\"$query\""
+                IdentifierType.USERNAME -> "\"$query\" (github OR instagram OR tiktok OR facebook)"
+                IdentifierType.FULL_NAME -> "\"$query\" (phone OR email OR facebook OR instagram)"
+                else -> "\"$query\""
             }
             val enc = URLEncoder.encode(q, StandardCharsets.UTF_8.toString())
             val about = buildString {

@@ -260,9 +260,17 @@ fun SettingsScreen(
                     }
                 }
 
+                val ringtoneTitle = remember(currentRingtoneUri) {
+                    currentRingtoneUri?.let {
+                        try {
+                            android.media.RingtoneManager.getRingtone(context, android.net.Uri.parse(it))?.getTitle(context)
+                        } catch (_: Exception) { null } catch (_: Error) { null }
+                    } ?: "Default System Ringtone"
+                }
+
                 SettingsClickRow(
                     title = "Incoming Call Ringtone",
-                    subtitle = currentRingtoneUri?.let { android.media.RingtoneManager.getRingtone(context, android.net.Uri.parse(it)).getTitle(context) } ?: "Default System Ringtone",
+                    subtitle = ringtoneTitle,
                     icon = Icons.Default.MusicNote,
                     onClick = {
                         val intent = Intent(android.media.RingtoneManager.ACTION_RINGTONE_PICKER).apply {
@@ -626,6 +634,8 @@ private fun SoundboardSettingsContent() {
     var newIsVideo by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<com.infocaller.app.util.SoundboardEntry?>(null) }
+    var renameName by remember { mutableStateOf("") }
+    var renameEmoji by remember { mutableStateOf("") }
 
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -800,7 +810,7 @@ private fun SoundboardSettingsContent() {
                 },
                 trailingContent = {
                     Row {
-                        IconButton(onClick = { editing = entry; newName = entry.name; newEmoji = entry.emoji }) {
+                        IconButton(onClick = { editing = entry; renameName = entry.name; renameEmoji = entry.emoji }) {
                             Icon(Icons.Default.Edit, "Rename")
                         }
                         IconButton(onClick = {
@@ -822,32 +832,32 @@ private fun SoundboardSettingsContent() {
             text = {
                 Column {
                     OutlinedTextField(
-                        value = newName,
-                        onValueChange = { newName = it },
+                        value = renameName,
+                        onValueChange = { renameName = it },
                         label = { Text("Button name") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             IconButton(onClick = { emojiTargetIsRename = true; showEmojiPicker = true }) {
-                                Text(newEmoji.ifBlank { "\uD83D\uDE03" }, fontSize = 22.sp)
+                                Text(renameEmoji.ifBlank { "\uD83D\uDE03" }, fontSize = 22.sp)
                             }
                         }
                     )
                     if (showEmojiPicker && emojiTargetIsRename) {
                         Spacer(modifier = Modifier.height(8.dp))
                         EmojiPickerGrid(
-                            selected = newEmoji,
-                            onPick = { newEmoji = it; showEmojiPicker = false }
+                            selected = renameEmoji,
+                            onPick = { renameEmoji = it; showEmojiPicker = false }
                         )
                     }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val name = newName.trim()
+                    val name = renameName.trim()
                     if (name.isNotEmpty()) {
                         persist(entries.map {
-                            if (it.id == editEntry.id) it.copy(name = name, emoji = newEmoji.ifBlank { it.emoji })
+                            if (it.id == editEntry.id) it.copy(name = name, emoji = renameEmoji.ifBlank { it.emoji })
                             else it
                         })
                     }

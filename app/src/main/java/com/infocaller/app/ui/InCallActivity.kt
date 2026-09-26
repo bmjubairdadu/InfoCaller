@@ -112,13 +112,13 @@ fun InCallScreen(onDismiss: () -> Unit) {
     var showDtmf by remember { mutableStateOf(false) }
 
     if (call == null) {
-        onDismiss()
+        LaunchedEffect(Unit) { onDismiss() }
         return
     }
 
     val number = call?.details?.handle?.schemeSpecificPart ?: "Unknown"
     val normalizedNumber = remember(number) { com.infocaller.app.util.PhoneNumberUtils.normalize(number) }
-    val enrichment by enrichmentEngine.getEnrichment(normalizedNumber).collectAsState(initial = null)
+    val enrichment by remember(normalizedNumber) { enrichmentEngine.getEnrichment(normalizedNumber) }.collectAsState(initial = null)
 
     var contactName by remember { mutableStateOf<String?>(null) }
     var contactPhotoUri by remember { mutableStateOf<String?>(null) }
@@ -820,7 +820,7 @@ private fun InCallSoundboardSheet(onDismiss: () -> Unit) {
 
     DisposableEffect(Unit) {
         onDispose {
-            if (playingId == null) com.infocaller.app.util.SoundboardPlayer.stop()
+            com.infocaller.app.util.SoundboardPlayer.stop()
         }
     }
 

@@ -381,16 +381,18 @@ class ScanOrchestrator(
     }
 
     private fun updateGlobalState(number: String, state: ScanState) {
-        val currentMap = _scanStates.value.toMutableMap()
-        currentMap[number] = state
-        if (currentMap.size > MAX_TRACKED_STATES) {
-            val terminal = currentMap.entries
-                .filter { it.value is ScanState.Completed || it.value is ScanState.Error || it.value is ScanState.Idle }
-                .map { it.key }
-                .take(currentMap.size - MAX_TRACKED_STATES)
-            terminal.forEach { currentMap.remove(it) }
+        _scanStates.update { existing ->
+            val currentMap = existing.toMutableMap()
+            currentMap[number] = state
+            if (currentMap.size > MAX_TRACKED_STATES) {
+                val terminal = currentMap.entries
+                    .filter { it.value is ScanState.Completed || it.value is ScanState.Error || it.value is ScanState.Idle }
+                    .map { it.key }
+                    .take(currentMap.size - MAX_TRACKED_STATES)
+                terminal.forEach { currentMap.remove(it) }
+            }
+            currentMap
         }
-        _scanStates.value = currentMap
     }
 
     companion object {

@@ -141,7 +141,8 @@ class ContactEnrichmentService(
         }
 
         val results = context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ArrayList(ops))
-        return ContentUris.parseId(results[0].uri!!)
+        val insertedUri = results.firstOrNull()?.uri ?: return -1L
+        return ContentUris.parseId(insertedUri)
     }
 
     suspend fun updateExistingContact(phoneNumber: String, caller: Caller): Boolean = withContext(Dispatchers.IO) {

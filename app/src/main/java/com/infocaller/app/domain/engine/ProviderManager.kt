@@ -9,16 +9,14 @@ class ProviderManager(private val context: Context) {
     private val _providers = MutableStateFlow<List<LookupProvider>>(emptyList())
     val providers = _providers.asStateFlow()
 
-    private val healthStats = mutableMapOf<String, ProviderHealth>()
+    private val healthStats = java.util.concurrent.ConcurrentHashMap<String, ProviderHealth>()
 
     fun registerProviders(newProviders: List<LookupProvider>) {
         val current = _providers.value.toMutableList()
         newProviders.forEach { provider ->
             current.removeAll { it.id == provider.id }
             current.add(provider)
-            if (!healthStats.containsKey(provider.id)) {
-                healthStats[provider.id] = ProviderHealth(providerId = provider.id)
-            }
+            healthStats.putIfAbsent(provider.id, ProviderHealth(providerId = provider.id))
         }
         _providers.value = current
     }
@@ -32,37 +30,39 @@ class ProviderManager(private val context: Context) {
     }
 
     fun updateStatus(providerId: String, status: ProviderStatus) {
-        val health = healthStats[providerId] ?: ProviderHealth(providerId)
-        healthStats[providerId] = health.copy(status = status)
+        healthStats.compute(providerId) { _, existing ->
+            (existing ?: ProviderHealth(providerId)).copy(status = status)
+        }
     }
 
     fun reportResult(providerId: String, success: Boolean, durationMs: Long) {
-        val health = healthStats[providerId] ?: return
-        val newHealth = if (success) {
-            val newCount = health.successCount + 1
-            health.copy(
-                successCount = newCount,
-                lastSuccess = System.currentTimeMillis(),
-                avgDurationMs = if (health.avgDurationMs==0L) durationMs else ((health.avgDurationMs * health.successCount + durationMs) / newCount),
-                status = if (health.status == ProviderStatus.DEGRADED || health.status == ProviderStatus.RATE_LIMITED) ProviderStatus.HEALTHY else health.status
-            )
-        } else {
-            val newFailCount = health.failureCount + 1
-            health.copy(
-                failureCount = newFailCount,
-                lastFailure = System.currentTimeMillis(),
-                status = when {
-                    newFailCount > 15 -> ProviderStatus.BROKEN
-                    newFailCount > 5 -> ProviderStatus.DEGRADED
-                    else -> health.status
-                }
-            )
+        healthStats.computeIfPresent(providerId) { _, health ->
+            if (success) {
+                val newCount = health.successCount + 1
+                health.copy(
+                    successCount = newCount,
+                    lastSuccess = System.currentTimeMillis(),
+                    avgDurationMs = if (health.avgDurationMs==0L) durationMs else ((health.avgDurationMs * health.successCount + durationMs) / newCount),
+                    status = if (health.status == ProviderStatus.DEGRADED || health.status == ProviderStatus.RATE_LIMITED) ProviderStatus.HEALTHY else health.status
+                )
+            } else {
+                val newFailCount = health.failureCount + 1
+                health.copy(
+                    failureCount = newFailCount,
+                    lastFailure = System.currentTimeMillis(),
+                    status = when {
+                        newFailCount > 15 -> ProviderStatus.BROKEN
+                        newFailCount > 5 -> ProviderStatus.DEGRADED
+                        else -> health.status
+                    }
+                )
+            }
         }
-        healthStats[providerId] = newHealth
     }
     fun reportRateLimited(providerId: String) {
-        val h = healthStats[providerId] ?: return
-        healthStats[providerId] = h.copy(status = ProviderStatus.RATE_LIMITED, lastFailure = System.currentTimeMillis())
+        healthStats.computeIfPresent(providerId) { _, h ->
+            h.copy(status = ProviderStatus.RATE_LIMITED, lastFailure = System.currentTimeMillis())
+        }
     }
 
     data class ProviderHealth(

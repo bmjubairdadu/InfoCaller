@@ -95,17 +95,37 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
             stopSelf()
             return START_NOT_STICKY
         }
-        showForegroundNotification()
-        publishIncomingCallNotification(phoneNumber, null)
+        startForegroundWithIncoming(phoneNumber)
         showOverlay(phoneNumber)
         registerCloseReceiver()
         refreshIncomingName(phoneNumber)
         return START_NOT_STICKY
     }
 
+    private fun startForegroundWithIncoming(phoneNumber: String) {
+        val notif = buildIncomingCallNotification(phoneNumber, null)
+        if (notif == null) {
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    val ch = NotificationChannel("call_overlay_channel", "Call Overlay", NotificationManager.IMPORTANCE_MIN)
+                    getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
+                }
+                startForeground(INCOMING_NOTIFICATION_ID, NotificationCompat.Builder(this, "call_overlay_channel")
+                    .setContentTitle("Caller info").setSmallIcon(R.drawable.app_logo)
+                    .setPriority(NotificationCompat.PRIORITY_MIN).setOngoing(true).build())
+            } catch (_: Exception) { } catch (_: Error) { }
+            return
+        }
+        try {
+            startForeground(INCOMING_NOTIFICATION_ID, notif)
+        } catch (_: Exception) {
+            try { getSystemService(NotificationManager::class.java).notify(INCOMING_NOTIFICATION_ID, notif) } catch (_: Exception) { } catch (_: Error) { }
+        } catch (_: Error) { }
+    }
+
     private fun refreshIncomingName(phoneNumber: String) {
         try {
-            CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            serviceScope.launch {
                 val name = try {
                     val normalized = PhoneNumberUtils.normalize(phoneNumber)
                     val cached = (getRepository() as? com.infocaller.app.domain.repository.CallerRepository)
@@ -141,31 +161,16 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
         } catch (_: Exception) { } catch (_: Error) { }
     }
 
-    private fun showForegroundNotification() {
-        val channelId = "call_overlay_channel"
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(channelId, "Call Overlay", NotificationManager.IMPORTANCE_MIN).apply {
-                setShowBadge(false); enableVibration(false); setSound(null,null)
-            }
-            getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
-        }
-        val n = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Caller info")
-            .setContentText("Showing caller identification")
-            .setSmallIcon(R.drawable.app_logo)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
-            .setOngoing(true)
-            .setAutoCancel(false)
-            .setOnlyAlertOnce(true)
-            .build()
-        startForeground(1, n)
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            try { if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_DETACH) else @Suppress("DEPRECATION") stopForeground(false) } catch(_:Exception){}
-        }, 400)
+    private fun publishIncomingCallNotification(phoneNumber: String, displayName: String?) {
+        val notif = buildIncomingCallNotification(phoneNumber, displayName) ?: return
+        try {
+            getSystemService(NotificationManager::class.java)
+                .notify(INCOMING_NOTIFICATION_ID, notif)
+        } catch (_: Exception) { } catch (_: Error) { }
     }
 
-    private fun publishIncomingCallNotification(phoneNumber: String, displayName: String?) {
-        try {
+    private fun buildIncomingCallNotification(phoneNumber: String, displayName: String?): Notification? {
+        return try {
             val channelId = "incoming_call_channel"
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 val mgr = getSystemService(NotificationManager::class.java)
@@ -211,7 +216,7 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
 
             val title = displayName?.takeIf { it.isNotBlank() } ?: phoneNumber
 
-            val builder = NotificationCompat.Builder(this, channelId)
+            NotificationCompat.Builder(this, channelId)
                 .setSmallIcon(R.drawable.app_logo)
                 .setContentTitle(title)
                 .setContentText("Incoming call from $phoneNumber")
@@ -224,10 +229,8 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                 .setContentIntent(fullScreen)
                 .addAction(android.R.drawable.ic_menu_call, "Answer", answer)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", decline)
-
-            getSystemService(NotificationManager::class.java)
-                .notify(INCOMING_NOTIFICATION_ID, builder.build())
-        } catch (_: Exception) { } catch (_: Error) { }
+                .build()
+        } catch (_: Exception) { null } catch (_: Error) { null }
     }
 
     private fun clearIncomingCallNotification() {
@@ -493,7 +496,9 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                                 )
                             }
                         }
-                        if (!enrichment?.nid.isNullOrBlank()) {
+                        val nidEnrichment = enrichment
+                        val overlayNidValue = nidEnrichment?.nid
+                        if (!overlayNidValue.isNullOrBlank()) {
                             Spacer(modifier = Modifier.height(8.dp))
                             Surface(
                                 color = Color.White.copy(alpha = 0.1f),
@@ -506,7 +511,8 @@ class CallOverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, Saved
                                 ) {
                                     Icon(Icons.Default.Fingerprint, contentDescription = null, tint = Color(0xFFE8B84B), modifier = Modifier.size(14.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    val overlayNid = enrichment!!.nid + if (!enrichment!!.dob.isNullOrBlank()) " · ${enrichment!!.dob}" else ""
+                                    val overlayNidDob = nidEnrichment?.dob
+                                    val overlayNid = overlayNidValue + if (!overlayNidDob.isNullOrBlank()) " · $overlayNidDob" else ""
                                     Text(
                                         text = "NID $overlayNid",
                                         style = MaterialTheme.typography.labelMedium,

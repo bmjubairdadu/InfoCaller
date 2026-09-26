@@ -17,7 +17,7 @@ class LinkedInProfileProviderImpl(private val httpClient: OkHttpClient) : Lookup
     override val priority = 58
     override val costClass = CostClass.FREE
 
-    private fun candidates(identifier: String, type: String): List<String> {
+    private fun candidates(identifier: String, type: String, foundName: String?): List<String> {
         val out = mutableListOf<String>()
         when (type) {
             IdentifierType.USERNAME, IdentifierType.FULL_NAME -> {
@@ -30,21 +30,19 @@ class LinkedInProfileProviderImpl(private val httpClient: OkHttpClient) : Lookup
             }
             else -> {}
         }
-        contextFoundNameSlug()?.let { if (it.length in 3..60 && it !in out) out.add(it) }
+        nameSlug(foundName)?.let { if (it.length in 3..60 && it !in out) out.add(it) }
         return out.distinct().take(2)
     }
 
-    private var ctxName: String? = null
-    private fun contextFoundNameSlug(): String? {
-        val n = ctxName?.trim()?.lowercase() ?: return null
+    private fun nameSlug(name: String?): String? {
+        val n = name?.trim()?.lowercase() ?: return null
         if (n.length < 3 || n.length > 60) return null
         val slug = n.replace(Regex("[^a-z0-9]+"), "-").trim('-')
         return slug.takeIf { it.length in 3..60 }
     }
 
     override suspend fun lookup(identifier: String, type: String, context: LookupContext): PartialResult? = withContext(Dispatchers.IO) {
-        ctxName = context.foundName
-        for (handle in candidates(identifier, type)) {
+        for (handle in candidates(identifier, type, context.foundName)) {
             try {
                 val url = "https://www.linkedin.com/in/$handle"
                 val doc = Jsoup.connect(url)

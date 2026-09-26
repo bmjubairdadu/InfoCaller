@@ -197,11 +197,9 @@ class TruecallerAuthManager(
     }
 
     private fun decompressGzip(compressed: ByteArray): String {
-        val bis = java.io.ByteArrayInputStream(compressed)
-        val gis = java.util.zip.GZIPInputStream(bis)
-        val out = StringBuilder(); val buf = ByteArray(1024); var len: Int
-        while (gis.read(buf).also { len = it } != -1) out.append(String(buf, 0, len))
-        return out.toString()
+        return java.util.zip.GZIPInputStream(java.io.ByteArrayInputStream(compressed)).use { gis ->
+            gis.readBytes().toString(Charsets.UTF_8)
+        }
     }
     suspend fun verifyOtp(phone: String, requestId: String, otp: String): VerifyResult = withContext(Dispatchers.IO) {
         if (otp.length !in 4..10 || otp.any { !it.isDigit() }) {

@@ -90,10 +90,18 @@ class InfoInCallService : InCallService() {
         }
     }
 
+    private fun notificationIdFor(call: Call): Int {
+        val number = call.details?.handle?.schemeSpecificPart ?: return 1
+        return try {
+            com.infocaller.app.util.PhoneNumberUtils.normalize(number).hashCode()
+        } catch (_: Exception) { number.hashCode() } catch (_: Error) { 1 }
+    }
+
     private fun showIncomingCallNotification(call: Call, enrichment: com.infocaller.app.data.local.entity.ContactEnrichmentEntity? = null) {
         val number = call.details?.handle?.schemeSpecificPart ?: "Unknown"
         val channelId = "incoming_calls"
         val notificationManager = getSystemService(android.app.NotificationManager::class.java) ?: return
+        val notifId = notificationIdFor(call)
 
         val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
         val customRingtoneUri = prefs.getString("custom_ringtone_uri", null)?.takeIf { it.startsWith("content://") }
@@ -192,7 +200,7 @@ class InfoInCallService : InCallService() {
                             val bitmap = (result as? android.graphics.drawable.BitmapDrawable)?.bitmap
                             if (bitmap != null) {
                                 notification.setLargeIcon(bitmap)
-                                try { notificationManager.notify(1, notification.build()) } catch (_: Exception) { }
+                                try { notificationManager.notify(notifId, notification.build()) } catch (_: Exception) { }
                             }
                         }
                     )
@@ -203,7 +211,7 @@ class InfoInCallService : InCallService() {
             }
         }
 
-        try { notificationManager.notify(1, notification.build()) } catch (_: Exception) { }
+        try { notificationManager.notify(notifId, notification.build()) } catch (_: Exception) { }
 
         serviceScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
@@ -233,7 +241,7 @@ class InfoInCallService : InCallService() {
     override fun onCallRemoved(call: Call) {
         super.onCallRemoved(call)
         enrichmentJobs.remove(call)?.cancel()
-        try { getSystemService(android.app.NotificationManager::class.java)?.cancel(1) } catch (_: Exception) { }
+        try { getSystemService(android.app.NotificationManager::class.java)?.cancel(notificationIdFor(call)) } catch (_: Exception) { }
         if (CallManager.activeCall.value == call) {
             CallManager.updateCall(null)
             CallManager.setInCallService(null)

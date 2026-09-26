@@ -79,7 +79,7 @@ fun RecentsScreen(
     var searchQuery by rememberSaveable { mutableStateOf("") }
 
     val numbers = remember(recentCalls) { recentCalls.map { it.number }.distinct() }
-    val enrichments by viewModel.getEnrichments(numbers).collectAsState(initial = emptyList())
+    val enrichments by remember(numbers) { viewModel.getEnrichments(numbers) }.collectAsState(initial = emptyList())
     val enrichmentMap = remember(enrichments) { enrichments.associateBy { it.normalizedPhoneNumber } }
 
     val filteredCalls = remember(recentCalls, selectedTab, searchQuery) {

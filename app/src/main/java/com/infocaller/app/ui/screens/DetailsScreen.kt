@@ -88,7 +88,7 @@ fun DetailsScreen(
     val displayIdentifier = remember(rawIdentifier, phoneNumber, isNonPhoneScan) {
         if (isNonPhoneScan) rawIdentifier.trim() else phoneNumber
     }
-    val enrichment by viewModel.getEnrichment(lookupKey).collectAsState(initial = null)
+    val enrichment by remember(lookupKey) { viewModel.getEnrichment(lookupKey) }.collectAsState(initial = null)
     val isNidScan = remember(rawIdentifier, livePartial, enrichment) {
         try {
             val nid = livePartial?.nid?.takeIf { it.isNotBlank() } ?: enrichment?.nid?.takeIf { !it.isNullOrBlank() }

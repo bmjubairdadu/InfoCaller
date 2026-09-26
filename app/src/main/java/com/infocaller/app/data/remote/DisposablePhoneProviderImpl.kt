@@ -34,7 +34,7 @@ class DisposablePhoneProviderImpl : LookupProvider {
             }
             if (body.length > 500_000) return cachedSet
             val set = Regex("\"(\\d{6,15})\"").findAll(body).map { it.groupValues[1] }.toSet()
-            cachedSet = set; cacheAt = System.currentTimeMillis(); set
+            cachedSet = set; cacheAt = System.currentTimeMillis(); suffixIndex = null; set
         } catch (_: Exception) { cachedSet }
     }
 
